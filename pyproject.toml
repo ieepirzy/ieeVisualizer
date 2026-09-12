@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ieeVisualizer"
+version = "0.1.0"
+description = "A package to serve as an abstraction layer over matplotlib.pyplot to make plotting easier in certain scenarios"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+dependencies = [
+    "matplotlib",
+    "numpy",
+    "sympy",
+]
+
+[tool.setuptools]
+packages = ["ieeVisualizer"]
