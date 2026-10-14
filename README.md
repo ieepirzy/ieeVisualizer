@@ -41,6 +41,36 @@ nan/inf are left out with a `RuntimeWarning`; if nothing is finite, a
 `ValueError` is raised rather than drawing an empty plot. `examples/` has
 runnable scripts that write PNGs to `examples/out/`.
 
+## Rendering a spec
+
+A declarative [FigureSpec](docs/SPEC.md) renders to PNG/SVG/PDF through a
+capability-selected adapter (Matplotlib today) and exports with a provenance
+manifest. See [docs/RENDERING.md](docs/RENDERING.md).
+
+```python
+from ieeVisualizer.artifacts import LocalDirectoryWriter, export
+from ieeVisualizer.render import RenderRequest, render
+from ieeVisualizer.spec import Axis, DataSnapshot, FigureSpec, LineMark, Provenance
+
+data = DataSnapshot.from_columns(
+    {"week": ["2026-09-07", "2026-09-14", "2026-09-21"], "revenue": [1200.0, None, 1350.5]},
+    units={"revenue": "EUR"}, dtypes={"week": "datetime"},
+    provenance=Provenance(source="finance-service", retrieved_at="2026-10-14T06:00:00+03:00"),
+)
+spec = FigureSpec(
+    title="Weekly revenue",
+    datasets={"observed": data},
+    layers=[LineMark(data="observed", encoding={"x": "week", "y": "revenue"})],
+    axes={"x": Axis(label="Week"), "y": Axis(label="Revenue")},  # y axis: "Revenue (EUR)"
+)
+
+result = render(spec, RenderRequest(format="svg"))
+print(result.media_type, [w.code for w in result.warnings])  # the null week is a gap, reported
+
+artifact = export(spec, ["png", "svg"], LocalDirectoryWriter("out"))
+print(artifact.artifact_id, artifact.variant("png").sha256)  # out/<artifact_id>/manifest.json
+```
+
 ## Development priorities
 
 1. Make the existing Python/Matplotlib functions installable, tested and functional.
