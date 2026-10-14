@@ -53,6 +53,25 @@ def test_sympy_constant_component_is_broadcast():
     np.testing.assert_allclose(q.V, q.X)
 
 
+@pytest.mark.parametrize(
+    "const", [(1.0, 2.0), [1.0, 2.0], np.array([1.0, 2.0]), np.array([1, 2], dtype=np.int64)]
+)
+def test_constant_field_components_accepted_as_tuple_list_or_1d_array(const):
+    q = the_quiver(Visualizer().visualize_vf(lambda x, y: const, dim=2, n=3))
+    np.testing.assert_allclose(q.U, np.ones(9))
+    np.testing.assert_allclose(q.V, np.full(9, 2.0))
+
+
+def test_constant_3d_field_as_1d_array():
+    fig = Visualizer().visualize_vf(lambda x, y, z: np.array([0.0, 0.0, 1.0]), dim=3, n=2)
+    assert fig.axes[0].collections
+
+
+def test_1d_array_of_wrong_length_is_rejected():
+    with pytest.raises(ValueError, match="2 components"):
+        Visualizer().visualize_vf(lambda x, y: np.array([1.0, 2.0, 3.0]), dim=2, n=3)
+
+
 def test_default_vf_grid_is_coarse():
     assert len(the_quiver(Visualizer().visualize_vf(rotation, dim=2)).X) == 20 * 20
     assert len(the_quiver(Visualizer(N=5).visualize_vf(rotation, dim=2)).X) == 5 * 5

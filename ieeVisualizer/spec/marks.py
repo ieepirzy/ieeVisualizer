@@ -30,9 +30,13 @@ from dataclasses import dataclass, field, fields
 from typing import Any
 
 from ._common import (
+    canon_float,
+    canon_int,
     check_keys,
+    copy_json,
     expect_bool,
     expect_dict,
+    expect_int,
     expect_list,
     expect_number,
     expect_str,
@@ -72,6 +76,13 @@ class Mark:
         self.encoding = {
             ch: Encoding(field=e) if isinstance(e, str) else e for ch, e in self.encoding.items()
         }
+        for name, canon in _CANON.items():
+            v = getattr(self, name, None)
+            if v is not None:
+                try:
+                    setattr(self, name, canon(v))
+                except ValueError as e:
+                    raise ValueError(f"{self.type} mark {name}: {e}") from None
 
 
 @dataclass
@@ -140,6 +151,32 @@ class FunctionMark(Mark):
     parameters: dict[str, float] = field(default_factory=dict)
 
 
+def _canon_float_list(v: Any) -> Any:
+    return [canon_float(x) for x in v] if isinstance(v, (list, tuple)) else v
+
+
+def _canon_float_map(v: Any) -> Any:
+    return {k: canon_float(x) for k, x in v.items()} if isinstance(v, dict) else v
+
+
+def _canon_domain(v: Any) -> Any:
+    return {k: _canon_float_list(r) for k, r in v.items()} if isinstance(v, dict) else v
+
+
+#: Declared-numeric mark fields and their canonical form (see
+#: ``_common.canon_float``): applied on construction and again on
+#: serialization, so a value assigned later is canonical in the output too.
+#: Values of the wrong type pass through unchanged for :func:`validate` to report.
+_CANON = {
+    "bins": canon_int,
+    "samples": canon_int,
+    "bin_edges": _canon_float_list,
+    "scale": canon_float,
+    "domain": _canon_domain,
+    "parameters": _canon_float_map,
+}
+
+
 MARK_TYPES: dict[str, type[Mark]] = {
     "line": LineMark,
     "scatter": ScatterMark,
@@ -200,6 +237,7 @@ def mark_to_dict(m: Mark) -> dict[str, Any]:
         if v is None:
             continue
         if f.name == "encoding":
+            v = {ch: Encoding(field=e) if isinstance(e, str) else e for ch, e in v.items()}
             v = {
                 ch: ({"field": e.field, "title": e.title} if e.title is not None
                      else {"field": e.field})
@@ -209,6 +247,8 @@ def mark_to_dict(m: Mark) -> dict[str, Any]:
             v = {k: (list(x) if isinstance(x, (list, tuple)) else x) for k, x in v.items()}
         elif isinstance(v, (list, tuple)):
             v = list(v)
+        if f.name in _CANON:
+            v = _CANON[f.name](v)
         out[f.name] = v
     return out
 
@@ -250,16 +290,14 @@ def mark_from_dict(d: Any, path: str) -> Mark:
         if key in d:
             kw[key] = expect_str(d[key], ptr_join(path, key), key, optional=(key == "name"))
     if "style" in d:
-        kw["style"] = dict(expect_dict(d["style"], ptr_join(path, "style"), "style"))
+        sp = ptr_join(path, "style")
+        kw["style"] = copy_json(expect_dict(d["style"], sp, "style"), sp, "style")
 
     if cls is BarMark and "orientation" in d:
         kw["orientation"] = expect_str(d["orientation"], _p(path, "orientation"), "orientation")
     elif cls is HistogramMark:
         if "bins" in d:
-            b = expect_number(d["bins"], _p(path, "bins"), "bins", optional=True)
-            if b is not None and (not isinstance(b, int)):
-                raise fail(_p(path, "bins"), "invalid_type", "bins must be an integer.")
-            kw["bins"] = b
+            kw["bins"] = expect_int(d["bins"], _p(path, "bins"), "bins", optional=True)
         if "bin_edges" in d and d["bin_edges"] is not None:
             edges = expect_list(d["bin_edges"], _p(path, "bin_edges"), "bin_edges")
             kw["bin_edges"] = [
@@ -299,10 +337,7 @@ def _parse_function_fields(d: dict[str, Any], path: str, kw: dict[str, Any]) -> 
             ]
         kw["domain"] = out
     if "samples" in d:
-        s = expect_number(d["samples"], _p(path, "samples"), "samples")
-        if not isinstance(s, int):
-            raise fail(_p(path, "samples"), "invalid_type", "samples must be an integer.")
-        kw["samples"] = s
+        kw["samples"] = expect_int(d["samples"], _p(path, "samples"), "samples")
     if "parameters" in d:
         params = expect_dict(d["parameters"], _p(path, "parameters"), "parameters")
         kw["parameters"] = {

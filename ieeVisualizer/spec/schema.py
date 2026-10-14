@@ -6,6 +6,12 @@ rules that need cross-references (an encoding naming an existing column, unit
 agreement across layers, log scales vs data) are only checked by
 :func:`validate`; a document can satisfy this schema and still have
 validation errors.
+
+Two parser rules have no JSON-Schema equivalent and are enforced only by
+:func:`from_dict`/:func:`from_json`: NaN/Infinity are refused (they are not
+JSON numbers, but Python's ``json`` module reads them), and datetime strings
+must name a real date/time (the schema checks their ISO-8601 *form* only, so
+``2026-02-30`` passes the schema and fails the parser).
 """
 
 from __future__ import annotations
@@ -14,7 +20,7 @@ import copy
 from typing import Any
 
 from ._common import SUPPORTED_SCHEMA_VERSIONS
-from .data import DTYPES
+from .data import DTYPES, ISO_DATETIME_PATTERN
 from .figure import LEGEND_POSITIONS, SCALES
 from .marks import CHANNELS, COORDINATE_SYSTEMS, MARK_TYPES, ORIENTATIONS, ROLES
 
@@ -106,7 +112,14 @@ _SCHEMA: dict[str, Any] = {
     "title": "ieeVisualizer FigureSpec",
     "definitions": {
         "encoding": _ENCODING,
-        "column": _obj(dict({"values": {"type": "array"}}, **_COLUMN_META), ["values"]),
+        "column": _obj(
+            dict({"values": {"type": "array"}}, **_COLUMN_META), ["values"],
+            **{
+                "if": {"properties": {"dtype": {"const": "datetime"}}, "required": ["dtype"]},
+                "then": {"properties": {"values": {"items": {
+                    "type": ["string", "null"], "pattern": ISO_DATETIME_PATTERN}}}},
+            },
+        ),
         "snapshot": _obj(
             {
                 "type": {"const": "snapshot"},

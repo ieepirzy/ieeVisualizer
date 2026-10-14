@@ -27,10 +27,34 @@ from ieeVisualizer.spec import (FigureSpec, DataSnapshot, LineMark, Axis,
 **Columns** carry `values` plus `dtype` (`float`, `int`, `bool`, `str`,
 `datetime` as ISO-8601 strings), `unit`, `description`, `denominator`,
 `aggregation`. Missing values are `null` and stay `null`; NaN/NaT become
-`null`, infinities are rejected. **Provenance** carries `source`, `query`,
-`retrieved_at`, `source_version`, `timezone`, `run_id`, `notes`, `extra`.
-`DataSnapshot.content_hash()` hashes the columns (values and their meaning),
-not the provenance.
+`null`, infinities are rejected, `-0.0` is stored as `0.0`. **Provenance**
+carries `source`, `query`, `retrieved_at`, `source_version`, `timezone`,
+`run_id`, `notes`, `extra`. `DataSnapshot.content_hash()` hashes the columns
+(values and their meaning), not the provenance.
+
+**Datetime values** have one stored form, whatever they were built from
+(`datetime`/`date` objects, numpy `datetime64` of any unit, ISO strings):
+`YYYY-MM-DDTHH:MM:SS[.ffffff][+HH:MM]`. Seconds are always written, the
+fraction only when non-zero (six digits), the offset only for timezone-aware
+values and as given (`Z` becomes `+00:00`; values are not converted to UTC).
+`"2026-01-01"`, `date(2026, 1, 1)` and `datetime64("2026-01-01", "ns")` all
+store `"2026-01-01T00:00:00"`. Input strings must be `YYYY-MM-DD`, optionally
+followed by `T` (or a space) and `HH:MM[:SS[.fraction]]` and a `Z`/`+HH:MM`
+offset; anything else, an impossible date, or a non-zero sub-microsecond part
+is rejected, as is a column that mixes timezone-aware and naive values (all
+on construction, so `from_dict` reports a `SpecParseError` at the column's
+`values`).
+
+**Numbers** are canonical so that equal specs hash equally: fields declared
+as numbers (function `domain` and `parameters`, histogram `bin_edges`, quiver
+`scale`, numeric axis `limits` and annotation coordinates) are stored as
+floats, so `5` and `5.0` (or a JavaScript `JSON.stringify` round trip that
+writes `5.0` as `5`) give the same JSON and the same `spec_hash`. Integer
+fields (`samples`, `bins`) accept integer-valued floats (`200.0`) and store
+ints. NaN and infinities are not JSON numbers: `from_json` refuses the
+`NaN`/`Infinity` constants anywhere in the text, `from_dict` refuses them
+with the pointer of the value, constructors raise `ValueError`, and
+`validate` reports `non_finite_number` for one assigned later.
 
 **Marks** share `type`, `data` (dataset name), `encoding` (channel ->
 `{"field": column, "title"?}`; `"y": "col"` shorthand is accepted),
@@ -55,10 +79,10 @@ area, bar, function.
 
 | Function | Notes |
 |---|---|
-| `validate(spec) -> list[ValidationIssue]` | Never raises for a bad spec. Each issue has `path` (JSON pointer), `code`, `message` (names the fix), `severity` (`error`/`warning`/`info`). Codes are listed in `validate.py`. |
+| `validate(spec) -> list[ValidationIssue]` | Never raises for a bad spec. Each issue has `path` (JSON pointer), `code`, `message` (names the fix), `severity` (`error`/`warning`/`info`). Codes are listed in `validate.py`. Field types are checked too (`invalid_type`), so a spec without errors also survives `from_dict(to_dict(spec))`. |
 | `to_dict` / `from_dict` / `to_json(spec, indent=None)` / `from_json` | `from_*` raise `SpecParseError` (with `.issues`) on structural problems: wrong types, unknown keys or mark types, bad `schema_version`. `to_json` with `indent=None` is canonical (sorted keys, compact) and stable for hashing. |
 | `spec_hash(spec)` | `sha256:<hex>` of the canonical JSON, inline data included. |
-| `apply_patch(spec, ops, *, check=True)` | RFC-6902 `add`/`replace`/`remove`/`test` on the dict form. Atomic, returns a new spec, never mutates the input. Re-parses, and by default raises `SpecValidationError` if the result has errors. `replace` needs an existing member, so use `add` to set a field that is currently unset (unset optional fields are omitted from the dict form). |
+| `apply_patch(spec, ops, *, check=True)` | RFC-6902 `add`/`replace`/`remove`/`test` on the dict form. Atomic, returns a new spec, never mutates the input. Re-parses, and by default raises `SpecValidationError` if the result has errors. `replace` needs an existing member, so use `add` to set a field that is currently unset (unset optional fields are omitted from the dict form). `test` compares JSON values by type: `true` is not `1` and `"1"` is not `1`, while numbers compare by value as RFC 6902 specifies (`1` equals `1.0`). |
 | `json_schema()` | Draft-07 JSON Schema of the serialized form (structure and enums; cross-references such as "column exists" are only checked by `validate`). |
 
 ## Example: observed + forecast time series

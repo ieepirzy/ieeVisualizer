@@ -338,9 +338,16 @@ def test_timestamps_with_offsets_are_labelled_in_the_provenance_timezone():
 def test_bad_datetime_and_duplicate_heatmap_cell_are_errors():
     from ieeVisualizer.spec import HeatmapMark
 
+    # The spec refuses an invalid datetime at construction ...
+    with pytest.raises(ValueError, match="not an ISO-8601"):
+        one_layer(LineMark(encoding={"x": "t", "y": "v"}),
+                  {"t": ["2026-10-14", "next tuesday"], "v": [1.0, 2.0]},
+                  dtypes={"t": "datetime"})
+    # ... and the renderer still refuses one set after construction.
     spec = one_layer(LineMark(encoding={"x": "t", "y": "v"}),
-                     {"t": ["2026-10-14", "next tuesday"], "v": [1.0, 2.0]},
+                     {"t": ["2026-10-14", "2026-10-15"], "v": [1.0, 2.0]},
                      dtypes={"t": "datetime"})
+    spec.datasets["d"].columns["t"].values[1] = "next tuesday"
     with pytest.raises(RenderError) as e:
         build_figure(spec)
     assert e.value.issues[0].code == "invalid_datetime"

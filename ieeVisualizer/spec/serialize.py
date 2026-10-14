@@ -40,9 +40,23 @@ def to_json(spec: FigureSpec, indent: int | None = None) -> str:
     return canonical_json(to_dict(spec), indent=indent)
 
 
+class _NonFiniteConstant(ValueError):
+    pass
+
+
+def _refuse_constant(name: str) -> Any:
+    raise _NonFiniteConstant(name)
+
+
 def from_json(s: str) -> FigureSpec:
+    """Parse JSON text. ``NaN``, ``Infinity`` and ``-Infinity`` (which Python's
+    ``json`` accepts but JSON does not define) are refused, wherever they occur."""
     try:
-        d = json.loads(s)
+        d = json.loads(s, parse_constant=_refuse_constant)
+    except _NonFiniteConstant as e:
+        raise fail("", "non_finite_number",
+                   f"the JSON text contains {e}, which is not a JSON number; NaN and "
+                   "infinities cannot be stored in a spec.") from None
     except json.JSONDecodeError as e:
         raise fail("", "invalid_json", f"not valid JSON: {e}") from None
     return from_dict(d)

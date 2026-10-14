@@ -26,3 +26,21 @@ jobs:
         run: ruff check .
       - name: Pytest
         run: python -m pytest
+      # Check the built wheel, not the source tree: install it into a fresh venv
+      # and import every package found in the source from outside the checkout,
+      # so a subpackage missing from the wheel fails here. One matrix entry only.
+      - name: Wheel install smoke test
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m pip wheel . --no-deps -w "$RUNNER_TEMP/dist"
+          python -m venv "$RUNNER_TEMP/wheelenv"
+          "$RUNNER_TEMP/wheelenv/bin/python" -m pip install "$RUNNER_TEMP"/dist/*.whl
+          pkgs=$(find ieeVisualizer -name __init__.py -exec dirname {} \; | tr / . | sort)
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/wheelenv/bin/python" - $pkgs <<'PY'
+          import importlib, os, sys
+          for name in sys.argv[1:]:
+              mod = importlib.import_module(name)
+              assert os.environ["GITHUB_WORKSPACE"] not in mod.__file__, mod.__file__
+              print("ok", name, mod.__file__)
+          PY
