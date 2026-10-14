@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from ._domain import as_rng, make_grid, normalize_bounds
-from ._evaluate import evaluate, to_numeric
+from ._evaluate import as_symbol_tuple, evaluate, to_numeric
 
 _SUPPORTED_DIMS = (2, 3)
 
@@ -29,8 +29,7 @@ def _symbol_names(fn, symbols, n_inputs, default):
     import sympy as sp
 
     if symbols is not None:
-        syms = (symbols,) if isinstance(symbols, sp.Symbol) else tuple(symbols)
-        return [str(s) for s in syms]
+        return [str(s) for s in as_symbol_tuple(symbols)]
     exprs = list(fn) if isinstance(fn, (list, tuple, sp.MatrixBase)) else [fn]
     if any(isinstance(e, sp.Basic) for e in exprs):
         free = set().union(*(sp.sympify(e).free_symbols for e in exprs))
@@ -113,9 +112,11 @@ class Visualizer:
         :param linspace: evenly spaced (True) or sorted random (False) samples;
             None uses the constructor's setting
         :param show: call ``plt.show()`` after drawing
-        :param domain: ``(lo, hi)`` for every input axis, or one pair per input axis
+        :param domain: ``(lo, hi)`` for every input axis, or one pair per input axis;
+            bounds must be real numbers (datetime/timedelta values are rejected)
         :param n: samples per axis; defaults to ``N``
-        :param symbols: SymPy symbols, in input order, for an expression
+        :param symbols: SymPy symbols, in input order, for an expression; a string is
+            parsed like ``sympy.symbols`` (``"x"``, ``"x y"``)
         :param ax: existing Matplotlib axes to draw into (3D axes for dim=3)
         :param rng: seed or Generator overriding the constructor's ``rng`` for this call
 
@@ -166,7 +167,9 @@ class Visualizer:
         Plot a vector field ``F: R^dim -> R^dim`` as arrows.
 
         :param fn: callable ``fn(x, y) -> (u, v)`` (dim=2) or ``fn(x, y, z) -> (u, v, w)``
-            (dim=3), or a SymPy Matrix / list of ``dim`` expressions
+            (dim=3), or a SymPy Matrix / list of ``dim`` expressions. A callable may
+            return the components as a tuple/list, as an array stacked along the first
+            axis, or (for a constant field) as a 1-D array such as ``np.array([1, 2])``
         :param dim: 2 (``quiver``) or 3 (3D ``quiver``)
         :param linspace: evenly spaced (True) or sorted random (False) grid;
             None uses the constructor's setting
@@ -174,7 +177,8 @@ class Visualizer:
         :param domain: ``(lo, hi)`` for every axis, or one pair per axis
         :param n: grid points per axis; defaults to ``min(N, 20)`` in 2D and
             ``min(N, 8)`` in 3D
-        :param symbols: SymPy symbols, in input order, for expressions
+        :param symbols: SymPy symbols, in input order, for expressions; a string is
+            parsed like ``sympy.symbols``
         :param ax: existing Matplotlib axes to draw into (3D axes for dim=3)
         :param rng: seed or Generator overriding the constructor's ``rng`` for this call
         :param streamplot: dim=2 only: also draw streamlines (needs ``linspace=True``)
