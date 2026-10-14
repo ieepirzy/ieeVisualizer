@@ -38,6 +38,14 @@ from .style import (
 
 
 @dataclass
+class _Series:
+    color: str
+    field: str
+    group: str | None
+    paired: bool = False  # already shares its colour across observed/forecast
+
+
+@dataclass
 class DrawContext:
     spec: FigureSpec
     fig: Any
@@ -46,7 +54,7 @@ class DrawContext:
     warnings: list[RenderWarning]
     layer_artists: dict[int, list[Any]] = field(default_factory=dict)
     _color_i: int = 0
-    _series_colors: dict[str, str] = field(default_factory=dict)
+    _series: dict[tuple, _Series] = field(default_factory=dict)
 
     @property
     def three_d(self) -> bool:
@@ -60,17 +68,38 @@ class DrawContext:
         self._color_i += 1
         return c
 
-    def series_color(self, key: str, role: str, explicit: str | None) -> str:
-        """Observed and forecast layers of the same column share a colour, so
-        the forecast reads as the continuation of its observed series."""
-        if explicit is not None:
-            self._series_colors.setdefault(key, explicit)
-            return explicit
-        if key in self._series_colors:
-            return self._series_colors[key]
-        c = self.next_color()
-        self._series_colors[key] = c
-        return c
+    def series_color(self, m: Mark, fld: str, group: str | None, explicit: str | None) -> str:
+        """Colour of one series: a layer (or one group of it).
+
+        A series is identified by the layer's ``name`` if set, else by its
+        dataset and field, plus the group, so two layers that plot the same
+        column name from different datasets get different colours. A
+        forecast layer shares the colour of its observed series, so it reads
+        as that series' continuation: the observed layer with the same
+        identity, else the only not-yet-paired observed series with the same
+        field and group (the timeseries template names its layers
+        ``revenue`` / ``revenue (forecast)`` over datasets ``observed`` /
+        ``forecast``). With several candidates the forecast gets its own
+        colour rather than a guessed one.
+        """
+        forecast = m.role == "forecast"
+        ident = m.name if m.name else f"{m.data}/{fld}"
+        key = (ident, group, forecast)
+        if key in self._series:
+            if explicit is not None:
+                return explicit
+            return self._series[key].color
+        partner = self._series.get((ident, group, not forecast))
+        if partner is None or partner.paired:
+            cands = [s for k, s in self._series.items() if k[2] != forecast
+                     and s.field == fld and s.group == group and not s.paired]
+            partner = cands[0] if len(cands) == 1 else None
+        if partner is not None:
+            partner.paired = True
+        color = explicit if explicit is not None else (
+            partner.color if partner is not None else self.next_color())
+        self._series[key] = _Series(color, fld, group, paired=partner is not None)
+        return color
 
     def warn(self, code: str, message: str, path: str) -> None:
         self.warnings.append(RenderWarning(code, message, path))
@@ -217,9 +246,8 @@ def draw_line(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         sub = [a[idx] for a in chans]
         _require(_mask(*sub), i, m, group)
         kw = line_kwargs(style, m.role, f"/layers/{i}", ctx.warnings)
-        key = f"{m.encoding['y'].field}|{group}"
-        kw["color"] = ctx.series_color(key, m.role, kw.get("color")) if m.role != "reference" \
-            else kw["color"]
+        if m.role != "reference":
+            kw["color"] = ctx.series_color(m, m.encoding["y"].field, group, kw.get("color"))
         kw["label"] = _label(m, group, _title(m, "y"))
         lone = _isolated(_mask(*sub))
         if lone and "marker" not in kw:
@@ -276,7 +304,7 @@ def draw_scatter(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                 color = color or "0.45"
                 kw.setdefault("alpha", REFERENCE_ALPHA)
             else:
-                color = ctx.series_color(f"{m.encoding['y'].field}|{group}", m.role, color)
+                color = ctx.series_color(m, m.encoding["y"].field, group, color)
             if m.role == "forecast":  # hollow markers
                 kw["facecolors"] = "none"
                 kw["edgecolors"] = color
@@ -303,16 +331,23 @@ def draw_area(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         _require(valid, i, m, group)
         kw = fill_kwargs(style, m.role)
         if m.role != "reference":
-            kw["color"] = ctx.series_color(f"{m.encoding['y'].field}|{group}", m.role,
-                                           kw.get("color"))
+            kw["color"] = ctx.series_color(m, m.encoding["y"].field, group, kw.get("color"))
         if m.role == "forecast":
             kw.setdefault("edgecolor", kw["color"])
             kw["facecolor"] = "none"
             kw.pop("color")
         kw["label"] = _label(m, group, _title(m, "y"))
-        artists.append(ctx.ax.fill_between(
-            np.ma.filled(xs.astype(float), np.nan), np.ma.filled(ys.astype(float), np.nan), 0.0,
-            where=valid, interpolate=False, **kw))
+        fx, fy = np.ma.filled(xs.astype(float), np.nan), np.ma.filled(ys.astype(float), np.nan)
+        artists.append(ctx.ax.fill_between(fx, fy, 0.0, where=valid, interpolate=False, **kw))
+        lone = _isolated(valid)
+        if lone:
+            # A valid point between two gaps fills a zero-width polygon, i.e.
+            # nothing; mark it (as the line mark does) so the value is visible.
+            c = kw.get("color", kw.get("edgecolor"))
+            artists += ctx.ax.plot(fx[lone], fy[lone], linestyle="none", marker="o",
+                                   markersize=3.5, color=c, label="_nolegend_",
+                                   markerfacecolor="none" if m.role == "forecast" else c,
+                                   alpha=kw.get("alpha"))
     return artists
 
 
@@ -348,7 +383,7 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         off = (g - (len(grp) - 1) / 2.0) * each
         kw = fill_kwargs(style, m.role)
         if m.role != "reference":
-            kw["color"] = ctx.series_color(f"{m.encoding[val_ch].field}|{group}", m.role,
+            kw["color"] = ctx.series_color(m, m.encoding[val_ch].field, group,
                                            kw.get("color"))
         if m.role == "forecast":
             kw["edgecolor"] = kw["color"]
@@ -403,8 +438,7 @@ def draw_histogram(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     for group, d in data:
         kw = fill_kwargs(style, m.role)
         if m.role != "reference":
-            kw["color"] = ctx.series_color(f"{m.encoding['x'].field}|{group}", m.role,
-                                           kw.get("color"))
+            kw["color"] = ctx.series_color(m, m.encoding["x"].field, group, kw.get("color"))
         if m.role == "forecast":
             kw["edgecolor"] = kw["color"]
         if len(data) > 1:
@@ -533,7 +567,8 @@ def draw_function(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                      f"{path}/style/{k}")
     kw = line_kwargs(style, m.role, path, ctx.warnings)
     if m.role != "reference":
-        kw["color"] = ctx.series_color(f"function|{m.expression}", m.role, kw.get("color"))
+        kw["color"] = ctx.series_color(m, f"function|{m.expression}", None,
+                                       kw.get("color"))
     kw["label"] = legend_label(m.name, m.expression, m.role)
     return ctx.ax.plot(inputs[0], out, **kw)
 

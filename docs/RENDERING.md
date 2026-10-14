@@ -79,6 +79,14 @@ legend label says "forecast". `reference` is lighter and thinner.
 `+ - * / ^ ( )`, the mark's variables and parameters, and an allow-list of
 math functions (`sin`, `exp`, `log`, `sqrt`, ...) and constants (`pi`, `E`).
 Non-finite samples are gaps with a warning; no finite sample is an error.
+SymPy evaluates exactly while it builds an expression, so a short string
+such as `9^9^9` or `gamma(10^6)` could hang a render. The expression is
+parsed unevaluated and rebuilt bottom-up; before any power, `exp` of a
+logarithm or `gamma` is evaluated (with parameters substituted) it is
+checked: exponents at most 1000 in magnitude, no number beyond about
+10^+-330 (outside float64's range anyway), `gamma` arguments within
++-1000, at most 1000 characters, 500 terms and 100 levels of nesting.
+Anything else is an `expression_too_large` error, raised immediately.
 
 **Determinism.** Rendering runs under matplotlib's default style plus a fixed
 `rc_context` (`svg.hashsalt`, `svg.fonttype="path"`), with dates stripped
@@ -108,12 +116,23 @@ byte size, adapter name/version, request and warnings, library versions
 (ieeVisualizer, matplotlib, numpy, sympy, python) and `created_at` (from
 `clock`). Two exports of the same spec differ only in `created_at`.
 
-`artifact_id` is `<name or "viz">-<16 hex>` over the spec hash and the
-content hash of every dataset drawn, so different data behind the same
-reference gives a different id. It never depends on a storage path or URL.
-Writers implement `write(artifact_id, name, content, media_type) -> str`;
-`LocalDirectoryWriter(root)` (atomic replace) and `MemoryWriter` are
-provided. Exporting the same figure again overwrites the same directory.
+`artifact_id` is `<name or "viz">-<16 hex>` over the spec hash, the
+content hash of every dataset drawn, the list of formats (in order) and the
+render request (width, height, units, dpi, theme, adapter), so different
+data behind the same reference, or the same spec at another size, dpi,
+theme or set of formats, gives a different id. It never depends on a
+storage path or URL.
+
+Writers implement `write(artifact_id, name, content, media_type) -> str`
+and may implement `write_artifact(artifact_id, files) -> str`, which
+replaces everything stored under the id with exactly `files`; `export()`
+uses it when present. `LocalDirectoryWriter(root)` stages the files in a
+temporary directory under `root` and swaps it in for `<root>/<artifact_id>`
+(the old directory is moved aside, then deleted), so an artifact directory
+always holds exactly the files its `manifest.json` lists: exporting again
+under the same id replaces the directory as a whole and never leaves files
+from an earlier export behind. `MemoryWriter` does the same for its dict.
+A custom writer with only `write` gets one call per file, manifest last.
 
 ## Known gaps
 

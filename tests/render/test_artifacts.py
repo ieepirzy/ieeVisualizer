@@ -139,3 +139,50 @@ def test_export_argument_checks():
         export(revenue_spec(), [], MemoryWriter())
     with pytest.raises(ValueError):
         export(revenue_spec(), ["tiff"], MemoryWriter())
+
+
+def test_artifact_id_covers_formats_and_render_request():
+    from ieeVisualizer.render import RenderRequest
+
+    def aid(formats, **req):
+        return export(revenue_spec(), formats, MemoryWriter(), clock=_clock(),
+                      request=RenderRequest(**req)).artifact_id
+
+    base = aid(["png", "pdf"], dpi=100)
+    assert aid(["png", "pdf"], dpi=100) == base
+    others = [aid(["png"], dpi=100), aid(["pdf", "png"], dpi=100), aid(["png", "pdf"], dpi=300),
+              aid(["png", "pdf"], dpi=100, width=8.0), aid(["png", "pdf"], dpi=100, theme="dark")]
+    assert len({base, *others}) == 1 + len(others)
+    # the per-variant format of the request does not matter, only the list
+    assert aid(["png", "pdf"], dpi=100, format="svg") == base
+
+
+def test_reexport_under_same_id_leaves_only_manifest_files(tmp_path):
+    w = LocalDirectoryWriter(tmp_path)
+    a = export(revenue_spec(), ["png", "pdf"], w, clock=_clock())
+    root = tmp_path / a.artifact_id
+    (root / "figure.svg").write_bytes(b"stale")  # e.g. left by an older export
+    b = export(revenue_spec(), ["png", "pdf"], w, clock=_clock(15))
+    assert b.artifact_id == a.artifact_id
+    listed = {v.file.name for v in b.variants} | {"spec.json", MANIFEST_NAME}
+    assert set(os.listdir(root)) == listed
+    assert json.loads((root / MANIFEST_NAME).read_text()) == b.to_dict()
+    assert sorted(os.listdir(tmp_path)) == [a.artifact_id]  # no staging dirs left behind
+
+
+def test_memory_writer_reexport_replaces_artifact_files():
+    w = MemoryWriter()
+    a = export(revenue_spec(), ["svg"], w, clock=_clock())
+    w.write(a.artifact_id, "stale.txt", b"x", "text/plain")
+    export(revenue_spec(), ["svg"], w, clock=_clock())
+    assert {n for (_, n) in w.files} == {"figure.svg", "spec.json", MANIFEST_NAME}
+
+
+@pytest.mark.parametrize("bad", ["viz-abc\n", "figure.png\n", "a\nb"])
+def test_names_with_newlines_are_refused(bad):
+    from ieeVisualizer.artifacts.writers import check_name
+
+    with pytest.raises(ValueError):
+        check_name(bad, "artifact id")
+    with pytest.raises(ValueError):
+        MemoryWriter().write("viz-1", bad, b"", "text/plain")

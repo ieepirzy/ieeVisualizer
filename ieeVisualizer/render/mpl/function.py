@@ -5,7 +5,11 @@ is checked before SymPy sees it: SymPy's parser evaluates Python, and a spec
 must not be able to run code. Only arithmetic, numbers, the mark's
 ``variables`` and ``parameters``, and an allow-list of mathematical functions
 and constants are accepted; anything else is a :class:`RenderError` naming
-the offending identifier.
+the offending identifier. SymPy evaluates exactly while it builds, so the
+text is parsed unevaluated and rebuilt under the limits of
+:mod:`ieeVisualizer._safe_expr` (powers, factorial-like functions, number
+size, expression size); ``9^9^9`` is an ``expression_too_large`` error
+instead of a hang.
 
 Sampling reuses the legacy :func:`ieeVisualizer._evaluate.evaluate` rule:
 non-finite outputs are masked (gaps, reported as a warning) and an
@@ -19,6 +23,7 @@ import warnings as _warnings
 
 import numpy as np
 
+from ..._safe_expr import UnsafeExpression, build_bounded, parse_unevaluated
 from ...spec import FunctionMark
 from ..base import RenderError, RenderWarning, issue
 
@@ -64,12 +69,21 @@ def parse(mark: FunctionMark, path: str):
     for f in ALLOWED_FUNCTIONS | ALLOWED_CONSTANTS:
         if f not in local:
             local[f] = getattr(sp, "Abs" if f == "abs" else f)
+    values = {symbols[k]: sp.sympify(v) for k, v in mark.parameters.items()}
     try:
-        expr = sp.sympify(expr_s.replace("^", "**"), locals=local, convert_xor=True)
-    except (sp.SympifyError, SyntaxError, TypeError, ValueError) as e:
+        tree = parse_unevaluated(expr_s.replace("^", "**"), local)
+        if not isinstance(tree, sp.Expr):
+            raise TypeError(f"it is a {type(tree).__name__}, not a single expression")
+        # Parameters are substituted while the tree is rebuilt, so every power
+        # is checked with its final numbers before SymPy evaluates it.
+        expr = build_bounded(tree, values)
+    except UnsafeExpression as e:
+        raise RenderError([issue(p, "expression_too_large",
+                                 f"expression {expr_s!r} cannot be evaluated safely: {e} "
+                                 "Simplify it or use smaller constants.")]) from None
+    except Exception as e:  # untrusted input: any SymPy failure is a parse error
         raise RenderError([issue(p, "invalid_expression",
                                  f"expression {expr_s!r} could not be parsed: {e}")]) from None
-    expr = expr.subs({symbols[k]: v for k, v in mark.parameters.items()})
     var_syms = [symbols[v] for v in mark.variables]
     free = expr.free_symbols - set(var_syms)
     if free:  # pragma: no cover - guarded by the identifier check above
@@ -101,7 +115,9 @@ def sample(mark: FunctionMark, path: str, log_axes: tuple[bool, ...],
         _warnings.simplefilter("always")
         try:
             (out,) = evaluate(fn, inputs)
-        except ValueError as e:
+        except (ValueError, TypeError, ArithmeticError) as e:
+            # TypeError/OverflowError: NumPy cannot take e.g. exp() of an
+            # integer beyond float64 (exp(10^300)).
             code = "empty_series" if "no finite values" in str(e) else "function_not_drawable"
             raise RenderError([issue(path, code,
                                      f"the expression could not be drawn: {e}.")]) from None

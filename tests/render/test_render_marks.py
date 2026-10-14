@@ -357,3 +357,73 @@ def test_bad_datetime_and_duplicate_heatmap_cell_are_errors():
     with pytest.raises(RenderError) as e:
         build_figure(spec)
     assert e.value.issues[0].code == "duplicate_cell"
+
+
+def test_area_isolated_point_between_gaps_is_marked_not_invisible():
+    from ieeVisualizer.spec import AreaMark
+
+    for role in ("observed", "forecast"):
+        spec = one_layer(AreaMark(encoding={"x": "t", "y": "v"}, role=role),
+                         {"t": [0.0, 1.0, 2.0, 3.0, 4.0], "v": [1.0, None, 5.0, None, 2.0]},
+                         units={"t": "s", "v": "m"})
+        coll, marks = build_figure(spec).layer_artists[0]
+        # every polygon is zero-width (each valid point stands alone) ...
+        assert all(np.ptp(p.vertices[:, 0]) == 0 for p in coll.get_paths())
+        # ... so each of those points gets a marker in the series colour
+        assert marks.get_marker() == "o"
+        np.testing.assert_allclose(marks.get_xdata(), [0.0, 2.0, 4.0])
+        np.testing.assert_allclose(marks.get_ydata(), [1.0, 5.0, 2.0])
+        assert marks.get_label() == "_nolegend_"
+    # a contiguous area gets no extra markers
+    assert len(build_figure(area_spec()).layer_artists[0]) == 1
+
+
+def _two_city_spec(**names):
+    from ieeVisualizer.spec import DataSnapshot, FigureSpec
+
+    def snap(v):
+        return DataSnapshot.from_columns({"day": [1, 2, 3], "temp": v},
+                                         units={"temp": "degC", "day": "d"})
+
+    return FigureSpec(
+        datasets={"helsinki": snap([1.0, 2.0, 3.0]), "tampere": snap([4.0, 5.0, 6.0])},
+        layers=[LineMark(data="helsinki", encoding={"x": "day", "y": "temp"},
+                         name=names.get("a")),
+                LineMark(data="tampere", encoding={"x": "day", "y": "temp"},
+                         name=names.get("b"))],
+        axes={"x": Axis(label="Day", unit="d"), "y": Axis(label="Temperature", unit="degC")})
+
+
+@pytest.mark.parametrize("names", [{"a": "Helsinki", "b": "Tampere"}, {}])
+def test_same_column_from_different_datasets_gets_different_colours(names):
+    a, b = (arts[0] for arts in build_figure(_two_city_spec(**names)).layer_artists.values())
+    assert a.get_color() != b.get_color()
+
+
+def test_forecast_pairs_with_its_observed_series_by_field_and_group():
+    """The timeseries template's shape: datasets ``observed``/``forecast``,
+    layers ``v``/``v (forecast)`` with a series column, plus bound lines."""
+    from ieeVisualizer.spec import DataSnapshot, FigureSpec
+
+    def snap(days, vals):
+        return DataSnapshot.from_columns(
+            {"t": days * 2, "s": ["A"] * len(days) + ["B"] * len(days), "v": vals,
+             "lo": [0.0] * len(vals)}, units={"v": "m", "lo": "m"})
+
+    obs, fc = snap([1, 2, 3], [1.0, 2, 3, 4, 5, 6]), snap([4, 5], [3.0, 4, 6, 7])
+
+    def line(part, field, name):
+        return LineMark(data=part, encoding={"x": "t", "y": field, "series": "s"},
+                        role=part, name=name,
+                        style={"linestyle": "dashed"} if part == "forecast" else {})
+
+    spec = FigureSpec(
+        datasets={"observed": obs, "forecast": fc},
+        layers=[line("observed", "v", "v"), line("observed", "lo", "v lower bound (lo)"),
+                line("forecast", "v", "v (forecast)"),
+                line("forecast", "lo", "v lower bound (lo)")],
+        axes={"x": Axis(label="t"), "y": Axis(label="v", unit="m")})
+    arts = build_figure(spec).layer_artists
+    colours = [[ln.get_color() for ln in arts[i]] for i in range(4)]
+    assert colours[2] == colours[0] and colours[3] == colours[1]  # forecast continues observed
+    assert len({c for cs in colours[:2] for c in cs}) == 4  # A/B x value/bound all distinct
