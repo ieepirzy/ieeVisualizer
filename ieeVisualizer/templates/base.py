@@ -200,7 +200,14 @@ def coerce_data(data: Any, issues: Issues) -> DataSnapshot | None:
     ``{name: values}``. Returns a *copy*; the caller's object is never
     mutated."""
     if isinstance(data, DataSnapshot):
-        return dataset_from_dict(dataset_to_dict(data), "/data")  # deep, normalised copy
+        try:
+            return dataset_from_dict(dataset_to_dict(data), "/data")  # deep, normalised copy
+        except SpecError as e:
+            # A snapshot mutated after construction can hold values its own
+            # constructor would refuse; report them instead of raising.
+            for i in e.issues:
+                issues.error(i.path, "invalid_data", i.message)
+            return None
     if isinstance(data, DatasetRef):
         issues.error("/data", "unresolved_reference",
                      f"data is a reference ({data.kind} {data.id!r}); templates need inline "

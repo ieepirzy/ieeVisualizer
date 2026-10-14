@@ -15,7 +15,9 @@ from ieeVisualizer.templates import TemplateInputError, TimeseriesTemplate, get
 
 TS = get("timeseries")
 
-WEEKS = ["2026-09-07", "2026-09-14", "2026-09-21", "2026-09-28", "2026-10-05", "2026-10-12"]
+WEEK_DATES = ["2026-09-07", "2026-09-14", "2026-09-21", "2026-09-28", "2026-10-05", "2026-10-12"]
+# DataSnapshot stores datetimes in one canonical form (always with seconds).
+WEEKS = [d + "T00:00:00" for d in WEEK_DATES]
 
 
 def snap(columns, units=None, dtypes=None):
@@ -23,7 +25,7 @@ def snap(columns, units=None, dtypes=None):
 
 
 def revenue(**extra):
-    cols = {"week": WEEKS, "revenue": [100.0, None, 120.0, 130.0, 140.0, 150.0]}
+    cols = {"week": WEEK_DATES, "revenue": [100.0, None, 120.0, 130.0, 140.0, 150.0]}
     cols.update(extra)
     return snap(cols, units={"revenue": "EUR"}, dtypes={"week": "datetime"})
 
@@ -324,5 +326,7 @@ def test_timezone_mixing_refused_and_z_suffix_accepted():
                     forecast_from="2026-01-01T23:00:00+00:00")
     assert "forecast" not in spec.datasets
     data.columns["t"].values = ["2026-01-01T00:00:00", "2026-01-02T00:00:00+02:00"]
+    # The spec's own datetime rules now refuse the mix when the snapshot is
+    # copied; check() must report that as an issue, not raise.
     assert errors(TS.check(data, time_column="t", value_columns="y")) == [
-        ("/data/columns/t", "invalid_column_values")]
+        ("/data/columns/t/values", "invalid_data")]
