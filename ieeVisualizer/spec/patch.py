@@ -9,6 +9,12 @@ RFC 6902. ``replace``/``remove`` require the target to exist.
 
 The ops are applied atomically to a deep copy of the dict form, which is then
 re-parsed and (by default) re-validated. The input spec is never mutated.
+
+``test`` compares JSON values, not Python values (RFC 6902 section 4.6):
+the types must match, so ``true`` is not ``1`` and ``"1"`` is not ``1``;
+numbers are equal when their values are mathematically equal, so ``1``
+equals ``1.0``; arrays compare element by element and objects member by
+member, with no extra or missing members.
 """
 
 from __future__ import annotations
@@ -69,6 +75,21 @@ def _index(lst: list[Any], key: str, at: str, where: str, allow_end: bool) -> in
     return idx
 
 
+def json_equal(a: Any, b: Any) -> bool:
+    """Type-aware JSON equality used by the ``test`` op (see module docstring)."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a == b
+    if isinstance(a, (int, float)) or isinstance(b, (int, float)):
+        return isinstance(a, (int, float)) and isinstance(b, (int, float)) and a == b
+    if isinstance(a, list) or isinstance(b, list):
+        return (isinstance(a, list) and isinstance(b, list) and len(a) == len(b)
+                and all(json_equal(x, y) for x, y in zip(a, b)))
+    if isinstance(a, dict) or isinstance(b, dict):
+        return (isinstance(a, dict) and isinstance(b, dict) and a.keys() == b.keys()
+                and all(json_equal(a[k], b[k]) for k in a))
+    return type(a) is type(b) and a == b
+
+
 def _apply_one(doc: Any, op: dict[str, Any], where: str) -> Any:
     if not isinstance(op, dict) or op.get("op") not in OPS:
         raise _err(where, "invalid_op",
@@ -85,7 +106,7 @@ def _apply_one(doc: Any, op: dict[str, Any], where: str) -> Any:
         if kind == "remove":
             raise _err(where, "invalid_op", "cannot remove the whole spec.")
         if kind == "test":
-            if doc != value:
+            if not json_equal(doc, value):
                 raise _err(where, "test_failed", "the document does not equal the test value.")
             return doc
         return value
@@ -97,7 +118,7 @@ def _apply_one(doc: Any, op: dict[str, Any], where: str) -> Any:
         if kind == "remove":
             del parent[key]
         elif kind == "test":
-            if parent[key] != value:
+            if not json_equal(parent[key], value):
                 raise _err(where, "test_failed", f"{path} is {parent[key]!r}, not {value!r}.")
         else:
             parent[key] = value
@@ -109,7 +130,7 @@ def _apply_one(doc: Any, op: dict[str, Any], where: str) -> Any:
             parent[idx] = value
         elif kind == "remove":
             del parent[idx]
-        elif parent[idx] != value:
+        elif not json_equal(parent[idx], value):
             raise _err(where, "test_failed", f"{path} is {parent[idx]!r}, not {value!r}.")
     else:
         raise _err(where, "path_not_found", f"the parent of {path} is a scalar value.")

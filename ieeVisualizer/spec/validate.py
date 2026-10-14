@@ -10,6 +10,9 @@ code                       meaning
 ========================== =====================================================
 unsupported_schema_version spec.schema_version not readable by this library
 invalid_value              a field holds a value outside its allowed set
+invalid_type               a field holds a value of the wrong JSON type (the same
+                           value would be refused by from_dict after to_dict)
+non_finite_number          NaN or an infinity where a number is stored
 no_layers                  the figure has nothing to draw
 empty_dataset              dataset with no columns or zero rows
 column_length_mismatch     columns of one snapshot differ in length
@@ -33,14 +36,25 @@ missing_field              mark- or annotation-specific shape problems
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from typing import Any
 
-from ._common import SUPPORTED_SCHEMA_VERSIONS, ValidationIssue, ptr, suggest
+from ._common import (
+    SUPPORTED_SCHEMA_VERSIONS,
+    ValidationIssue,
+    _jtype,
+    is_number,
+    json_problem,
+    ptr,
+    suggest,
+)
 from .data import Column, ColumnSchema, DatasetRef, DataSnapshot
 from .figure import (
     LEGEND_POSITIONS,
     SCALES,
+    Annotation,
+    Axis,
     FigureSpec,
     ReferenceBand,
     ReferenceLine,
@@ -55,6 +69,7 @@ from .marks import (
     REQUIRED_CHANNELS,
     ROLES,
     BarMark,
+    Encoding,
     FunctionMark,
     HistogramMark,
     Mark,
@@ -85,9 +100,181 @@ class _Ctx:
         return a.scale if a is not None else None
 
 
+# --------------------------------------------------------------------------
+# Type checks. A spec built (or mutated) in Python can hold values that
+# from_dict would refuse; these report them, with the parser's paths, so that
+# "validate() found no errors" implies the spec survives to_dict/from_dict.
+# Each returns False when it reported something; semantic checks on that part
+# are then skipped (they would compare values of the wrong type).
+# --------------------------------------------------------------------------
+
+
+def _bad_type(c: _Ctx, path: str, what: str, expected: str, v: Any) -> bool:
+    c.add(path, "invalid_type", f"{what} must be {expected}, got {_jtype(v)} {v!r}.")
+    return False
+
+
+def _t_number(c: _Ctx, path: str, v: Any, what: str, optional: bool = False) -> bool:
+    if v is None and optional:
+        return True
+    if not is_number(v):
+        return _bad_type(c, path, what, "a number", v)
+    if not math.isfinite(v):
+        c.add(path, "non_finite_number",
+              f"{what} is {v!r}; NaN and infinities cannot be stored in JSON. Use a finite "
+              "number.")
+        return False
+    return True
+
+
+def _t_int(c: _Ctx, path: str, v: Any, what: str, optional: bool = False) -> bool:
+    if v is None and optional:
+        return True
+    if not (is_number(v) and math.isfinite(v) and float(v).is_integer()):
+        return _bad_type(c, path, what, "an integer", v)
+    return True
+
+
+def _t_bool(c: _Ctx, path: str, v: Any, what: str) -> bool:
+    return isinstance(v, bool) or _bad_type(c, path, what, "true or false", v)
+
+
+def _t_str(c: _Ctx, path: str, v: Any, what: str, optional: bool = False) -> bool:
+    return (v is None and optional) or isinstance(v, str) or _bad_type(
+        c, path, what, "a string" + (" or null" if optional else ""), v)
+
+
+def _t_scalar(c: _Ctx, path: str, v: Any, what: str) -> bool:
+    if v is None or isinstance(v, str):
+        return True
+    if is_number(v):
+        return _t_number(c, path, v, what)
+    return _bad_type(c, path, what, "a number, an ISO-8601 string or null", v)
+
+
+def _t_json_object(c: _Ctx, path: str, v: Any, what: str) -> bool:
+    if not isinstance(v, dict):
+        return _bad_type(c, path, what, "a JSON object", v)
+    problem = json_problem(v, path)
+    if problem:
+        c.add(*problem)
+        return False
+    return True
+
+
+def _t_all(*results: bool) -> bool:
+    return all(results)  # every check above has already run and reported
+
+
+def _check_figure_types(c: _Ctx) -> None:
+    spec = c.spec
+    for k in ("id", "title", "caption", "theme"):
+        _t_str(c, "/" + k, getattr(spec, k), k, optional=True)
+    _t_json_object(c, "/metadata", spec.metadata, "metadata")
+    lg = spec.legend
+    _t_all(_t_bool(c, "/legend/show", lg.show, "legend show"),
+           _t_str(c, "/legend/title", lg.title, "legend title", optional=True))
+    for name, ds in spec.datasets.items():
+        if isinstance(ds, DataSnapshot):
+            pp = ptr("datasets", name, "provenance")
+            for k in ("source", "query", "retrieved_at", "source_version", "timezone",
+                      "run_id", "notes"):
+                _t_str(c, f"{pp}/{k}", getattr(ds.provenance, k), k, optional=True)
+            _t_json_object(c, pp + "/extra", ds.provenance.extra, "provenance extra")
+
+
+def _axis_types_ok(c: _Ctx, p: str, axis: Axis) -> bool:
+    ok = _t_all(*(_t_str(c, f"{p}/{k}", getattr(axis, k), k, optional=True)
+                  for k in ("label", "unit", "scale")))
+    lim = axis.limits
+    if lim is None:
+        return ok
+    if not isinstance(lim, (list, tuple)) or len(lim) != 2:
+        c.add(p + "/limits", "invalid_limits",
+              "limits must be [min, max]; use null for an automatic end.")
+        return False
+    return _t_all(ok, *(_t_scalar(c, f"{p}/limits/{i}", v, "a limit")
+                        for i, v in enumerate(lim)))
+
+
+def _mark_types_ok(c: _Ctx, p: str, m: Mark) -> bool:
+    checks = [
+        _t_str(c, p + "/data", m.data, "data", optional=True),
+        _t_str(c, p + "/name", m.name, "name", optional=True),
+        _t_str(c, p + "/role", m.role, "role"),
+        _t_json_object(c, p + "/style", m.style, "style"),
+    ]
+    if isinstance(m.encoding, dict):
+        for ch, e in m.encoding.items():
+            ep = f"{p}/encoding/{ch}"
+            if isinstance(e, str):  # shorthand, normalised by to_dict
+                continue
+            if not isinstance(e, Encoding):
+                checks.append(_bad_type(c, ep, f"encoding {ch!r}", '{"field": "<column>"}', e))
+                continue
+            checks += [_t_str(c, ep + "/field", e.field, "field"),
+                       _t_str(c, ep + "/title", e.title, "title", optional=True)]
+    else:
+        checks.append(_bad_type(c, p + "/encoding", "encoding", "a JSON object", m.encoding))
+    if isinstance(m, BarMark):
+        checks.append(_t_str(c, p + "/orientation", m.orientation, "orientation"))
+    elif isinstance(m, HistogramMark):
+        checks += [_t_int(c, p + "/bins", m.bins, "bins", optional=True),
+                   _t_bool(c, p + "/density", m.density, "density"),
+                   _t_number_list(c, p + "/bin_edges", m.bin_edges, "bin_edges", optional=True)]
+    elif isinstance(m, QuiverMark):
+        checks += [_t_number(c, p + "/scale", m.scale, "scale", optional=True),
+                   _t_bool(c, p + "/normalize", m.normalize, "normalize")]
+    elif isinstance(m, FunctionMark):
+        checks += [_t_str(c, p + "/expression", m.expression, "expression", optional=True),
+                   _t_int(c, p + "/samples", m.samples, "samples")]
+        if isinstance(m.variables, list):
+            checks += [_t_str(c, f"{p}/variables/{i}", v, "variable")
+                       for i, v in enumerate(m.variables)]
+        else:
+            checks.append(_bad_type(c, p + "/variables", "variables", "an array", m.variables))
+        for key, what in (("domain", "domain"), ("parameters", "parameters")):
+            val = getattr(m, key)
+            if not isinstance(val, dict):
+                checks.append(_bad_type(c, f"{p}/{key}", what, "a JSON object", val))
+                continue
+            for k, v in val.items():
+                kp = f"{p}/{key}/{ptr(k)[1:]}"
+                checks.append(_t_number_list(c, kp, v, "domain") if key == "domain"
+                              else _t_number(c, kp, v, "parameter"))
+    return _t_all(*checks)
+
+
+def _t_number_list(c: _Ctx, path: str, v: Any, what: str, optional: bool = False) -> bool:
+    if v is None and optional:
+        return True
+    if not isinstance(v, (list, tuple)):
+        return _bad_type(c, path, what, "an array of numbers", v)
+    return _t_all(*(_t_number(c, f"{path}/{i}", x, f"{what} item")
+                    for i, x in enumerate(v)))
+
+
+def _annotation_types_ok(c: _Ctx, p: str, a: Annotation) -> bool:
+    checks = [_t_str(c, p + "/label", a.label, "label", optional=True),
+              _t_json_object(c, p + "/style", a.style, "style")]
+    if isinstance(a, TextAnnotation):
+        checks.append(_t_str(c, p + "/text", a.text, "text"))
+    if isinstance(a, (ReferenceLine, ReferenceBand)):
+        checks.append(_t_str(c, p + "/axis", a.axis, "axis"))
+    for k in ("x", "y", "z", "value", "start", "end"):
+        if hasattr(a, k):
+            checks.append(_t_scalar(c, f"{p}/{k}", getattr(a, k), k))
+    return _t_all(*checks)
+
+
 def validate(spec: FigureSpec) -> list[ValidationIssue]:
     """Return every issue found in ``spec`` (empty list = valid)."""
     c = _Ctx(spec)
+    _check_figure_types(c)
+    if not isinstance(spec.coordinate_system, str):
+        _bad_type(c, "/coordinate_system", "coordinate_system", "a string",
+                  spec.coordinate_system)
+        return c.issues
     if spec.schema_version not in SUPPORTED_SCHEMA_VERSIONS:
         c.add("/schema_version", "unsupported_schema_version",
               f"schema_version {spec.schema_version!r} is not supported; use "
@@ -98,7 +285,9 @@ def validate(spec: FigureSpec) -> list[ValidationIssue]:
               f"{suggest(spec.coordinate_system, COORDINATE_SYSTEMS)} Use one of "
               f"{', '.join(COORDINATE_SYSTEMS)}.")
     _check_axes(c)
-    if spec.legend.position not in LEGEND_POSITIONS:
+    if not isinstance(spec.legend.position, str):
+        _bad_type(c, "/legend/position", "legend position", "a string", spec.legend.position)
+    elif spec.legend.position not in LEGEND_POSITIONS:
         c.add("/legend/position", "invalid_value",
               f"legend position {spec.legend.position!r} is unknown; use one of "
               f"{', '.join(LEGEND_POSITIONS)}.")
@@ -118,6 +307,8 @@ def validate(spec: FigureSpec) -> list[ValidationIssue]:
 def _check_axes(c: _Ctx) -> None:
     for key, axis in c.spec.axes.items():
         p = ptr("axes", key)
+        if not _axis_types_ok(c, p, axis):
+            continue
         if key not in c.axis_keys:
             c.add(p, "unknown_axis",
                   f"axis {key!r} does not exist in {c.spec.coordinate_system}; valid axes are "
@@ -168,6 +359,8 @@ def _check_mark(c: _Ctx, i: int, m: Mark) -> None:
         c.add(p + "/type", "unknown_mark_type",
               f"unknown mark type {m.type!r}.{suggest(m.type, MARK_TYPES)} Supported: "
               f"{', '.join(MARK_TYPES)}.")
+        return
+    if not _mark_types_ok(c, p, m):
         return
     if m.role not in ROLES:
         c.add(p + "/role", "invalid_value",
@@ -353,6 +546,8 @@ def _check_units(c: _Ctx) -> None:
 
 def _check_annotation(c: _Ctx, i: int, a: Any) -> None:
     p = f"/annotations/{i}"
+    if isinstance(a, Annotation) and not _annotation_types_ok(c, p, a):
+        return
     if isinstance(a, TextAnnotation):
         if not a.text:
             c.add(p + "/text", "missing_field", "a text annotation needs non-empty text.")

@@ -161,3 +161,25 @@ def test_draws_into_given_axes_and_rejects_wrong_projection():
 def test_style_is_applied():
     fig = Visualizer(style="dark_background").visualize(np.sin, dim=2)
     assert fig.get_facecolor()[:3] == (0.0, 0.0, 0.0)
+
+
+@pytest.mark.parametrize("symbols", ["x", "x,", ["x"]])
+def test_symbols_given_as_string_is_parsed_like_sympy_symbols(symbols):
+    x = sp.symbols("x")
+    xs, y = line_data(Visualizer(N=9).visualize(x**2, dim=2, symbols=symbols))
+    np.testing.assert_allclose(y, xs**2)
+
+
+def test_symbols_string_names_inputs_in_order_for_surface():
+    x, y = sp.symbols("x y")
+    fig = Visualizer(N=10).visualize(x, dim=3, symbols="y x", domain=[(0, 1), (5, 6)])
+    pts = surface_vertices(fig)
+    np.testing.assert_allclose(pts[:, 2], pts[:, 1])  # first input is y, so z = second axis
+    ax = fig.axes[0]
+    assert (ax.get_xlabel(), ax.get_ylabel()) == ("y", "x")
+
+
+def test_symbols_string_with_wrong_count_raises():
+    x = sp.symbols("x")
+    with pytest.raises(ValueError, match="symbol"):
+        Visualizer().visualize(x**2, dim=2, symbols="x y")

@@ -37,3 +37,16 @@ def test_make_grid_shapes_and_xy_indexing():
     np.testing.assert_allclose(Y[:, 0], np.linspace(10, 20, 4))
     (x,) = make_grid([(0, 1)], 5, linspace=True)
     assert x.shape == (5,)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        np.array(["2020-01-01", "2020-02-01"], dtype="datetime64[D]"),
+        [np.datetime64("2020-01-01"), np.datetime64("2020-02-01")],
+        np.array([1, 2], dtype="timedelta64[s]"),
+    ],
+)
+def test_normalize_bounds_rejects_datetime_domains(bad):
+    with pytest.raises(ValueError, match="numeric"):
+        normalize_bounds(bad, 1)
