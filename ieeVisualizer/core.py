@@ -1,6 +1,7 @@
 """Legacy convenience API: one call from a function to a Matplotlib figure."""
 
 import contextlib
+from dataclasses import dataclass
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -16,6 +17,25 @@ _SUPPORTED_DIMS = (2, 3)
 # 200**3 is millions of 3D arrows, so fields default to a coarser grid unless
 # ``n=`` is passed explicitly.
 _VF_DEFAULT_N = {2: 20, 3: 8}
+
+
+@dataclass
+class Sampled:
+    """What one legacy call sampled: the grid, the masked output component(s)
+    (non-finite points masked), axis labels and the sampling settings."""
+
+    dim: int
+    grid: tuple
+    comps: list
+    labels: list
+    bounds: tuple
+    n: int
+    linspace: bool
+
+
+def field_magnitude(comps):
+    """Euclidean norm of the field components (masked where any is masked)."""
+    return np.ma.sqrt(sum(c**2 for c in comps))
 
 
 def _check_dim(dim) -> int:
@@ -87,6 +107,33 @@ class Visualizer:
         gen = self.rng if rng is None else as_rng(rng)
         return linspace, gen
 
+    # One sampling path for drawing (visualize/visualize_vf) and for the spec
+    # bridge (to_spec/export), so both see exactly the same samples.
+
+    def _sample_function(self, fn, dim, linspace, domain, n, symbols, rng) -> Sampled:
+        dim = _check_dim(dim)
+        n_inputs = dim - 1
+        func = to_numeric(fn, n_inputs, symbols=symbols)
+        bounds = normalize_bounds(domain, n_inputs)
+        linspace, gen = self._sampling(linspace, rng)
+        n = self.N if n is None else n
+        grid = make_grid(bounds, n, linspace=linspace, rng=gen)
+        comps = evaluate(func, grid)
+        labels = _symbol_names(fn, symbols, n_inputs, ("x", "y"))
+        return Sampled(dim, grid, comps, labels, bounds, n, linspace)
+
+    def _sample_field(self, fn, dim, linspace, domain, n, symbols, rng) -> Sampled:
+        dim = _check_dim(dim)
+        linspace, gen = self._sampling(linspace, rng)
+        func = to_numeric(fn, dim, n_outputs=dim, symbols=symbols)
+        bounds = normalize_bounds(domain, dim)
+        if n is None:
+            n = min(self.N, _VF_DEFAULT_N[dim])
+        grid = make_grid(bounds, n, linspace=linspace, rng=gen)
+        comps = evaluate(func, grid, n_outputs=dim)
+        labels = _symbol_names(fn, symbols, dim, ("x", "y", "z"))
+        return Sampled(dim, grid, comps, labels, bounds, n, linspace)
+
     # -- public API ------------------------------------------------------------
 
     def visualize(
@@ -125,14 +172,8 @@ class Visualizer:
 
         :return: the ``matplotlib.figure.Figure`` drawn into
         """
-        dim = _check_dim(dim)
-        n_inputs = dim - 1
-        func = to_numeric(fn, n_inputs, symbols=symbols)
-        bounds = normalize_bounds(domain, n_inputs)
-        linspace, gen = self._sampling(linspace, rng)
-        grid = make_grid(bounds, self.N if n is None else n, linspace=linspace, rng=gen)
-        (values,) = evaluate(func, grid)
-        labels = _symbol_names(fn, symbols, n_inputs, ("x", "y"))
+        s = self._sample_function(fn, dim, linspace, domain, n, symbols, rng)
+        dim, grid, values, labels = s.dim, s.grid, s.comps[0], s.labels
 
         with self._style_context():
             fig, ax = self._axes(ax, three_d=(dim == 3))
@@ -191,20 +232,14 @@ class Visualizer:
         :return: the ``matplotlib.figure.Figure`` drawn into
         """
         dim = _check_dim(dim)
-        linspace, gen = self._sampling(linspace, rng)
         if streamplot and dim != 2:
             raise ValueError("streamplot=True is only supported for dim=2")
-        if streamplot and not linspace:
+        if streamplot and not (self.linspace if linspace is None else linspace):
             raise ValueError("streamplot=True needs an evenly spaced grid (linspace=True)")
 
-        func = to_numeric(fn, dim, n_outputs=dim, symbols=symbols)
-        bounds = normalize_bounds(domain, dim)
-        if n is None:
-            n = min(self.N, _VF_DEFAULT_N[dim])
-        grid = make_grid(bounds, n, linspace=linspace, rng=gen)
-        comps = evaluate(func, grid, n_outputs=dim)
-        magnitude = np.ma.sqrt(sum(c**2 for c in comps))
-        labels = _symbol_names(fn, symbols, dim, ("x", "y", "z"))
+        s = self._sample_field(fn, dim, linspace, domain, n, symbols, rng)
+        grid, comps, labels, bounds, n = s.grid, s.comps, s.labels, s.bounds, s.n
+        magnitude = field_magnitude(comps)
         cmap = self._cmap()
 
         with self._style_context():
@@ -231,6 +266,112 @@ class Visualizer:
         if show:
             plt.show()
         return fig
+
+    # -- declarative bridge ----------------------------------------------------
+
+    def to_spec(
+        self,
+        fn,
+        *,
+        dim,
+        kind="function",
+        linspace=None,
+        domain=(-5, 5),
+        n=None,
+        symbols=None,
+        rng=None,
+        title=None,
+        units=None,
+        role="reference",
+    ):
+        """
+        Build the :class:`~ieeVisualizer.spec.FigureSpec` equivalent of
+        ``visualize`` (``kind="function"``) or ``visualize_vf``
+        (``kind="vector_field"``).
+
+        ``fn``, ``dim``, ``linspace``, ``domain``, ``n``, ``symbols`` and ``rng``
+        mean exactly what they mean for those methods, and the samples come
+        from the same code path: with the same arguments and generator state,
+        the spec holds the values ``visualize``/``visualize_vf`` would draw.
+        They are stored as an inline snapshot (dataset ``"samples"``) whose
+        provenance records the input (SymPy expression string, or the
+        callable's ``module.qualname``), domain, ``n``, sampling mode, the
+        per-call integer seed if one was given, and the number of non-finite
+        points (stored as null). Render it with ``ieeVisualizer.render.render``
+        or store it with :meth:`export`.
+
+        :param kind: ``"function"`` (line for dim=2, surface for dim=3) or
+            ``"vector_field"`` (quiver; 2D arrows coloured by magnitude)
+        :param title: optional figure title
+        :param units: optional units by axis, shown in the axis labels as
+            ``"label (unit)"``. Function plots: ``"x"``, ``"y"`` (and ``"z"``
+            for dim=3), where the last axis is the function value. Vector
+            fields: ``"x"``, ``"y"`` (``"z"``) for positions and ``"vector"``
+            for the components (and magnitude).
+        :param role: layer role; ``"reference"`` (default: a computed formula,
+            not a measurement, drawn lighter) or ``"observed"``
+
+        Not representable in spec schema 1.0, so not produced here:
+        ``streamplot`` streamlines, the equal aspect ratio of 2D fields, and
+        per-arrow magnitude colours in 3D (3D arrows keep the legacy lengths
+        but are drawn in one colour). ``style=``/``ax=``/``show=`` are
+        drawing options of the legacy calls and have no spec equivalent.
+
+        Why ``visualize()``/``visualize_vf()`` still draw directly instead of
+        rendering this spec through the adapter: they must keep returning a
+        pyplot-managed Figure, drawing into a caller's ``ax=``, applying
+        ``style=``, drawing streamlines and colouring 3D arrows by magnitude,
+        none of which the adapter (which builds standalone, pyplot-free
+        figures under a fixed default style for byte-reproducible output)
+        provides. Equivalence of the data drawn both ways is tested instead
+        (``tests/test_legacy_bridge.py``).
+
+        :return: a ``FigureSpec`` that validates without errors
+        """
+        from ._bridge import KINDS, field_spec, function_spec
+
+        if kind not in KINDS:
+            raise ValueError(f"kind must be one of {', '.join(KINDS)}, got {kind!r}")
+        build = function_spec if kind == "function" else field_spec
+        return build(self, fn, dim=dim, linspace=linspace, domain=domain, n=n,
+                     symbols=symbols, rng=rng, title=title, units=units, role=role)
+
+    def export(
+        self,
+        fn,
+        out,
+        *,
+        dim,
+        kind="function",
+        formats=("png", "svg"),
+        name=None,
+        request=None,
+        clock=None,
+        **spec_options,
+    ):
+        """
+        Sample ``fn`` like :meth:`to_spec` and export it as PNG/SVG (or PDF)
+        files plus ``spec.json`` and a provenance ``manifest.json`` via
+        :func:`ieeVisualizer.artifacts.export`.
+
+        :param out: a directory (written as ``<out>/<artifact_id>/...``) or any
+            ``ieeVisualizer.artifacts`` writer
+        :param formats: formats to render, e.g. ``("png", "svg")``
+        :param name: artifact id prefix (default ``"viz"``)
+        :param request: ``ieeVisualizer.render.RenderRequest`` for size/dpi/theme
+        :param clock: callable returning the ``created_at`` datetime
+        :param spec_options: any other :meth:`to_spec` keyword (``linspace``,
+            ``domain``, ``n``, ``symbols``, ``rng``, ``title``, ``units``, ``role``)
+        :return: the ``VisualizationArtifact`` manifest
+        """
+        import os
+
+        from .artifacts import LocalDirectoryWriter
+        from .artifacts import export as export_artifact
+
+        spec = self.to_spec(fn, dim=dim, kind=kind, **spec_options)
+        writer = LocalDirectoryWriter(out) if isinstance(out, (str, os.PathLike)) else out
+        return export_artifact(spec, formats, writer, name=name, request=request, clock=clock)
 
     @staticmethod
     def _quiver3d(ax, grid, comps, magnitude, bounds, n, cmap):

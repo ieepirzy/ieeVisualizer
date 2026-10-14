@@ -50,9 +50,12 @@ artifact.artifact_id, artifact.variant("png").sha256
 ## What the matplotlib adapter draws
 
 All eight marks in `cartesian2d`; line, scatter, quiver and function
-(surface for `z = f(x, y)`) in `cartesian3d`; line, scatter, area, bar and
-function in `polar` (`x` = angle in radians, or degrees when the column/axis
-unit is `deg`). Axis labels are `"Label (unit)"`, from the axis' own label
+(surface for `z = f(x, y)`) in `cartesian3d`. A *sampled* function in 3D is
+a surface too: its rows must cover each (x, y) pair of a rectilinear grid
+exactly once, in any order (`not_a_grid` otherwise; use a line mark for a 3D
+curve), a null z is a hole and a null x/y is an error. Line, scatter, area,
+bar and function in `polar` (`x` = angle in radians, or degrees when the
+column/axis unit is `deg`). Axis labels are `"Label (unit)"`, from the axis' own label
 and unit or else the first bound column's title/name and unit. Datetime
 columns are drawn as dates; timestamps with UTC offsets are placed at their
 true instant and labelled in the datasets' `provenance.timezone` (or in UTC,
@@ -63,9 +66,16 @@ error.
 **Missing data.** A null is never drawn as 0. Lines and areas break at a null
 (a lone point between gaps gets a marker so it stays visible); scatter
 points, arrows and bars with a null are left out, and a labelled bar slot
-with no value says "no data"; null heatmap cells stay blank. Each case adds a
+with no value says "no data" (at the plot edge on a log value axis, where 0
+has no position); null heatmap cells stay blank. Each case adds a
 `null_values_omitted` warning. A layer or series with no complete row is a
 `RenderError` (`empty_series`).
+
+**Quiver scale.** A 2D quiver without `scale` gets one so the longest arrow
+spans one grid cell (the smaller of the x and y extents divided by the
+number of distinct positions minus one), drawn in data coordinates
+(`angles="xy"`), and the view is widened to include every arrow tip, so no
+arrow runs out of the plot. In 3D the default length factor is 1.
 
 **Roles.** `forecast` is always distinguishable: dashed lines (a solid style
 is overridden with a warning), hollow markers, hatched bars/areas, and the
@@ -91,6 +101,27 @@ rc context is process-global: serialise concurrent renders across threads.
 returns a `BuiltFigure` (`figure`, `axes`, `layer_artists[i]`,
 `annotation_artists`, `caption`, `warnings`) without exporting; tests use it
 to compare drawn data with the dataset.
+
+## From the legacy API
+
+`Visualizer.to_spec(fn, dim=..., kind="function" | "vector_field")` builds the
+spec equivalent of `visualize()` / `visualize_vf()` from the same samples
+(same sampling code path): dataset `samples` with fixed column names (`x`,
+`y`, `f`; or `x`, `y`[, `z`], `u`, `v`[, `w`], `magnitude`), the user's
+symbol names in the axis labels, optional `units=` by axis (`"vector"` for
+field components), and provenance recording the input (SymPy expression
+string, or the callable's `module.qualname`, never its address-bearing
+`repr`), domain, `n`, sampling mode, per-call integer seed and the number of
+non-finite points (stored as null). The layer role defaults to `reference`
+(a computed formula, drawn lighter). `Visualizer.export(fn, out, dim=...)`
+renders and stores it with a manifest, so the figure can be re-rendered
+from `spec.json` without the original callable.
+
+Not carried over (no spec 1.0 equivalent): streamlines, the equal aspect of
+2D fields, per-arrow magnitude colours in 3D (lengths match, colour is
+uniform), and the `ax=`/`style=`/`show=` drawing options. For those reasons
+`visualize()` and `visualize_vf()` still draw directly with Matplotlib; the
+tests check that both routes draw the same data.
 
 ## Artifacts
 
