@@ -29,11 +29,31 @@ def _is_sympy_vector(obj) -> bool:
     )
 
 
+def as_symbol_tuple(symbols) -> tuple[sp.Symbol, ...]:
+    """Normalize a ``symbols=`` argument to a tuple of SymPy symbols.
+
+    Accepts a single Symbol, a string parsed exactly as ``sympy.symbols`` parses
+    it (``"x"``, ``"x y"``, ``"x, y"``), or a sequence whose items are Symbols or
+    such strings. A string is never iterated character by character.
+    """
+    if isinstance(symbols, str):
+        symbols = sp.symbols(symbols)
+    if isinstance(symbols, sp.Symbol):
+        return (symbols,)
+    out: list[sp.Symbol] = []
+    for s in symbols:
+        if isinstance(s, str):
+            out.extend(as_symbol_tuple(s))
+        elif isinstance(s, sp.Symbol):
+            out.append(s)
+        else:
+            raise ValueError(f"symbols= must hold SymPy symbols or names, got {s!r}")
+    return tuple(out)
+
+
 def _resolve_symbols(exprs: Sequence, n_inputs: int, symbols) -> tuple[sp.Symbol, ...]:
     if symbols is not None:
-        if isinstance(symbols, sp.Symbol):
-            symbols = (symbols,)
-        symbols = tuple(symbols)
+        symbols = as_symbol_tuple(symbols)
         if len(symbols) != n_inputs:
             raise ValueError(f"expected {n_inputs} symbol(s) for this dim, got {len(symbols)}")
         free = set().union(*(sp.sympify(e).free_symbols for e in exprs))
@@ -139,7 +159,10 @@ def evaluate(
     if n_outputs is None:
         comps = [_real_array(raw, shape, "function")]
     else:
-        if isinstance(raw, np.ndarray) and raw.ndim > len(shape):
+        # An ndarray stacks its components along the first axis: either one
+        # full-shape array per component (ndim > grid ndim), or a 1-D array of
+        # constant components, accepted exactly like the tuple ``(u, v)``.
+        if isinstance(raw, np.ndarray) and (raw.ndim > len(shape) or raw.ndim == 1):
             raw = list(raw)
         if not isinstance(raw, (list, tuple)) or len(raw) != n_outputs:
             got = len(raw) if isinstance(raw, (list, tuple)) else type(raw).__name__

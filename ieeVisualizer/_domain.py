@@ -28,6 +28,17 @@ def normalize_bounds(domain, n_axes: int) -> tuple[Bounds, ...]:
     ``domain`` is either a single ``(lo, hi)`` pair, applied to every axis, or a
     sequence of ``n_axes`` such pairs.
     """
+    # datetime64/timedelta64 casts to float silently (as days, seconds, ... since
+    # the epoch, depending on the unit); that is not a numeric domain, so refuse it.
+    try:
+        kind = np.asarray(domain).dtype.kind
+    except (TypeError, ValueError):
+        kind = "O"
+    if kind in "mM":
+        raise ValueError(
+            f"domain must be numeric (lo, hi) pairs; datetime/timedelta bounds are not "
+            f"supported, got {domain!r}"
+        )
     try:
         arr = np.asarray(domain, dtype=float)
     except (TypeError, ValueError) as exc:

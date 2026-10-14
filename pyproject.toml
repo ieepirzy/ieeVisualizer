@@ -17,12 +17,15 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "jsonschema",
     "pytest",
     "ruff",
 ]
 
-[tool.setuptools]
-packages = ["ieeVisualizer"]
+# Discover subpackages too; a bare ``packages = ["ieeVisualizer"]`` ships only
+# the top-level package and silently drops e.g. ``ieeVisualizer.spec``.
+[tool.setuptools.packages.find]
+include = ["ieeVisualizer*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
