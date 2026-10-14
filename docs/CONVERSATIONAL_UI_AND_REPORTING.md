@@ -102,3 +102,49 @@ This **should not leapfrog** baseline library fixes or become a full report-writ
 - What verification boundary prevents unsupported visual claims and fabricated report narratives?
 
 **Design directive:** emulate the *composability and inline interaction* of modern conversational UIs, **not** a proprietary ChatGPT component syntax. ieeVisualizer must remain useful outside any one chat provider.
+
+## 5.2 General visual composition is first-class, not a chart afterthought
+
+**Core principle:** ieeVisualizer is a system for modeling and presenting *visual information*, not just plotting numerical series. The agent-reporting pipeline diagram in the discussion is itself a canonical ieeVisualizer use case. The same first-class specification should express diagrams, workflow/process maps, architecture diagrams, entity-relationship views, network and dependency graphs, state machines, timelines, decision trees, explanatory illustrations, hierarchies, linked annotated cards and hybrid chart/diagram/story layouts. Model meaningful relations and interactions, not merely a rasterized snapshot.
+
+A **general composition grammar** should include:
+
+- **Nodes:** labeled containers, cards, symbolic entities, component instances, figures, icons, text, images and rich mathematical labels.
+- **Edges/relations:** typed, directed or undirected links; dataflow, dependency, causality claims (explicitly labeled as such), transformations, containment, ownership and temporal transitions; labels and routing.
+- **Layout:** declarative stacks, grids, groups, layers, swimlanes, trees, DAGs, freeform positioning, responsive reflow, constraints and optional automatic layout engines (e.g. dagre/ELK candidates, not commitments).
+- **Interactions:** focus, expand/collapse, selection, hover descriptions, drill-down, parameter changes, highlighted paths, linked figures, animated transitions and provenance inspection.
+- **Composition:** combine a process graph, statistics, annotations, equations and controls in one view. Charts and graphs are both instances of a broader visualization surface.
+- **Semantics:** node/edge types, identifiers, labels, reading order, keyboard navigation, alt descriptions, units and accessibility. A diagram's connectivity must remain inspectable independently of its rendering.
+
+Example: a reporting pipeline as structured nodes and edges, not handcrafted JSX:
+
+```json
+{
+  "kind": "flow",
+  "nodes": [
+    {"id": "agent", "component": "card", "label": "Reporting agent"},
+    {"id": "evidence", "component": "card", "label": "Authorized evidence"},
+    {"id": "viz", "component": "card", "label": "ieeVisualizer"},
+    {"id": "email", "component": "card", "label": "Email report"},
+    {"id": "web", "component": "card", "label": "Interactive report"}
+  ],
+  "edges": [
+    {"from": "agent", "to": "evidence"},
+    {"from": "evidence", "to": "viz"},
+    {"from": "viz", "to": "email"},
+    {"from": "viz", "to": "web"}
+  ],
+  "layout": "layered"
+}
+```
+
+The shape above is illustrative, **not a finalized schema**. Keep layout hints distinct from the semantic graph, so clients can offer accessible list or table alternatives and export to SVG/PNG/PDF or interactive web from the same underlying structure.
+
+### Extensibility ladder for agent rendering
+
+1. **Existing templates:** select a proven visual pattern and fill typed slots.
+2. **Compose registered primitives:** create novel diagrams, layouts, and mixed views declaratively; patch parameters or interactions without rewriting an entire interface.
+3. **Specialist plugins/adapters:** invoke a renderer or reusable custom component for needs that common primitives cannot satisfy.
+4. **Bespoke frontend source-code generation:** rare, consciously authorized escape hatch when the desired behavior genuinely cannot be expressed through the component and adapter model. Keep it sandboxed, versioned, auditable, scoped to explicit data/permissions, tested for accessibility and security, and eligible for promotion into a reusable component once its pattern recurs.
+
+**Anti-pattern:** generating an entire Vue/React/HTML application for a flowchart, KPI card, basic scientific plot or report composition. A diagram should be cheaper and safer to create than bespoke frontend code. **Opposite anti-pattern:** forcing unusual mathematical or scientific visualizations through a restrictive dashboard-only component catalog. Components must be extensible and backend-aware.
