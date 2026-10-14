@@ -6,7 +6,10 @@ does not pull in matplotlib/sympy; ``from ieeVisualizer import Visualizer`` and
 ``from ieeVisualizer.core import Visualizer`` both keep working.
 """
 
-__all__ = ["Visualizer"]
+__all__ = ["Visualizer", "__version__"]
+
+#: Keep in sync with ``version`` in pyproject.toml (recorded in render manifests).
+__version__ = "0.1.0"
 
 
 def __getattr__(name):

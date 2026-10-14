@@ -21,8 +21,10 @@ dev = [
     "ruff",
 ]
 
-[tool.setuptools]
-packages = ["ieeVisualizer"]
+[tool.setuptools.packages.find]
+# every subpackage (spec, render, artifacts, ...); a plain packages list would
+# leave them out of non-editable installs
+include = ["ieeVisualizer*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
