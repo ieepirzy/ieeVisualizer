@@ -360,10 +360,16 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
             artists.append(ctx.ax.bar(pp, vv, width=each, **kw))
         # A labelled slot with no bar reads as zero; say "no data" there.
         missing = ~np.ma.getmaskarray(p) & np.ma.getmaskarray(v)
+        # On a log value axis 0 is not a position; anchor the note to the
+        # edge of the plot instead, or it is silently not drawn.
+        val_axis = ctx.spec.axes.get(val_ch)
+        log = val_axis is not None and val_axis.scale == "log"
+        coords = "data" if not log else (("axes fraction", "data") if horizontal
+                                         else ("data", "axes fraction"))
         for q in np.asarray(p[missing].filled(np.nan)) + off:
             xy = (0.0, q) if horizontal else (q, 0.0)
             artists.append(ctx.ax.annotate(
-                "no data", xy, xytext=(3, 0) if horizontal else (0, 3),
+                "no data", xy, xycoords=coords, xytext=(3, 0) if horizontal else (0, 3),
                 textcoords="offset points", ha="left" if horizontal else "center",
                 va="center" if horizontal else "bottom", rotation=0 if horizontal else 90,
                 fontsize="x-small", color="0.4", style="italic"))
@@ -462,6 +468,21 @@ def draw_heatmap(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     return [mesh]
 
 
+def _cell_scale(a: dict[str, np.ndarray]) -> float:
+    """Data units per unit of |(u, v)| so the longest arrow spans one grid
+    cell: the smaller of the x and y extents divided by (distinct positions
+    - 1). Falls back to the other axis, then to 1, when an axis has a single
+    position; 1 when every vector is zero."""
+    cells = []
+    for k in ("x", "y"):
+        u = np.unique(a[k])
+        if u.size > 1:
+            cells.append((u[-1] - u[0]) / (u.size - 1))
+    cell = min(cells) if cells else 1.0
+    mmax = float(np.max(np.hypot(a["u"], a["v"])))
+    return cell / mmax if mmax > 0 else 1.0
+
+
 def draw_quiver(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     style = _style(ctx, i, m)
     chans = {ch: (_pos(ctx, m, ch) if ch in ("x", "y", "z") else _num(ctx, m, ch))
@@ -497,9 +518,16 @@ def draw_quiver(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                                 for p, c in (("x", "u"), ("y", "v"), ("z", "w"))),
                               had_data=True)
         return [q]
-    if m.scale is not None:
-        # spec: arrow length in data units = scale * |(u, v)|
-        kw.update(angles="xy", scale_units="xy", scale=1.0 / m.scale)
+    # spec: arrow length in data units = scale * |(u, v)|. Without a scale the
+    # longest arrow spans one grid cell (the rule visualize_vf uses in 3D), so
+    # arrows neither overlap their neighbours nor run out of the plot: the
+    # view is widened to include every arrow tip, which matplotlib's own
+    # autoscaling (sized at draw time, tails only) does not do.
+    length = m.scale if m.scale is not None else _cell_scale(a)
+    kw.update(angles="xy", scale_units="xy", scale=1.0 / length)
+    tips_x, tips_y = a["x"] + length * a["u"], a["y"] + length * a["v"]
+    ctx.ax.update_datalim(np.column_stack([np.concatenate([a["x"], tips_x]),
+                                           np.concatenate([a["y"], tips_y])]))
     args = [a["x"], a["y"], a["u"], a["v"]]
     if cvals is not None:
         args.append(np.asarray(cvals[valid], dtype=float))
@@ -512,8 +540,50 @@ def draw_quiver(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     return [q]
 
 
+def _sampled_surface(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
+    """A sampled ``function`` in 3D is ``z = f(x, y)``: a surface, like the
+    symbolic form, not a polyline zig-zagging through the grid. Its rows must
+    form a complete rectilinear grid (one row per (x, y) pair, any order;
+    unevenly spaced axes are fine). A null z is a hole in the surface; a null
+    x or y cannot be placed and is an error."""
+    path = f"/layers/{i}"
+    if "series" in m.encoding:
+        raise RenderError([issue(f"{path}/encoding/series", "unsupported_channel",
+                                 "a sampled 3D function is drawn as one surface; split series "
+                                 "into separate layers.")])
+    style = _style(ctx, i, m)
+    x, y, z = _pos(ctx, m, "x"), _pos(ctx, m, "y"), _pos(ctx, m, "z")
+    if np.ma.getmaskarray(x).any() or np.ma.getmaskarray(y).any():
+        raise RenderError([issue(f"{path}/encoding/x", "null_in_key_column",
+                                 f"layer {i} has rows with a null x or y; a surface point "
+                                 "cannot be placed without both. Drop those rows upstream.")])
+    xs, ys = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    xu, yu = np.unique(xs), np.unique(ys)
+    xi, yi = np.searchsorted(xu, xs), np.searchsorted(yu, ys)
+    seen = np.zeros((yu.size, xu.size), dtype=int)
+    np.add.at(seen, (yi, xi), 1)
+    if xu.size < 2 or yu.size < 2 or not (seen == 1).all():
+        raise RenderError([issue(path, "not_a_grid",
+                                 f"layer {i} is a sampled 3D function, drawn as a surface "
+                                 "z = f(x, y), so its rows must cover every (x, y) pair of a "
+                                 f"grid exactly once (got {xs.size} rows over {xu.size} x and "
+                                 f"{yu.size} y values). For a 3D curve use a line mark.")])
+    _require(_mask(z), i, m, None)
+    _report_nulls(ctx, i, _mask(z), "holes in the surface")
+    grid = np.full(seen.shape, np.nan)
+    grid[yi, xi] = np.ma.filled(z.astype(float), np.nan)
+    gx, gy = np.meshgrid(xu, yu, indexing="xy")
+    kw: dict[str, Any] = {"cmap": style.get("colormap", "viridis")}
+    if "opacity" in style:
+        kw["alpha"] = style["opacity"]
+    _approximate_role(ctx, i, m, kw)
+    return [ctx.ax.plot_surface(gx, gy, grid, **kw)]
+
+
 def draw_function(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
-    if m.expression is None:  # sampled form: drawn like a line
+    if m.expression is None:  # sampled form: a surface in 3D, else drawn like a line
+        if ctx.three_d:
+            return _sampled_surface(ctx, i, m)
         return draw_line(ctx, i, m)
     style = _style(ctx, i, m)
     path = f"/layers/{i}"
