@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import numbers
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -132,11 +134,105 @@ def expect_str(value: Any, path: str, what: str, optional: bool = False) -> str 
 
 
 def expect_number(value: Any, path: str, what: str, optional: bool = False) -> float | None:
+    """A finite JSON number, returned in canonical float form (see :func:`canon_float`)."""
     if value is None and optional:
         return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if not is_number(value):
         raise fail(path, "invalid_type", f"{what} must be a number, got {_jtype(value)}.")
-    return value
+    if not math.isfinite(value):
+        raise non_finite_error(path, what, value)
+    return canon_float(value)
+
+
+def expect_int(value: Any, path: str, what: str, optional: bool = False) -> int | None:
+    """An integer; an integer-valued float such as ``200.0`` is accepted and
+    returned as ``200`` (JSON does not distinguish them, nor does the schema)."""
+    if value is None and optional:
+        return None
+    if not is_number(value):
+        raise fail(path, "invalid_type", f"{what} must be an integer, got {_jtype(value)}.")
+    if not math.isfinite(value):
+        raise non_finite_error(path, what, value)
+    out = canon_int(value)
+    if not isinstance(out, int):
+        raise fail(path, "invalid_type", f"{what} must be an integer, got {value!r}.")
+    return out
+
+
+def non_finite_error(path: str, what: str, value: Any) -> SpecParseError:
+    return fail(path, "non_finite_number",
+                f"{what} is {value!r}; NaN and infinities are not valid JSON numbers. Use a "
+                "finite number, or null where the field allows it.")
+
+
+# --------------------------------------------------------------------------
+# Numeric canonicalization. Fields declared as numbers are stored as Python
+# floats (-0.0 as 0.0) and fields declared as integers as ints, so that equal
+# specs serialize to identical bytes: 5 and 5.0 are the same JSON number, and
+# a JavaScript JSON.parse/JSON.stringify round trip writes 5.0 back as 5.
+# --------------------------------------------------------------------------
+
+
+def is_number(v: Any) -> bool:
+    """A real number that is not a bool (numpy scalars included)."""
+    return isinstance(v, numbers.Real) and not isinstance(v, bool) and not _is_np_bool(v)
+
+
+def _is_np_bool(v: Any) -> bool:
+    return type(v).__name__ in ("bool_", "bool") and type(v).__module__ == "numpy"
+
+
+def canon_float(v: Any) -> Any:
+    """Canonical float for a declared-numeric field; other values are returned
+    unchanged (the validator reports them). Raises ``ValueError`` for NaN/inf,
+    which no JSON document can hold."""
+    if not is_number(v):
+        return v
+    f = float(v)
+    if not math.isfinite(f):
+        raise ValueError(f"{v!r} is not a finite number; NaN and infinities cannot be stored.")
+    return f + 0.0  # -0.0 + 0.0 == +0.0
+
+
+def canon_int(v: Any) -> Any:
+    """Canonical int for a declared-integer field: integral numbers (``3``,
+    ``3.0``, ``numpy.int64(3)``) become ``int``; anything else is unchanged."""
+    if is_number(v) and math.isfinite(v) and float(v).is_integer():
+        return int(v)
+    return v
+
+
+def copy_json(value: Any, path: str, what: str) -> Any:
+    """Validate free-form JSON (metadata, style, provenance.extra) and return a
+    deep copy, so a parsed spec never aliases its input. Rejects NaN/inf and
+    non-JSON types with the pointer of the offending value."""
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if not isinstance(k, str):
+                raise fail(path, "invalid_type", f"{what} keys must be strings, got {k!r}.")
+            out[k] = copy_json(v, ptr_join(path, k), what)
+        return out
+    if isinstance(value, list):
+        return [copy_json(v, ptr_join(path, i), what) for i, v in enumerate(value)]
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            raise non_finite_error(path, what, value)
+        return value
+    raise fail(path, "invalid_type", f"{what} must hold only JSON values, got {_jtype(value)}.")
+
+
+def json_problem(value: Any, path: str) -> tuple[str, str, str] | None:
+    """First non-JSON or non-finite value inside ``value`` as ``(path, code,
+    message)``, or None. Non-raising counterpart of :func:`copy_json`."""
+    try:
+        copy_json(value, path, "free-form JSON")
+    except SpecParseError as e:
+        i = e.issues[0]
+        return i.path, i.code, i.message
+    return None
 
 
 def expect_bool(value: Any, path: str, what: str) -> bool:

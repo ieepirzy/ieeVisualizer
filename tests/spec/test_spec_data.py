@@ -26,12 +26,12 @@ def test_numpy_datetime64_becomes_iso_strings_and_nat_null():
     arr = np.array(["2026-01-01T00:00", "NaT"], dtype="datetime64[m]")
     c = Column(arr)
     assert c.dtype == "datetime"
-    assert c.values == ["2026-01-01T00:00", None]
+    assert c.values == ["2026-01-01T00:00:00", None]  # canonical form, seconds always written
 
 
 def test_python_datetimes_become_iso_strings():
     c = Column([dt.date(2026, 1, 1), dt.datetime(2026, 1, 2, 3, 4)])
-    assert c.values == ["2026-01-01", "2026-01-02T03:04:00"]
+    assert c.values == ["2026-01-01T00:00:00", "2026-01-02T03:04:00"]
     assert c.dtype == "datetime"
 
 

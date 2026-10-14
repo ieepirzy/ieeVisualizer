@@ -12,7 +12,27 @@
 Missing values are ``None`` / JSON ``null`` and are never coerced to ``0``.
 Float ``NaN`` and numpy ``NaT`` are normalised to ``None`` because JSON has no
 NaN; ``+/-inf`` is rejected (it is a value, not a missing one, and JSON cannot
-hold it).
+hold it). ``-0.0`` is stored as ``0.0`` (they compare equal, so they must hash
+equally).
+
+Datetime values have exactly one stored form, whatever they were built from
+(``datetime``/``date`` objects, numpy ``datetime64`` of any unit, or ISO-8601
+strings)::
+
+    YYYY-MM-DDTHH:MM:SS[.ffffff][+HH:MM]
+
+Seconds are always written; the fraction is written, as exactly six digits,
+only when it is non-zero; the UTC offset is written only for timezone-aware
+values and is kept as given (``Z`` becomes ``+00:00``; instants are not
+converted to UTC). So ``datetime(2026, 1, 1)``, ``date(2026, 1, 1)``,
+``"2026-01-01"`` and ``datetime64("2026-01-01", "ns")`` all store
+``"2026-01-01T00:00:00"``. Strings are parsed strictly: a date
+``YYYY-MM-DD``, optionally followed by ``T`` (or a space) and ``HH:MM``,
+``:SS``, ``.fraction`` and an offset ``Z``/``+HH:MM``. Anything else, an
+impossible date, or a non-zero sub-microsecond part (which would have to be
+truncated) is rejected. A column may not mix timezone-aware and naive values;
+that is rejected on construction (a parse error from :func:`from_dict`),
+because the two cannot be ordered on one axis.
 
 ``DataSnapshot.content_hash()`` is a SHA-256 over the canonical JSON of the
 columns (values, dtype, unit, description, denominator, aggregation). The
@@ -25,12 +45,14 @@ from __future__ import annotations
 
 import datetime as _dt
 import math
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Union
 
 from ._common import (
     check_keys,
+    copy_json,
     expect_dict,
     expect_list,
     expect_str,
@@ -40,6 +62,99 @@ from ._common import (
 )
 
 DTYPES = ("float", "int", "bool", "str", "datetime")
+
+#: Accepted ISO-8601 input for datetime columns (also used by the JSON schema;
+#: written so it means the same in Python ``re`` and ECMA-262).
+ISO_DATETIME_PATTERN = (
+    r"^([0-9]{4})-([0-9]{2})-([0-9]{2})"
+    r"(?:[T ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:[.]([0-9]+))?)?"
+    r"(Z|[+-][0-9]{2}:[0-9]{2})?)?$"
+)
+_ISO_RE = re.compile(ISO_DATETIME_PATTERN)
+
+
+def parse_iso_datetime(s: str) -> _dt.datetime:
+    """Parse one datetime string in the accepted form (see the module docstring).
+
+    Works the same on every supported Python (3.9's ``fromisoformat`` lacks
+    ``Z`` and most fraction lengths, so it is not used directly).
+    """
+    m = _ISO_RE.fullmatch(s)
+    if m is None:
+        raise ValueError(
+            f"{s!r} is not an ISO-8601 date/time; use YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS[.ffffff]] "
+            "with an optional Z or +HH:MM offset."
+        )
+    y, mo, d, hh, mi, ss, frac, off = m.groups()
+    frac = frac or ""
+    if frac[6:].strip("0"):
+        raise ValueError(
+            f"{s!r} has sub-microsecond precision, which cannot be stored without truncating "
+            "it; round to whole microseconds first."
+        )
+    tz = None
+    if off == "Z":
+        tz = _dt.timezone.utc
+    elif off:
+        sign = -1 if off[0] == "-" else 1
+        tz = _dt.timezone(sign * _dt.timedelta(hours=int(off[1:3]), minutes=int(off[4:6])))
+    return _dt.datetime(
+        int(y), int(mo), int(d), int(hh or 0), int(mi or 0), int(ss or 0),
+        int(frac[:6].ljust(6, "0")), tzinfo=tz,
+    )
+
+
+def format_iso_datetime(d: _dt.datetime) -> str:
+    """The canonical stored form of ``d`` (see the module docstring)."""
+    if getattr(d, "nanosecond", 0):  # pandas.Timestamp
+        raise ValueError(
+            f"{d!r} has sub-microsecond precision, which cannot be stored without truncating "
+            "it; round to whole microseconds first."
+        )
+    off = d.utcoffset()
+    if off is not None and off % _dt.timedelta(minutes=1):
+        raise ValueError(
+            f"{d!r} has a UTC offset of {off}, which is not a whole number of minutes and "
+            "cannot be written as +HH:MM; convert it to another timezone first."
+        )
+    return d.isoformat(timespec="microseconds" if d.microsecond else "seconds")
+
+
+def _canon_datetimes(values: list[Any]) -> list[Any]:
+    out: list[Any] = []
+    aware: set[bool] = set()
+    for i, v in enumerate(values):
+        if v is None:
+            out.append(None)
+            continue
+        try:
+            if isinstance(v, str):
+                v = parse_iso_datetime(v)
+            elif not isinstance(v, _dt.datetime):  # a date: midnight
+                v = _dt.datetime.combine(v, _dt.time())
+            text = format_iso_datetime(v)
+        except ValueError as e:
+            raise ValueError(f"value at index {i}: {e}") from None
+        aware.add(v.utcoffset() is not None)
+        if len(aware) > 1:
+            raise ValueError(
+                f"value at index {i}: the column mixes timezone-aware and naive datetimes; "
+                "give every value an offset (e.g. +00:00) or none, so they can be ordered."
+            )
+        out.append(text)
+    return out
+
+
+def _np_datetimes_as_strings(values: Any) -> list[Any]:
+    """ISO strings (``None`` for NaT) for a datetime64 array or scalar, at the
+    value's own precision; month/year/week units are taken at their first day."""
+    import numpy as np
+
+    unit = np.datetime_data(values.dtype)[0]
+    if unit in ("Y", "M", "W"):
+        values = values.astype("datetime64[D]")
+    strings = np.atleast_1d(np.datetime_as_string(values)).tolist()
+    return [None if s == "NaT" else s for s in strings]
 
 
 def _is_missing(v: Any) -> bool:
@@ -58,10 +173,7 @@ def _from_numpy(values: Any) -> tuple[list[Any], str | None]:
         raise ValueError(f"column values must be 1-dimensional, got shape {values.shape}.")
     kind = values.dtype.kind
     if kind == "M":  # datetime64: tolist() would give ints for ns precision
-        import numpy as np
-
-        strings = np.datetime_as_string(values).tolist()  # keeps dtype precision
-        return [None if s == "NaT" else s for s in strings], "datetime"
+        return _np_datetimes_as_strings(values), "datetime"
     if kind == "m":
         raise ValueError(
             "timedelta64 columns are not supported; convert to a float column with an "
@@ -89,7 +201,14 @@ def normalize_values(values: Any, dtype: str | None) -> tuple[list[Any], str | N
     out: list[Any] = []
     kinds = set()
     for i, v in enumerate(raw):
-        if hasattr(v, "item") and not isinstance(v, (str, bytes)):
+        if getattr(getattr(v, "dtype", None), "kind", None) == "M":
+            # numpy datetime64 scalar: .item() would give an int at ns precision
+            (v,) = _np_datetimes_as_strings(v)
+            if v is not None:
+                kinds.add("datetime")
+                out.append(v)
+                continue
+        elif hasattr(v, "item") and not isinstance(v, (str, bytes)):
             v = v.item()  # numpy scalar -> python scalar
         if _is_missing(v):
             out.append(None)
@@ -108,7 +227,6 @@ def normalize_values(values: Any, dtype: str | None) -> tuple[list[Any], str | N
         elif isinstance(v, str):
             kinds.add("str")
         elif isinstance(v, (_dt.datetime, _dt.date)):
-            v = v.isoformat()
             kinds.add("datetime")
         else:
             # ValueError (not TypeError) so from_dict reports it as invalid_values.
@@ -120,7 +238,9 @@ def normalize_values(values: Any, dtype: str | None) -> tuple[list[Any], str | N
     dtype = dtype or inferred or _infer(kinds)
     _check_compatible(kinds, dtype)
     if dtype == "float":
-        out = [None if v is None else float(v) for v in out]
+        out = [None if v is None else float(v) + 0.0 for v in out]  # -0.0 -> 0.0
+    elif dtype == "datetime":
+        out = _canon_datetimes(out)
     return out, dtype
 
 
@@ -326,8 +446,10 @@ def dataset_from_dict(d: Any, path: str) -> Dataset:
             pd = expect_dict(d["provenance"], pp, "provenance")
             check_keys(pd, pp, "provenance", _PROV_FIELDS + ("extra",))
             kw = {k: expect_str(pd.get(k), ptr_join(pp, k), k, optional=True) for k in _PROV_FIELDS}
-            extra = expect_dict(pd.get("extra", {}), ptr_join(pp, "extra"), "provenance.extra")
-            prov = Provenance(extra=dict(extra), **kw)
+            ep = ptr_join(pp, "extra")
+            extra = copy_json(expect_dict(pd.get("extra", {}), ep, "provenance.extra"), ep,
+                              "provenance.extra")
+            prov = Provenance(extra=extra, **kw)
         return DataSnapshot(columns=cols, provenance=prov)
     if kind == "ref":
         check_keys(

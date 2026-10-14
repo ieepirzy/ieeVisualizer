@@ -8,12 +8,15 @@ from typing import Any, Union
 from ._common import (
     SCHEMA_VERSION,
     SUPPORTED_SCHEMA_VERSIONS,
+    canon_float,
     check_keys,
+    copy_json,
     expect_bool,
     expect_dict,
     expect_list,
     expect_str,
     fail,
+    non_finite_error,
     ptr_join,
     suggest,
 )
@@ -41,6 +44,17 @@ class Axis:
     scale: str | None = None
     limits: list[Scalar | None] | None = None
 
+    def __post_init__(self) -> None:
+        try:
+            self.limits = _canon_limits(self.limits)
+        except ValueError as e:
+            raise ValueError(f"axis limits: {e}") from None
+
+
+def _canon_limits(limits: Any) -> Any:
+    """Numbers in ``limits`` as canonical floats; strings/None unchanged."""
+    return [canon_float(x) for x in limits] if isinstance(limits, (list, tuple)) else limits
+
 
 @dataclass
 class Legend:
@@ -56,6 +70,18 @@ class Annotation:
     type: str
     label: str | None = None
     style: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for name in _COORD_FIELDS:
+            if hasattr(self, name):
+                try:
+                    setattr(self, name, canon_float(getattr(self, name)))
+                except ValueError as e:
+                    raise ValueError(f"{self.type} annotation {name}: {e}") from None
+
+
+#: Number-or-ISO-string annotation fields; numbers are stored as canonical floats.
+_COORD_FIELDS = ("x", "y", "z", "value", "start", "end")
 
 
 @dataclass
@@ -152,6 +178,10 @@ def _simple_to_dict(obj: Any) -> dict[str, Any]:
         v = getattr(obj, f.name)
         if v is None:
             continue
+        if f.name == "limits":
+            v = _canon_limits(v)
+        elif f.name in _COORD_FIELDS:
+            v = canon_float(v)
         out[f.name] = list(v) if isinstance(v, (list, tuple)) else (
             dict(v) if isinstance(v, dict) else v)
     return out
@@ -181,8 +211,13 @@ _FIG_KEYS = (
 
 
 def _scalar(v: Any, path: str, what: str) -> Scalar | None:
-    if v is None or isinstance(v, str) or (isinstance(v, (int, float)) and not isinstance(v, bool)):
+    if v is None or isinstance(v, str):
         return v
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        try:
+            return canon_float(v)
+        except ValueError:
+            raise non_finite_error(path, what, v) from None
     raise fail(path, "invalid_type", f"{what} must be a number, an ISO-8601 string or null.")
 
 
@@ -220,7 +255,7 @@ def _annotation_from_dict(d: Any, path: str) -> Annotation:
             continue
         kp = ptr_join(path, k)
         if k == "style":
-            kw[k] = dict(expect_dict(d[k], kp, "style"))
+            kw[k] = copy_json(expect_dict(d[k], kp, "style"), kp, "style")
         elif k in ("label", "text", "axis"):
             kw[k] = expect_str(d[k], kp, k, optional=(k == "label"))
         else:
@@ -272,5 +307,6 @@ def figure_from_dict(d: Any) -> FigureSpec:
         _annotation_from_dict(a, f"/annotations/{i}")
         for i, a in enumerate(expect_list(d.get("annotations", []), "/annotations", "annotations"))
     ]
-    kw["metadata"] = dict(expect_dict(d.get("metadata", {}), "/metadata", "metadata"))
+    kw["metadata"] = copy_json(
+        expect_dict(d.get("metadata", {}), "/metadata", "metadata"), "/metadata", "metadata")
     return FigureSpec(**kw)
