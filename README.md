@@ -10,13 +10,21 @@ Originally conceived as a simpler interface over `matplotlib.pyplot`, ieeVisuali
 
 ieeVisualizer is **not** a Grafana replacement or an evaluation/numerical computing engine. **ieeVal and ieeLabTools are independent projects** that may produce results for visualization; neither is a prerequisite for ieeVisualizer.
 
-## Quick start (current API)
-
-What works today is the original `Visualizer` convenience API over Matplotlib:
+## Quick start
 
 ```bash
 pip install -e ".[dev]"   # from a clone; installs pytest and ruff too
+python examples/gallery.py  # every mark and template -> examples/out/ (PNG, SVG, manifests)
 ```
+
+There are three ways in. All of them end in the same place: a
+[FigureSpec](docs/SPEC.md) that renders to PNG/SVG/PDF and exports with a
+provenance manifest ([docs/RENDERING.md](docs/RENDERING.md)).
+
+**1. Legacy: from a function to a figure.** `Visualizer` plots callables or
+SymPy expressions with Matplotlib and returns the `Figure`. `to_spec()` gives
+the same samples as a declarative spec; `export()` writes PNG + SVG +
+`manifest.json` recording the expression, domain, `n` and sampling mode.
 
 ```python
 import numpy as np
@@ -24,22 +32,57 @@ import sympy as sp
 from ieeVisualizer import Visualizer
 
 viz = Visualizer(N=200, colormap="viridis")  # linspace=False + rng=seed for random sampling
-
-fig = viz.visualize(lambda x: np.sin(x) / (1 + x**2), dim=2, domain=(-6, 6))  # line y = f(x)
 x, y = sp.symbols("x y")
-fig = viz.visualize(sp.sin(x) * sp.cos(y), dim=3)  # surface z = f(x, y)
 
-fig = viz.visualize_vf(lambda x, y: (-y, x), dim=2, streamplot=True)  # 2D quiver + streamlines
-fig = viz.visualize_vf([y, -x, sp.Integer(1)], dim=3, symbols=(x, y, sp.Symbol("z")))  # 3D quiver
+fig = viz.visualize(lambda t: np.sin(t) / (1 + t**2), dim=2, domain=(-6, 6))  # line y = f(x)
+fig = viz.visualize(sp.sin(x) * sp.cos(y), dim=3)                  # surface z = f(x, y)
+fig = viz.visualize_vf(lambda x, y: (-y, x), dim=2, streamplot=True)  # quiver + streamlines
 fig.savefig("field.png")
+
+spec = viz.to_spec([-y, x], dim=2, kind="vector_field", units={"vector": "m/s"})
+artifact = viz.export(sp.sin(x), "out", dim=2, units={"x": "rad"})  # out/<artifact_id>/
+print(artifact.artifact_id, [v.format for v in artifact.variants])
 ```
 
-Every call returns the Matplotlib `Figure` (pass `show=True` to display it, or
-`ax=` to draw into existing axes). SymPy inputs are the expression's free
-symbols sorted by name unless `symbols=` is given. Points where the function is
-nan/inf are left out with a `RuntimeWarning`; if nothing is finite, a
-`ValueError` is raised rather than drawing an empty plot. `examples/` has
-runnable scripts that write PNGs to `examples/out/`.
+`visualize()` / `visualize_vf()` accept `ax=` to draw into existing axes and
+`show=True` to display. SymPy inputs are the expression's free symbols sorted
+by name unless `symbols=` is given. Points where the function is nan/inf are
+left out with a `RuntimeWarning` (and stored as null by `to_spec`); if nothing
+is finite, a `ValueError` is raised rather than drawing an empty plot.
+
+**2. Declarative spec: JSON in, reproducible figure out.** The same spec and
+library versions give byte-identical SVG.
+
+```python
+from ieeVisualizer.render import RenderRequest, render
+from ieeVisualizer.spec import from_json
+
+spec = from_json("""{"schema_version": "1.0", "title": "Cooling",
+  "datasets": {"d": {"type": "snapshot", "columns": {
+    "t": {"unit": "min", "values": [0, 10, 20]},
+    "T": {"unit": "°C", "values": [90.0, null, 41.0]}}}},
+  "layers": [{"type": "line", "data": "d", "encoding": {"x": "t", "y": "T"}}]}""")
+result = render(spec, RenderRequest(format="svg"))  # axis labels "t (min)", "T (°C)"
+print(result.sha256, [w.code for w in result.warnings])  # the null is a gap, reported
+```
+
+**3. Template: a versioned recipe fills your data into a spec.**
+
+```python
+from ieeVisualizer import templates
+from ieeVisualizer.artifacts import LocalDirectoryWriter, export
+from ieeVisualizer.spec import DataSnapshot
+
+print([t["name"] for t in templates.list_templates()])  # ['timeseries', 'vector_field_2d']
+data = DataSnapshot.from_columns({"day": [1, 2, 3, 4], "load": [3.2, 3.9, None, 4.4]},
+                                 units={"day": "d", "load": "kWh"})
+spec = templates.build("timeseries", data, {"time_column": "day", "value_columns": ["load"]})
+artifact = export(spec, ["png", "svg"], LocalDirectoryWriter("out"))
+print(artifact.artifact_id)  # out/<artifact_id>/{figure.png,figure.svg,spec.json,manifest.json}
+```
+
+`templates.describe(name)` returns a template's inputs, parameters and an
+example payload; see [docs/TEMPLATES.md](docs/TEMPLATES.md).
 
 ## Rendering a spec
 
@@ -78,4 +121,5 @@ print(artifact.artifact_id, artifact.variant("png").sha256)  # out/<artifact_id>
 3. Add interactive/browser and agent-facing adapters with persistent visualization state.
 4. Validate realtime and scientific/multidimensional workflows before adding further rendering engines.
 
-See the architecture document for backend candidates, live-session concepts, generative UI boundaries, integration scenarios and unresolved design decisions.
+The branch-by-branch plan for the first end-to-end slice, with the status of
+each branch, is in [docs/ROADMAP.md](docs/ROADMAP.md). See the architecture document for backend candidates, live-session concepts, generative UI boundaries, integration scenarios and unresolved design decisions.
