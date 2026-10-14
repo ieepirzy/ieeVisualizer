@@ -44,10 +44,16 @@ def library_versions() -> dict[str, str]:
 
 
 def artifact_id_for(spec_digest: str, dataset_hashes: dict[str, str | None],
-                    name: str | None = None) -> str:
-    """Content-derived id: ``<name or 'viz'>-<16 hex>`` over the spec hash and
-    the hash of every dataset drawn."""
-    digest = sha256_of({"spec_hash": spec_digest, "datasets": dataset_hashes})
+                    name: str | None = None, *, formats: list[str] | None = None,
+                    request: dict | None = None) -> str:
+    """Content-derived id: ``<name or 'viz'>-<16 hex>`` over the spec hash,
+    the hash of every dataset drawn, the exported formats (in order) and the
+    render request (size, units, dpi, theme, adapter; its per-variant
+    ``format`` is left out). Two exports that would store different files
+    therefore never share an id."""
+    req = {k: v for k, v in (request or {}).items() if k != "format"}
+    digest = sha256_of({"spec_hash": spec_digest, "datasets": dataset_hashes,
+                        "formats": list(formats or []), "request": req})
     prefix = check_name(name, "artifact name") if name is not None else "viz"
     return f"{prefix}-{digest.split(':', 1)[1][:16]}"
 
@@ -111,7 +117,8 @@ def export(
     prepared = prepare(spec, resolver)
     records = _records(spec, prepared.resolved)
     digest = spec_hash(spec)
-    artifact_id = artifact_id_for(digest, {k: r.content_hash for k, r in records.items()}, name)
+    artifact_id = artifact_id_for(digest, {k: r.content_hash for k, r in records.items()}, name,
+                                  formats=fmts, request=base.to_dict())
 
     outputs: list[tuple[str, bytes, str, RenderVariant]] = []
     for fmt in fmts:
@@ -147,10 +154,15 @@ def export(
         spec_metadata=dict(spec.metadata),
         resolved_spec_file=resolved_entry,
     )
-    for fname, content, media, _ in outputs:
-        writer.write(artifact_id, fname, content, media)
-    for fname, content, media in files:
-        writer.write(artifact_id, fname, content, media)
-    writer.write(artifact_id, MANIFEST_NAME, (artifact.to_json() + "\n").encode("utf-8"),
-                 "application/json")
+    blobs = [(f, c, mt) for f, c, mt, _ in outputs] + files
+    blobs.append((MANIFEST_NAME, (artifact.to_json() + "\n").encode("utf-8"),
+                  "application/json"))
+    write_all = getattr(writer, "write_artifact", None)
+    if callable(write_all):
+        # Replaces the whole artifact: no file of an earlier export under the
+        # same id survives unless this export wrote it again.
+        write_all(artifact_id, blobs)
+    else:
+        for fname, content, media in blobs:  # manifest last
+            writer.write(artifact_id, fname, content, media)
     return artifact
