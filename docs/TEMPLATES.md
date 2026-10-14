@@ -43,7 +43,7 @@ Codes: `unknown_parameter`, `missing_parameter`, `invalid_parameter`,
 `unresolved_reference`, `empty_dataset`, `missing_column`, `wrong_dtype`,
 `all_null_column`, `null_in_key_column`, `invalid_column_values`,
 `mixed_units`, `unit_override_conflict`, `invalid_expression`,
-`unknown_symbol`; warnings `missing_unit`, `empty_series`,
+`expression_too_large`, `unknown_symbol`; warnings `missing_unit`, `empty_series`,
 `no_forecast_rows`, `nonfinite_samples`. The full table is in the docstring
 of `ieeVisualizer/templates/base.py`. Registry errors (`TemplateRegistryError`)
 use `unknown_template`, `unknown_template_version`, `duplicate_template`,
@@ -106,7 +106,13 @@ A quiver over dataset `field`.
   time, and records the expressions in the dataset provenance and in
   metadata. Before SymPy sees an expression it is checked against an AST
   whitelist: numbers, `x`, `y`, constants, `pi`, `E`, a fixed list of
-  functions and `+ - * / **`. A nan/inf sample is stored as null and
+  functions and `+ - * / **`. SymPy computes exactly while it builds, so
+  the expression is then parsed unevaluated and rebuilt with every power,
+  `exp` of a logarithm and factorial-like call checked after constants are
+  substituted and before it is evaluated (exponents at most 1000 in
+  magnitude, no number beyond about 10^±330, bounded size):
+  `(0*x+9)**999999999` is an immediate `expression_too_large` error, not a
+  hang. A nan/inf sample is stored as null and
   reported as `nonfinite_samples`. The layer role defaults to `reference`
   because a formula is not a measurement.
 - **Sampled mode:** `data` with `x_column`, `y_column`, `u_column`,

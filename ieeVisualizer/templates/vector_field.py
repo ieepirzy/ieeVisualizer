@@ -29,8 +29,17 @@ Expressions are untrusted input. Before SymPy sees one, it is parsed with
 Python's ``ast`` and only numbers, the names ``x``, ``y``, caller constants,
 ``pi``, ``E`` and a fixed list of functions, combined with ``+ - * / **`` and
 unary minus, are accepted (no attributes, subscripts, keywords, strings or
-lambdas). A power whose base and exponent are both constant is refused so a
-request cannot ask SymPy for an astronomically large integer.
+lambdas). A power whose base and exponent are both literal constants is
+refused there. That alone cannot stop SymPy's exact arithmetic
+(``(0*x+9)**999999999`` simplifies to a constant power, and so does
+``k**(x-x+999999999)`` once ``k`` is substituted), so the expression is then
+parsed unevaluated and rebuilt under the limits of
+:mod:`ieeVisualizer._safe_expr`: every power, ``exp`` of a logarithm and
+factorial-like call is checked after constants are substituted and before
+SymPy evaluates it (exponents at most 1000 in magnitude, no number beyond
+about 10^+-330, bounded size). A violation is an ``expression_too_large``
+issue from ``check()`` and a :class:`TemplateInputError` from ``build()``,
+raised immediately.
 """
 
 from __future__ import annotations
@@ -39,6 +48,7 @@ import ast
 import keyword
 from typing import Any
 
+from .._safe_expr import UnsafeExpression, build_bounded, parse_unevaluated
 from ..spec import Axis, Column, DataSnapshot, FigureSpec, Provenance, QuiverMark
 from ..spec._common import suggest
 from .base import (
@@ -307,14 +317,25 @@ class VectorField2DTemplate(ComponentTemplate):
         for f in FUNCTIONS:
             if f not in ns:
                 ns[f] = getattr(sympy, f)
+        values = {ns[k]: sympy.Float(c) if isinstance(c, float) else sympy.Integer(c)
+                  for k, c in constants.items()}
         exprs = {}
         for key in ("u", "v"):
             try:
-                # Safe: check_expression admitted only whitelisted names and operators.
-                e = sympy.sympify(p[key], locals=ns)
-                e = e.subs({ns[k]: sympy.Float(c) if isinstance(c, float) else sympy.Integer(c)
-                            for k, c in constants.items()})
-            except (sympy.SympifyError, TypeError, ValueError, AttributeError) as err:
+                # Parsing is safe: check_expression admitted only whitelisted names and
+                # operators. Evaluation is bounded: SymPy computes exactly while it
+                # builds, so the unevaluated tree is rebuilt with every power checked
+                # after constants are substituted and before it is evaluated.
+                tree = parse_unevaluated(p[key], ns)
+                if not isinstance(tree, sympy.Expr):
+                    raise TypeError(f"it is a {type(tree).__name__}, not one expression")
+                e = build_bounded(tree, values)
+            except UnsafeExpression as err:
+                issues.error(param_path(key), "expression_too_large",
+                             f"{key} = {p[key]!r} cannot be evaluated safely: {err} Simplify "
+                             "it or use smaller constants.")
+                continue
+            except Exception as err:  # untrusted input: any SymPy failure is reported
                 issues.error(param_path(key), "invalid_expression",
                              f"SymPy cannot interpret {p[key]!r}: {err}")
                 continue

@@ -44,6 +44,8 @@ missing_unit             (warning) no unit is known for an axis
 empty_series             (warning) a series has no values in one part of the figure
 no_forecast_rows         (warning) a forecast split was requested but matched no rows
 invalid_expression       an expression cannot be parsed safely
+expression_too_large     an expression would need unbounded exact arithmetic
+                         (e.g. a constant power with a huge exponent) or is too big
 unknown_symbol           an expression uses a name that is neither a variable,
                          a parameter nor an allowed function
 nonfinite_samples        (warning) an expression gave nan/inf at some grid points;
