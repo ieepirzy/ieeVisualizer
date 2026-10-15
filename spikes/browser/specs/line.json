@@ -1,0 +1,142 @@
+{
+ "schema_version": "1.0",
+ "coordinate_system": "cartesian2d",
+ "datasets": {
+  "observed": {
+   "type": "snapshot",
+   "columns": {
+    "week": {
+     "values": [
+      "2026-07-06T00:00:00+03:00",
+      "2026-07-13T00:00:00+03:00",
+      "2026-07-20T00:00:00+03:00",
+      "2026-07-27T00:00:00+03:00",
+      "2026-08-03T00:00:00+03:00",
+      "2026-08-10T00:00:00+03:00",
+      "2026-08-17T00:00:00+03:00",
+      "2026-08-24T00:00:00+03:00",
+      "2026-08-31T00:00:00+03:00",
+      "2026-09-07T00:00:00+03:00",
+      "2026-09-14T00:00:00+03:00",
+      "2026-09-21T00:00:00+03:00"
+     ],
+     "dtype": "datetime"
+    },
+    "revenue": {
+     "values": [
+      1180.0,
+      1215.5,
+      1260.0,
+      1242.0,
+      null,
+      1301.0,
+      null,
+      1288.0,
+      1335.0,
+      1350.5,
+      1342.0,
+      1398.0
+     ],
+     "dtype": "float",
+     "unit": "EUR",
+     "aggregation": "sum per ISO week"
+    }
+   },
+   "provenance": {
+    "source": "spike fixture",
+    "timezone": "Europe/Helsinki"
+   }
+  },
+  "forecast": {
+   "type": "snapshot",
+   "columns": {
+    "week": {
+     "values": [
+      "2026-09-28T00:00:00+03:00",
+      "2026-10-05T00:00:00+03:00",
+      "2026-10-12T00:00:00+03:00",
+      "2026-10-19T00:00:00+03:00"
+     ],
+     "dtype": "datetime"
+    },
+    "revenue": {
+     "values": [
+      1410.0,
+      1432.0,
+      1450.0,
+      1471.0
+     ],
+     "dtype": "float",
+     "unit": "EUR"
+    }
+   },
+   "provenance": {
+    "source": "spike fixture",
+    "timezone": "Europe/Helsinki"
+   }
+  }
+ },
+ "layers": [
+  {
+   "type": "line",
+   "data": "observed",
+   "encoding": {
+    "x": {
+     "field": "week"
+    },
+    "y": {
+     "field": "revenue"
+    }
+   },
+   "role": "observed",
+   "name": "Observed",
+   "style": {}
+  },
+  {
+   "type": "line",
+   "data": "forecast",
+   "encoding": {
+    "x": {
+     "field": "week"
+    },
+    "y": {
+     "field": "revenue"
+    }
+   },
+   "role": "forecast",
+   "name": "Forecast",
+   "style": {}
+  }
+ ],
+ "axes": {
+  "x": {
+   "label": "Week",
+   "scale": "time"
+  },
+  "y": {
+   "label": "Revenue",
+   "unit": "EUR",
+   "limits": [
+    0.0,
+    null
+   ]
+  }
+ },
+ "legend": {
+  "show": true,
+  "position": "auto"
+ },
+ "annotations": [
+  {
+   "type": "reference_line",
+   "label": "Target",
+   "style": {},
+   "axis": "y",
+   "value": 1300.0
+  }
+ ],
+ "metadata": {},
+ "title": "Weekly revenue",
+ "caption": "Forecast is a model output, not a measurement. Two weeks have no data.",
+ "theme": "muutto365-report-light"
+}

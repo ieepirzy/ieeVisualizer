@@ -1,0 +1,113 @@
+{
+  "results": [
+    {
+      "engine": "echarts",
+      "spec": "band",
+      "where": "node",
+      "svg_bytes": 18825,
+      "ms": 119.3,
+      "in_process_repeat_identical": false,
+      "sha": "7d9b65d7cd8b832f"
+    },
+    {
+      "engine": "vegalite",
+      "spec": "band",
+      "where": "node",
+      "svg_bytes": 19041,
+      "ms": 130.6,
+      "in_process_repeat_identical": true,
+      "sha": "b4d722a591171c8d"
+    },
+    {
+      "engine": "echarts",
+      "spec": "grouped_bar",
+      "where": "node",
+      "svg_bytes": 7622,
+      "ms": 28.7,
+      "in_process_repeat_identical": false,
+      "sha": "f89af289674edfd2"
+    },
+    {
+      "engine": "vegalite",
+      "spec": "grouped_bar",
+      "where": "node",
+      "svg_bytes": 14055,
+      "ms": 68.4,
+      "in_process_repeat_identical": true,
+      "sha": "c88083883b840685"
+    },
+    {
+      "engine": "echarts",
+      "spec": "heatmap",
+      "where": "node",
+      "svg_bytes": 23148,
+      "ms": 92.8,
+      "in_process_repeat_identical": false,
+      "sha": "7323edbe8911938a"
+    },
+    {
+      "engine": "vegalite",
+      "spec": "heatmap",
+      "where": "node",
+      "svg_bytes": 15889,
+      "ms": 63.3,
+      "in_process_repeat_identical": false,
+      "sha": "1c449b9e35f18fd2"
+    },
+    {
+      "engine": "echarts",
+      "spec": "line",
+      "where": "node",
+      "svg_bytes": 11943,
+      "ms": 63,
+      "in_process_repeat_identical": false,
+      "sha": "107c0913a25e97f9"
+    },
+    {
+      "engine": "vegalite",
+      "spec": "line",
+      "where": "node",
+      "svg_bytes": 17424,
+      "ms": 104.3,
+      "in_process_repeat_identical": true,
+      "sha": "912277f76a30c611"
+    },
+    {
+      "engine": "plotly",
+      "spec": "band",
+      "where": "chromium",
+      "svg_bytes": 16811,
+      "ms": 139.7,
+      "in_process_repeat_identical": false,
+      "sha": "2f435afc08d45bcc"
+    },
+    {
+      "engine": "plotly",
+      "spec": "grouped_bar",
+      "where": "chromium",
+      "svg_bytes": 16469,
+      "ms": 50.2,
+      "in_process_repeat_identical": false,
+      "sha": "706919f837bb3051"
+    },
+    {
+      "engine": "plotly",
+      "spec": "heatmap",
+      "where": "chromium",
+      "svg_bytes": 12839,
+      "ms": 38.7,
+      "in_process_repeat_identical": false,
+      "sha": "16e95dac63ec8f68"
+    },
+    {
+      "engine": "plotly",
+      "spec": "line",
+      "where": "chromium",
+      "svg_bytes": 18799,
+      "ms": 41.7,
+      "in_process_repeat_identical": false,
+      "sha": "df61990c078369a1"
+    }
+  ],
+  "pageErrors": []
+}

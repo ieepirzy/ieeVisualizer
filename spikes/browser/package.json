@@ -1,0 +1,32 @@
+{
+  "name": "ieevisualizer-browser-spikes",
+  "private": true,
+  "description": "Throwaway spikes for docs/BROWSER_RENDERER_EVALUATION.md. Not part of the Python package.",
+  "type": "module",
+  "scripts": {
+    "sizes": "node measure-sizes.mjs",
+    "render": "node render.mjs",
+    "probe": "node probe.mjs",
+    "perf": "node probe.mjs perf",
+    "schema": "node schema-check.mjs",
+    "licences": "node licences.mjs",
+    "gl": "node gl-probe.mjs"
+  },
+  "dependencies": {
+    "@observablehq/plot": "0.6.17",
+    "echarts": "6.1.0",
+    "echarts-gl": "2.1.0",
+    "plotly.js": "4.1.2",
+    "plotly.js-dist-min": "4.1.2",
+    "uplot": "1.6.32",
+    "vega": "6.4.0",
+    "vega-embed": "7.3.0",
+    "vega-lite": "6.5.0"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "esbuild": "0.28.2",
+    "json-schema-to-typescript": "16.0.0",
+    "playwright": "1.56.1"
+  }
+}

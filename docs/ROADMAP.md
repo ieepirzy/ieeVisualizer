@@ -147,7 +147,8 @@ sentence clause by clause.
 
 - **Phase 2 — interactivity and agent access:** evaluate Plotly vs ECharts
   (export fidelity, bundle size, headless/SSR, licence) and write the result
-  down before adding either; persistent `InteractionState`; agent tool surface
+  down before adding either (written: docs/BROWSER_RENDERER_EVALUATION.md,
+  ECharts primary); persistent `InteractionState`; agent tool surface
   (list templates, inspect data schema, create/patch/render/export); Vue 3 host
   demo; browser → static capture.
 - **Composition grammar:** `ViewSpec` with nodes/edges/layout for flow and
