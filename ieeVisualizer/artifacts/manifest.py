@@ -16,6 +16,9 @@ A manifest pins a figure for later comparison and audit:
 * ``variants`` lists each rendered file with format, media type, SHA-256,
   byte size, adapter name/version, the request used and every fidelity
   warning.
+* ``theme`` names the theme drawn with (name, version, content hash) and
+  points at ``theme.json``, its full definition, so a historical figure can be
+  re-rendered after the registered theme has a new version.
 * ``library_versions`` and ``created_at`` record the environment and time;
   ``created_at`` is the only field that changes between identical exports.
 """
@@ -129,6 +132,9 @@ class VisualizationArtifact:
     title: str | None = None
     spec_metadata: dict[str, Any] = field(default_factory=dict)
     resolved_spec_file: FileEntry | None = None
+    #: ``{"name", "version", "sha256", "file": FileEntry dict}``; ``None`` in
+    #: manifests written before themes were recorded.
+    theme: dict[str, Any] | None = None
     schema_version: str = MANIFEST_SCHEMA_VERSION
 
     def variant(self, fmt: str) -> RenderVariant:
@@ -159,6 +165,8 @@ class VisualizationArtifact:
                 d[k] = getattr(self, k)
         if self.resolved_spec_file is not None:
             d["resolved_spec_file"] = self.resolved_spec_file.to_dict()
+        if self.theme is not None:
+            d["theme"] = dict(self.theme)
         return d
 
     def to_json(self, indent: int | None = 2) -> str:
@@ -181,6 +189,7 @@ class VisualizationArtifact:
             spec_id=d.get("spec_id"), title=d.get("title"),
             spec_metadata=dict(d.get("spec_metadata", {})),
             resolved_spec_file=FileEntry.from_dict(rs) if rs else None,
+            theme=dict(d["theme"]) if d.get("theme") is not None else None,
         )
 
     @classmethod
