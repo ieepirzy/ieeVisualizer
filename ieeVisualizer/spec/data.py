@@ -51,12 +51,15 @@ from dataclasses import dataclass, field
 from typing import Any, Union
 
 from ._common import (
+    SpecParseError,
+    beyond_float64,
     check_keys,
     copy_json,
     expect_dict,
     expect_list,
     expect_str,
     fail,
+    out_of_range_error,
     ptr_join,
     sha256_of,
 )
@@ -251,6 +254,9 @@ def normalize_values(values: Any, dtype: str | None) -> tuple[list[Any], str | N
     dtype = dtype or inferred or _infer(kinds)
     _check_compatible(kinds, dtype)
     if dtype == "float":
+        for i, v in enumerate(out):
+            if beyond_float64(v):  # e.g. 10**400 among floats: no float64 holds it
+                raise out_of_range_error(f"/values/{i}", f"value at index {i}", v)
         out = [None if v is None else float(v) + 0.0 for v in out]  # -0.0 -> 0.0
     elif dtype == "datetime":
         out = _canon_datetimes(out)
@@ -467,6 +473,9 @@ def dataset_from_dict(d: Any, path: str) -> Dataset:
             fields = _parse_schema_fields(cd, cp)
             try:
                 cols[name] = Column(values=values, **fields)
+            except SpecParseError as e:  # number_out_of_range; path relative to the column
+                i = e.issues[0]
+                raise fail(cp + i.path, i.code, i.message) from None
             except ValueError as e:
                 raise fail(ptr_join(cp, "values"), "invalid_values", str(e)) from None
         prov = Provenance()

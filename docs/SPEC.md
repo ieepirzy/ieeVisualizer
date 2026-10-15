@@ -80,7 +80,14 @@ fields (`samples`, `bins`) accept integer-valued floats (`200.0`) and store
 ints. NaN and infinities are not JSON numbers: `from_json` refuses the
 `NaN`/`Infinity` constants anywhere in the text, `from_dict` refuses them
 with the pointer of the value, constructors raise `ValueError`, and
-`validate` reports `non_finite_number` for one assigned later.
+`validate` reports `non_finite_number` for one assigned later. An integer
+beyond the float64 range (e.g. `10**400`; JSON itself has no limit) cannot be
+held by any reader that parses numbers as doubles: in those fields, and in a
+`float` column, construction and parsing raise `SpecParseError` (a
+`ValueError`) with code `number_out_of_range` and the value's pointer
+(relative to the constructed object on construction), never a raw
+`OverflowError`. An `int` column may store it exactly, but `validate` reports
+`number_out_of_range` there, and for any such value assigned later.
 
 **Marks** share `type`, `data` (dataset name), `encoding` (channel ->
 `{"field": column, "title"?}`; `"y": "col"` shorthand is accepted),

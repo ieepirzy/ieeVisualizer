@@ -8,6 +8,7 @@ from typing import Any, Union
 from ._common import (
     SCHEMA_VERSION,
     SUPPORTED_SCHEMA_VERSIONS,
+    SpecParseError,
     canon_float,
     check_keys,
     copy_json,
@@ -56,6 +57,8 @@ class Axis:
     def __post_init__(self) -> None:
         try:
             self.limits = _canon_limits(self.limits)
+        except SpecParseError:
+            raise  # number_out_of_range, already structured (path relative to the axis)
         except ValueError as e:
             raise ValueError(f"axis limits: {e}") from None
         if self.scale == "time" and isinstance(self.limits, list):
@@ -64,7 +67,9 @@ class Axis:
 
 def _canon_limits(limits: Any) -> Any:
     """Numbers in ``limits`` as canonical floats; strings/None unchanged."""
-    return [canon_float(x) for x in limits] if isinstance(limits, (list, tuple)) else limits
+    if not isinstance(limits, (list, tuple)):
+        return limits
+    return [canon_float(x, f"/limits/{i}", "an axis limit") for i, x in enumerate(limits)]
 
 
 def parse_time_coordinate(v: Any) -> Any:
@@ -148,7 +153,10 @@ class Annotation:
         for name in _COORD_FIELDS:
             if hasattr(self, name):
                 try:
-                    setattr(self, name, canon_float(getattr(self, name)))
+                    setattr(self, name, canon_float(getattr(self, name), "/" + name,
+                                                    f"{self.type} annotation {name}"))
+                except SpecParseError:
+                    raise  # number_out_of_range, already structured (path relative to it)
                 except ValueError as e:
                     raise ValueError(f"{self.type} annotation {name}: {e}") from None
 
@@ -259,7 +267,7 @@ def _simple_to_dict(obj: Any) -> dict[str, Any]:
         if f.name == "limits":
             v = _canon_limits(v)
         elif f.name in _COORD_FIELDS:
-            v = canon_float(v)
+            v = canon_float(v, "/" + f.name, f.name)
         out[f.name] = list(v) if isinstance(v, (list, tuple)) else (
             dict(v) if isinstance(v, dict) else v)
     return out
@@ -337,7 +345,9 @@ def _scalar(v: Any, path: str, what: str) -> Scalar | None:
         return v
     if isinstance(v, (int, float)) and not isinstance(v, bool):
         try:
-            return canon_float(v)
+            return canon_float(v, path, what)
+        except SpecParseError:
+            raise  # number_out_of_range
         except ValueError:
             raise non_finite_error(path, what, v) from None
     raise fail(path, "invalid_type", f"{what} must be a number, an ISO-8601 string or null.")
