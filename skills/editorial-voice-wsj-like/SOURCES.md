@@ -4,10 +4,10 @@ Format of every entry: title and URL, `Licence:`, `Use:` (`adapted` = text
 paraphrased and restructured under the licence's terms; `cited` = idea or
 finding only, no text taken).
 
-Internal note: this skill is modelled on news-writing principles associated
+Note on naming: this skill is modelled on news-writing principles associated
 with The Wall Street Journal. Facts about the newspaper come only from the
 sources below, marked [V] (read directly) or [S] (secondary, described as
-"reported"); everything is restated in our own words. Per the owner (2026-10-15) the skill is named
+"reported"); everything is restated in our own words. The skill is named
 and described as "WSJ-like", never as the Journal's own style; it claims no
 affiliation or endorsement and uses no Journal text, fonts or logos.
 

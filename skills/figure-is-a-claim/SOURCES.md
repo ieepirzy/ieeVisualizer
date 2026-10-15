@@ -4,9 +4,9 @@ Format of every entry: title and URL, `Licence:`, `Use:` (`adapted` = text
 paraphrased and restructured under the licence's terms; `cited` = idea or
 finding only, no text taken).
 
-- **Muutto365 admin repository rules ("What this product must not do") and legacy dashboard audit** — movingfirm-admin `CLAUDE.md`, `docs/LEGACY_DASHBOARD_AUDIT.md` (private) <https://github.com/ieepirzy>
+- **Author's own dashboard-review rules and audit notes (same owner, unpublished)** <https://github.com/ieepirzy>
   - Licence: Same owner (internal)
-  - Use: adapted — the "figure is a claim" and "UI is not the issue tracker" rules, `budget_total_cents = null`, "the number comes from computation; the agent explains the number". Rewritten for a general audience.
+  - Use: adapted — the "figure is a claim" and "UI is not the issue tracker" rules, the nullable-budget example (null means "no budget set", not 0), "the number comes from computation; the agent explains the number". Rewritten for a general audience as generic examples.
 - **K-Dense, scientific-visualization skill** <https://github.com/K-Dense-AI/scientific-agent-skills/tree/main/skills/scientific-visualization> (commit a1043ef)
   - Licence: MIT
   - Use: adapted — the distinction between missing, zero, censored and excluded values; "do not silently connect missing observations". Paraphrased.

@@ -1,6 +1,6 @@
 ---
 name: company-report-structure
-description: "Use when assembling a company report, business review, founder briefing, KPI update or analysis memo from computed metrics: chooses the depth (monitoring, exception, exploration), orders content by decision relevance, structures each finding as claim vs comparison base, drivers, caveats, evidence, and keeps recommendations, unknowns and method separate. Use before writing the first section of any recurring or one-off report."
+description: "Use when assembling a company report, business review, management briefing, KPI update or analysis memo from computed metrics: chooses the depth (monitoring, exception, exploration), orders content by decision relevance, structures each finding as claim vs comparison base, drivers, caveats, evidence, and keeps recommendations, unknowns and method separate. Use before writing the first section of any recurring or one-off report."
 license: CC-BY-4.0
 ---
 
@@ -57,7 +57,7 @@ Order findings by decision relevance, not by data source or department.
 - **No chart without a claim**, no claim without evidence.
 - **Comparisons are explicit**: vs last period, vs same period last year, vs
   plan; say which and why.
-- **Decompositions must add up.** Example: revenue went from 188 bookings ×
+- **Decompositions must add up.** Example: revenue went from 188 orders ×
   €650 = €122,200 (Aug) to 212 × €690 = €146,280 (Sep), +€24,080. Volume
   effect at August price: 24 × €650 = €15,600. Price effect at September
   volume: €40 × 212 = €8,480. Total €24,080.

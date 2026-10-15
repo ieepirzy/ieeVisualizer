@@ -15,15 +15,15 @@ interval is drawn.
 Report the size of the effect in the reader's units, with an interval, before
 any test statistic.
 
-Good: "The new quote form raised quote-to-booking conversion by 3.1 percentage
-points (95% CI 0.4 to 5.8; 4,000 quotes, randomised)."
+Good: "The new checkout page raised checkout conversion by 3.1 percentage
+points (95% CI 0.4 to 5.8; 4,000 checkout sessions, randomised)."
 
-(Illustrative; figures invented but consistent: 2,000 quotes per arm, 24.0%
+(Illustrative; figures invented but consistent: 2,000 sessions per arm, 24.0%
 vs 27.1%. SE = √(0.240·0.760/2,000 + 0.271·0.729/2,000) ≈ 1.38 pp, and
 3.1 ± 1.96 × 1.38 = 0.4 to 5.8 pp, normal approximation. With only 920
-quotes per arm the same rates give ±4.0 pp, an interval of −0.9 to 7.1.)
+sessions per arm the same rates give ±4.0 pp, an interval of −0.9 to 7.1.)
 
-Bad: "The new quote form had a significant effect (p = 0.03)."
+Bad: "The new checkout page had a significant effect (p = 0.03)."
 
 ## Rule 2: say what a p-value is, and nothing more
 

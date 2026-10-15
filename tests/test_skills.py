@@ -9,6 +9,7 @@ and the runnable ieeVisualizer examples must still run against the library.
 
 from __future__ import annotations
 
+import codecs
 import json
 import re
 from pathlib import Path
@@ -198,6 +199,50 @@ def test_readme_catalogue_matches_skills():
     assert listed == set(SKILL_IDS)
 
 
+# The library is public: no names, paths or metrics from private projects.
+# Stored ROT13-encoded so that this file does not itself contain the terms
+# (a plain-text grep for them over the repository should come back empty).
+# Matched case-insensitively as substrings; add to the list, never remove.
+_BANNED_ROT13 = (
+    "zhhggb",                    # a private company / product name
+    "zbivatsvez",                # private repository names
+    "ohqtrg_gbgny_pragf",        # a private schema column
+    "vagreany abgr",             # private-notes framing in SOURCES.md
+    "yrtnpl_qnfuobneq_nhqvg",    # a private audit document
+    "nqvagry",                   # a private system name
+    "zveneha",                  # a private system name
+)
+BANNED_TERMS = tuple(codecs.decode(t, "rot13") for t in _BANNED_ROT13)
+PUBLIC_DIRS = ("skills", ".claude-plugin")
+
+
+def banned_term_hits(root: Path) -> list[str]:
+    """``path:line: term`` for every banned term in the public skill files."""
+    hits = []
+    for d in PUBLIC_DIRS:
+        for path in sorted((root / d).rglob("*")):
+            if not path.is_file() or path.suffix not in {".md", ".json", ".txt"}:
+                continue
+            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                low = line.lower()
+                hits += [f"{path.relative_to(root)}:{n}: {t}" for t in BANNED_TERMS if t in low]
+    return hits
+
+
+def test_no_internal_references():
+    hits = banned_term_hits(ROOT)
+    assert not hits, "internal references in the public skills library:\n" + "\n".join(hits)
+
+
+def test_banned_terms_are_detected(tmp_path):
+    """Guard the guard: a planted term (in any case) is found."""
+    (tmp_path / "skills" / "x").mkdir(parents=True)
+    (tmp_path / ".claude-plugin").mkdir()
+    (tmp_path / "skills" / "x" / "SKILL.md").write_text(
+        "ok\nsee the " + BANNED_TERMS[0].upper() + " notes\n", encoding="utf-8")
+    assert banned_term_hits(tmp_path) == [f"skills/x/SKILL.md:2: {BANNED_TERMS[0]}"]
+
+
 def test_licence_files_present():
     for name in ("LICENSE.md", "NOTICE.md", "LICENSES/Apache-2.0.txt",
                  "LICENSES/MIT-K-Dense.txt", "LICENSES/MIT-jamditis.txt"):
@@ -224,9 +269,7 @@ PACKAGE = ROOT / "ieeVisualizer"
 # exempt from test_library_facts_exist. Keep each entry commented.
 NOT_LIBRARY = {
     # Example data: query, column and flag names from the invented company cases.
-    "weekly_confirmed_bookings", "is_internal", "conv_rate",
-    # A nullable column in the Muutto365 admin schema, quoted as an example.
-    "budget_total_cents",
+    "weekly_paid_orders", "is_internal", "conv_rate",
     # Matplotlib colormap name, not an ieeVisualizer identifier.
     "RdBu",
     # Floating-point "not a number", not an identifier.
@@ -235,7 +278,7 @@ NOT_LIBRARY = {
 # Documented in the skills as *planned* (docs/ROADMAP.md "Phase 2 onward").
 # test_planned_names_not_shipped fails as soon as one appears in the package:
 # then update the skills that call it planned and drop it from this set.
-PLANNED = {"interval_level", "interval_kind", "y_lower", "y_upper", "ViewSpec"}
+PLANNED = {"interval_level", "interval_kind", "y_lower", "y_upper"}
 
 SNAKE_RE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$")
 CAMEL_RE = re.compile(r"^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+$")

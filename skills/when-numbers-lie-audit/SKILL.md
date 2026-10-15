@@ -15,7 +15,7 @@ answer.
 ## Workflow
 
 1. **State the claim** the figure or sentence makes, in one sentence with a
-   number: "Quote-to-booking conversion fell from 31% to 24% in September."
+   number: "Consultation-to-order conversion fell from 31% to 24% in September."
 2. **Comparison audit** (what is it compared with?): run the *Comparison*
    rows below.
 3. **Population audit** (who or what is counted?): run *Population*.
@@ -33,19 +33,19 @@ answer.
 | **Comparison** | | |
 | C1 | Incomplete period | Is the last period complete in the source's timezone? Same number of days/business days as the base? |
 | C2 | Cherry-picked window | Does the conclusion survive starting the window one period earlier and later? Is the start a peak or trough? |
-| C3 | Seasonality | Moving demand peaks in summer and at month ends. Is the base the same season (year over year, same weekday mix)? |
+| C3 | Seasonality | Demand is seasonal (e.g. spring and pre-holiday peaks for a retailer). Is the base the same season (year over year, same weekday mix)? |
 | C4 | Regression to the mean | Was the segment chosen *because* it was extreme? Then its "recovery" is expected without any cause. |
 | C5 | Definition or denominator shift | Did the metric definition, tracking, attribution window or eligibility rule change inside the window? |
 | C6 | Nominal vs real | Euros compared across years without price-level adjustment, or prices compared across a VAT change. |
-| C7 | Missing base rate | "40% of damage claims came from apartment moves" means nothing until you know what share of moves are apartment moves. |
+| C7 | Missing base rate | "40% of damage claims came from flat-pack deliveries" means nothing until you know what share of deliveries are flat-pack. |
 | **Population** | | |
-| P1 | Survivorship | Who is not in the data: cancelled quotes, churned customers, failed training runs, deleted campaigns? |
-| P2 | Selection on the outcome | Segments defined by the result ("customers who booked twice") then credited with it. |
+| P1 | Survivorship | Who is not in the data: cancelled orders, churned customers, failed training runs, deleted campaigns? |
+| P2 | Selection on the outcome | Segments defined by the result ("customers who ordered twice") then credited with it. |
 | P3 | Mix shift / Simpson's paradox | Does the aggregate move the opposite way, or much more, than every segment? Decompose into rate and mix. |
 | P4 | Average of averages | Is a mean of per-segment rates or means reported without weights? Recompute from rows. |
 | P5 | Join explosion | Row count before vs after each join; `COUNT(DISTINCT id)` vs `COUNT(*)`. |
 | P6 | Small n | Any percentage on a small base (roughly under 30 units, a prompt to look, not a threshold), or a change driven by a handful of events? Show the counts. |
-| P7 | Timezone and cut-off | Are UTC timestamps bucketed into Helsinki days/weeks consistently across sources? |
+| P7 | Timezone and cut-off | Are UTC timestamps bucketed into the business's local days/weeks consistently across sources? |
 | **Encoding** | | |
 | E1 | Truncated bar or area axis | Bars and areas encode length from a baseline; does the value axis include zero? |
 | E2 | Dual axes | Two y-scales chosen independently can manufacture any correlation. Use two aligned panels. |

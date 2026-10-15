@@ -53,7 +53,7 @@ preview.
 |---|---|
 | Final size | `RenderRequest(width=, height=, units="in" or "px", dpi=)`; a PNG measures exactly `request.size_px` |
 | Formats | `png`, `svg`, `pdf` from the matplotlib adapter |
-| Themes | `theme="default" / "minimal" / "presentation"` (request or `spec.theme`) |
+| Themes | a registered theme name or `name@version` (`RenderRequest(theme=)` or `spec.theme`); `themes.list_themes()` lists them, built-ins include `default`, `minimal`, `presentation` |
 | Determinism | same spec + library versions → byte-identical SVG and PDF |
 | Provenance | `ieeVisualizer.artifacts.export(spec, ["png", "svg"], writer)` writes figure files, canonical `spec.json`, `manifest.json` (spec hash, dataset hashes, provenance, library versions, warnings) |
 | Inspection | `build_figure(spec)` returns the Matplotlib figure and per-layer artists without exporting; read `RenderResult.warnings` |

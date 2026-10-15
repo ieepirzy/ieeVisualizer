@@ -22,8 +22,8 @@ magnitude. Treat this as an ordering, not a precise scale.
 
 ## Rules
 
-1. **The key comparison goes on a common scale.** If the point is "Helsinki
-   vs Tampere revenue per move", put both on one axis side by side, not in
+1. **The key comparison goes on a common scale.** If the point is "North
+   vs South region revenue per order", put both on one axis side by side, not in
    two pies or two panels with different scales.
 2. **Length needs a zero baseline.** Bars and areas are read as length from
    the baseline; a truncated baseline misstates every ratio. Dots and lines
@@ -69,11 +69,11 @@ magnitude. Treat this as an ordering, not a precise scale.
 
 ## Good / bad
 
-Bad: two pies, "Bookings by channel, Aug" and "Sep", to show that referrals
+Bad: two pies, "Orders by channel, Aug" and "Sep", to show that referrals
 grew from 31% to 36%.
 Good: one slope chart or paired bars with the 31% → 36% change labelled.
 
-Bad: heatmap of crew utilisation with a jet/rainbow colormap.
+Bad: heatmap of team utilisation with a jet/rainbow colormap.
 Good: single-hue sequential map, colourbar labelled "Utilisation (%)",
 0–100 fixed so months are comparable.
 

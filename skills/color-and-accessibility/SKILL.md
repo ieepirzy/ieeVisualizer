@@ -45,11 +45,11 @@ Every figure that leaves the workspace carries a text alternative. Good alt
 text states the **message and the key numbers**, not the chart's appearance
 and not every data point:
 
-> Line chart of weekly confirmed bookings, 31 Aug to 4 Oct 2026. Bookings
-> rose from 41 to 47; the week of 14 Sep has no data because the booking
-> export failed.
+> Line chart of weekly paid orders, 31 Aug to 4 Oct 2026. Orders rose
+> from 41 to 47; the week of 14 Sep has no data because the order export
+> failed.
 
-Bad: "Chart showing bookings." / "A blue line going up." / a list of all 52
+Bad: "Chart showing orders." / "A blue line going up." / a list of all 52
 weekly values.
 
 Also provide: the data as a table or download where the medium allows, a

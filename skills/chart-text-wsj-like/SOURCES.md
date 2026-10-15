@@ -4,9 +4,9 @@ Format of every entry: title and URL, `Licence:`, `Use:` (`adapted` = text
 paraphrased and restructured under the licence's terms; `cited` = idea or
 finding only, no text taken).
 
-Internal note: this skill is modelled on The Wall Street Journal's graphics
-practice as reported in secondary summaries of Dona M. Wong's guide. Per the
-owner (2026-10-15) it is named and described as "WSJ-like", never as the
+Note on naming: this skill is modelled on The Wall Street Journal's graphics
+practice as reported in secondary summaries of Dona M. Wong's guide. It is
+named and described as "WSJ-like", never as the
 Journal's own style; it claims no affiliation or endorsement and uses none of
 the newspaper's fonts, logos or text. Numeric limits from those summaries (line
 count, two-thirds height, bar/gap ratio) were not verified against the book

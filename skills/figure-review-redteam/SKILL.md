@@ -6,7 +6,7 @@ license: CC-BY-4.0
 
 # Figure review: red team
 
-Review as the reader most motivated to find a flaw: a sceptical founder, a
+Review as the reader most motivated to find a flaw: a sceptical executive, a
 competitor, a reviewer, a journalist. The goal is not to approve the figure;
 it is to find what is wrong before they do.
 
@@ -21,7 +21,7 @@ it is to find what is wrong before they do.
 4. **Re-plot under alternative honest framings** (quickly, not for
    publication) and see whether the conclusion survives:
    - window shifted one period earlier/later; same period last year
-   - per-unit instead of totals (per booking, per crew-hour), or the reverse
+   - per-unit instead of totals (per order, per staff-hour), or the reverse
    - zero baseline vs fitted range (for lines)
    - segmented by the obvious split (channel, region, seed)
    - counts instead of percentages

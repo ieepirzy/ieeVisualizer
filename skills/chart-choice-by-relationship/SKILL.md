@@ -14,7 +14,7 @@ probably needs no chart.
 
 | Situation | Use |
 |---|---|
-| One or two numbers | a sentence: "Bookings: 212 in September, up from 188 in August." |
+| One or two numbers | a sentence: "Orders: 212 in September, up from 188 in August." |
 | Exact values will be looked up | a table (sorted, units in the header) |
 | A shape, trend, spread or pattern is the point | a chart |
 | A process, dependency or flow | a diagram (nodes and edges), not a chart |
@@ -50,23 +50,25 @@ and grey the rest.
 | Stacked / shares | `bar` or `area` with `series`; compute shares upstream and set the unit to `%` |
 | Distribution | `histogram` mark (`bins` or `bin_edges`, `density`); scatter of raw points for small n |
 | Correlation | `scatter` mark; `heatmap` for binned counts |
-| Funnel | horizontal `bar` mark, stage order preserved via a category axis, counts in labels/caption |
+| Funnel | `funnel` template (stage counts, step and overall rates with their numerators and denominators), or a horizontal `bar` mark with stage order preserved |
 | Reference / target | `reference_line` / `reference_band` annotations, or the template's `target` |
 | Fields, functions | `quiver`, `function`, `vector_field_2d` template |
-| Small multiples, dual-panel | not in spec 1.0: render one figure per panel with identical axis limits |
-| Flow / architecture diagram | not yet (planned `ViewSpec`); do not fake it with a scatter plot |
+| Grouped comparison, vs previous period | `bar_comparison` template |
+| Small multiples, dual-panel | not in one FigureSpec: render one figure per panel with identical axis limits, or place them side by side in a `ViewSpec` grid |
+| Flow / architecture diagram | a flow component in a `ViewSpec` (`ieeVisualizer.view`, docs/VIEWS.md); do not fake it with a scatter plot |
+| Network, hierarchy, dependencies | `network`, `org_chart`, `dependency_map` templates (`ieeVisualizer.network`, docs/NETWORKS.md) |
 
 If none fits, follow the extensibility ladder in `ieevisualizer-figures`
 (template → compose marks → specialist adapter → bespoke code, rarely).
 
 ## Good / bad
 
-Bad: pie chart of bookings by source with eight similar slices.
+Bad: pie chart of orders by source with eight similar slices.
 Good: horizontal bars, sorted, labelled with counts and shares, "Other"
 last regardless of size.
 
-Bad: line chart joining "Helsinki, Espoo, Vantaa, Tampere" (categories are not
-a sequence).
+Bad: line chart joining "North, South, East, West" regions (categories are
+not a sequence).
 Good: sorted bars.
 
 Bad: for an ablation with three seeds per variant, bars of the mean

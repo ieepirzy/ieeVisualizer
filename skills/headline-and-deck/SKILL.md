@@ -21,7 +21,7 @@ Illustrative example (figures invented):
 
 > Headline: Conversion fell to 24% as the lead mix shifted toward Meta ads
 > Deck: Every channel converted at least as well as in August; Meta's share
-> of quotes rose from 18% to 29%, and it converts at half the referral rate.
+> of consultations rose from 18% to 29%, and it converts at half the referral rate.
 
 ## Atom check
 
@@ -36,7 +36,7 @@ computed field, value, period, source) or it is cut.
 | Period | in September | exact and in the deck or subtitle |
 | Cause | as cheaper leads poured in | design supports it (`statistical-claims` ladder) |
 | Superlative | record, first, biggest | full history checked and its start date stated |
-| Scope | Helsinki, all regions | matches the filter in the query |
+| Scope | North region, all regions | matches the filter in the query |
 
 ## Rules
 
@@ -50,7 +50,7 @@ computed field, value, period, source) or it is cut.
 4. **No question headlines** and no headlines the body has to walk back.
 5. **Headline and figure agree.** The direction and size claimed are visible
    in the chart, over the window the chart shows.
-6. **Monitoring is allowed to be dull.** "Bookings in line with last year"
+6. **Monitoring is allowed to be dull.** "Orders in line with last year"
    is a valid headline if the report states what counts as "in line" (e.g.
    within ±5%); do not manufacture tension, and do not turn an inconclusive
    test into "no change" (`statistical-claims` Rule 5).
@@ -58,13 +58,13 @@ computed field, value, period, source) or it is cut.
    a translation would lose.
 8. **Same number, same rounding** in headline, deck, body and chart.
 
-## Muutto365 examples (illustrative; figures invented)
+## Business example (illustrative; a fictional online shop, figures invented)
 
-Bad: "Record month as new campaign drives bookings surge"
+Bad: "Record month as new campaign drives orders surge"
 - "Record": data since March 2024 only. "drives": before/after, no control.
   "surge": +13%.
 
-Good: "Bookings rose 13% in September, the most since records began in March 2024"
+Good: "Orders rose 13% in September, the most since records began in March 2024"
 Deck: "The rise came in the first full month of the Google campaign; seasonal
 demand also peaks in September, so the campaign's share is not yet known."
 

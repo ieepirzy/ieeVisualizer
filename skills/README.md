@@ -11,8 +11,9 @@ at the repository root; skills are discovered from this `skills/` directory).
 Each skill is `skills/<name>/SKILL.md` in the Agent Skills format, with a
 `SOURCES.md` listing every upstream source, its licence and what was taken.
 
-Company figures in the examples (Muutto365 and other moving-company cases)
-are invented for illustration; they are not real company data.
+Business examples describe a fictional online furniture shop and research
+examples use invented AI/ML results; all figures are invented for
+illustration and are not real company data.
 
 ## Install
 
@@ -24,6 +25,11 @@ are invented for illustration; they are not real company data.
 Or copy individual `skills/<name>/` directories into `~/.claude/skills/` or a
 project's `.claude/skills/`. Keep `SOURCES.md`, `NOTICE.md`, `LICENSE.md`
 and `LICENSES/` with any copy.
+
+A team that needs a private marketplace can use a CI-maintained, one-way
+mirror of this directory and `.claude-plugin/`: see
+[docs/SKILLS_MIRROR.md](../docs/SKILLS_MIRROR.md). Edit the skills here,
+never in the mirror.
 
 ## Catalogue
 
@@ -63,7 +69,7 @@ and `LICENSES/` with any copy.
 |---|---|
 | [`company-report-structure`](company-report-structure/SKILL.md) | structure a report by decision depth with a four-line top block |
 | [`ieevisualizer-figures`](ieevisualizer-figures/SKILL.md) | make figures with ieeVisualizer: template vs composed marks, binding, validation, render, inspect, patch, export |
-| [`ieevisualizer-report-figures`](ieevisualizer-report-figures/SKILL.md) | run a Muutto365 founder briefing: monitoring vs exception vs exploration, evidence → figure → caveat → decision |
+| [`ieevisualizer-report-figures`](ieevisualizer-report-figures/SKILL.md) | run a recurring management briefing: monitoring vs exception vs exploration, evidence → figure → caveat → decision |
 
 ### How they fit together
 
@@ -93,7 +99,12 @@ filled-in provenance, contrast, alt text — is guarded only by the skills.
   (what and when, trigger-oriented), `license`. At most 300 lines; longer
   material goes in `references/`.
 - Each skill: concrete, checkable rules; good/bad examples with
-  moving-company or AI-research metrics (all invented); a closing checklist.
+  metrics from a fictional online shop or from AI research (all invented);
+  a closing checklist.
+- Examples are generic and self-contained: no names, paths, issue numbers,
+  metric definitions or incidents from private projects or organisations.
+  `tests/test_skills.py` fails if a listed internal term appears anywhere
+  under `skills/` or `.claude-plugin/`.
 - `SOURCES.md`: one bullet per source with URL, `Licence:` and `Use:`
   (`adapted` or `cited`). `adapted` is allowed only for Apache-2.0, MIT,
   OGL-UK-3.0, CC-BY-4.0, CC0-1.0 or same-owner sources; everything else is

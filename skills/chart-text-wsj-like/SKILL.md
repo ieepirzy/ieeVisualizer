@@ -20,26 +20,26 @@ and uses none of its fonts or logos. Numeric limits below are guidance, not hard
 ## The text stack (top to bottom)
 
 1. **Headline title: the finding.** A short sentence with the claim:
-   "Bookings recovered to 47 a week after the September dip". Not "Weekly
-   bookings". Every number and verb in it must be checked against the data
+   "Orders recovered to 47 a week after the September dip". Not "Weekly
+   orders". Every number and verb in it must be checked against the data
    (`headline-and-deck`). Where no single finding is warranted (a monitoring
    chart), a plain descriptive title is honest: do not invent a story.
 2. **Subtitle: what exactly is measured.** Measure, unit, period, population,
-   and any transform: "Confirmed bookings per ISO week, all regions,
+   and any transform: "Paid orders per ISO week, all regions,
    ISO weeks 36–40 (31 Aug–4 Oct 2026)". "Index, Jan 2026 = 100". "7-day rolling mean".
 3. **Plot labels.** Axis labels with units ("Revenue (€ thousands)"); direct
    labels at line ends or on bars instead of a legend when there are few
    series; annotations for the one or two events that explain the shape
    ("Attribution window changed", "Price list v7").
-4. **Source and notes line.** "Source: booking service, retrieved 5 Oct 2026
-   06:00 EEST. Note: no data for week of 14 Sep (export failed). Forecast:
-   bookings model v3." See `source-and-provenance`.
+4. **Source and notes line.** "Source: order service, retrieved 5 Oct 2026
+   06:00 CEST. Note: no data for week of 14 Sep (export failed). Forecast:
+   orders model v3." See `source-and-provenance`.
 
 ## Rules
 
 - **Plain text.** Sentence case; no all-caps; horizontal labels only (if they
   do not fit, flip to horizontal bars or shorten); spell out acronyms on first
-  use ("cost per booking (CPA)") unless the audience uses them daily.
+  use ("cost per order (CPA)") unless the audience uses them daily.
 - **One emphasis device.** Bold *or* colour *or* an arrow, not all three.
 - **Natural ticks.** Steps of 1, 2, 5 or 10 × a power of ten; about ten
   gridlines at most, light grey; units in the axis label rather than on every
@@ -67,7 +67,7 @@ These are restated from public reviews and summaries, not from the book.
   and finally check every plotted value and label against the source.
 - **Do the maths for the reader.** If the point is a change, plot or label the
   change (% change, difference vs last year), not two levels the reader must
-  subtract. If levels mislead (two cities of very different size), switch to
+  subtract. If levels mislead (two regions of very different size), switch to
   a rate or per-unit measure.
 - **Give a reference point.** A figure without a comparison (last year,
   plan, peers, per-unit) leaves the reader unable to judge good or bad.
@@ -107,12 +107,12 @@ warning): treat it as a sign the chart has too many categories.
 ## Good / bad
 
 Bad title: "CPA by Channel Q3 2026".
-Good: "Cost per booking fell on Google Ads and rose on Meta" + subtitle
-"Ad spend per confirmed booking (€), by channel, Jul–Sep 2026, 28-day
+Good: "Cost per order fell on Google Ads and rose on Meta" + subtitle
+"Ad spend per paid order (€), by channel, Jul–Sep 2026, 28-day
 click attribution".
 
 Bad axis: "conv_rate" with ticks 0.2134, 0.2268, ….
-Good: "Quote-to-booking conversion (%)" with ticks 20, 22, 24, 26.
+Good: "Consultation-to-order conversion (%)" with ticks 20, 22, 24, 26.
 
 Bad: legend with 7 entries at the bottom, colours to match.
 Good: two highlighted lines labelled at their ends, others grey and

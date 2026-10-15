@@ -48,8 +48,8 @@ date 28 September. Nothing by region.
 
 Draft (monitoring brief):
 
-> Great week! Revenue skyrocketed thanks to our amazing crews and the new
-> Google campaign. Mr. Virtanen's team in Tampere did especially well.
+> Great week! Revenue skyrocketed thanks to our amazing team and the new
+> Google campaign. Mr. Moreau's showroom in Lyon did especially well.
 
 Diagnosis: H (great, skyrocketed, amazing), N (no figure, period, base),
 C ("thanks to"), A (no source), T (Mr.).
@@ -59,8 +59,8 @@ Revision:
 > Revenue was €48,300 in the week to 4 October, up 15% from €41,900 the
 > week before, according to the finance service. The Google Ads campaign
 > started on 28 September; whether it contributed is not yet measurable.
-> Tampere, where Jari Virtanen leads the crew, [NEEDS: Tampere revenue for
+> The Lyon showroom, which Luc Moreau manages, [NEEDS: Lyon revenue for
 > both weeks; the evidence has no regional figures].
 
-The Tampere sentence goes back to the author: the evidence cannot support
+The Lyon sentence goes back to the author: the evidence cannot support
 "did especially well", and the editor must not invent a figure for it.

@@ -17,8 +17,9 @@ Climb only as far as the figure needs.
 
 1. **Registered template.** A proven pattern with typed slots and built-in
    checks. Today: `timeseries` (units, forecast split, caller-supplied bounds,
-   target line) and `vector_field_2d`. `templates.list_templates()`,
-   `templates.describe(name)`.
+   target line), `bar_comparison`, `funnel`, `vector_field_2d`, and the
+   network templates `network`, `org_chart`, `dependency_map`.
+   `templates.list_templates()`, `templates.describe(name)`.
 2. **Compose registered primitives.** Write a `FigureSpec` from the eight
    marks (`line`, `scatter`, `bar`, `area`, `histogram`, `heatmap`, `quiver`,
    `function`), axes and annotations. Novel figures, declaratively; patchable.
@@ -34,13 +35,18 @@ line chart, bar chart, KPI or flowchart (no validation, no provenance, no
 patching); the opposite, forcing a scientific figure into a dashboard
 template that cannot express it.
 
-Not yet available: flow/architecture diagrams (`ViewSpec`, planned), small
-multiples in one spec, subtitles, band/errorbar marks (planned Phase 2). Do
-not fake them; say what is missing and use the nearest honest form.
+Beyond single figures: a `ViewSpec` (`ieeVisualizer.view`, docs/VIEWS.md)
+composes figures with text, KPI tiles, tables, notes and flow diagrams;
+`ieeVisualizer.network` draws graphs (docs/NETWORKS.md). Themes are
+registered, versioned data (`themes.list_themes()`); name one in
+`spec.theme`, pinned as `name@version` for reproducibility, instead of
+styling by hand. Not yet available: small multiples in one FigureSpec,
+subtitles, band/errorbar marks (planned Phase 2). Do not fake them; say
+what is missing and use the nearest honest form.
 
 ## Workflow
 
-1. **Write the claim and the reader** (one sentence with a number; founder,
+1. **Write the claim and the reader** (one sentence with a number; manager,
    researcher, public). Decide whether a chart is needed at all
    (`chart-choice-by-relationship`).
 2. **Discover.** `list_templates()`; `describe(name)` returns columns,
@@ -71,7 +77,7 @@ Runnable examples (template and composed): `references/examples.md`.
 - [ ] Title readable and not clipped at the final width; it states a claim
       the data supports, including any missing category.
 - [ ] Axis labels in words with units; no raw column names (`conv_rate`);
-      the unit does not just repeat the label ("Bookings (bookings)").
+      the unit does not just repeat the label ("Orders (orders)").
 - [ ] Sparse series (a few weekly points, points between gaps) have markers.
 - [ ] Ranked bars: largest at the top (categories are placed in order of
       first appearance, bottom-up on a horizontal bar chart).

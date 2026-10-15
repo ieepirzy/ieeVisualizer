@@ -17,13 +17,13 @@ they are looking at.
 1. **Kind**: standard deviation, standard error, confidence interval,
    credible interval, prediction interval, min–max, or quantile range.
 2. **Level**: 50%, 80%, 95%; or "±1 SD".
-3. **n and the unit of replication**: 5 training seeds; 212 bookings; 14
+3. **n and the unit of replication**: 5 training seeds; 212 orders; 14
    weeks. Not "n = 3 runs" when the runs share a seed.
 4. **Method**: normal approximation, Wilson, bootstrap (percentile, stratified),
    posterior from model X.
 5. **What it is about**: the mean, a single future week, the difference.
 
-Caption pattern: "Shaded: 80% prediction interval for weekly bookings from
+Caption pattern: "Shaded: 80% prediction interval for weekly orders from
 forecast model v3 (trained to 28 Sep 2026). Points: observed."
 
 ## Rule 2: uncertainty is computed by analysis, never by the figure
@@ -38,7 +38,7 @@ estimate available" rather than drawing a decorative band.
 |---|---|
 | Analyst comparing a few estimates | point + interval (error bar), raw points if n is small |
 | Time series with forecast | line + band, widening with horizon; fan chart for several levels |
-| Non-technical decision maker ("how likely are we to exceed 250 bookings?") | quantile dotplot or a stated probability; frequencies ("in 8 of 10 simulated Septembers") |
+| Non-technical decision maker ("how likely are we to exceed 250 orders?") | quantile dotplot or a stated probability; frequencies ("in 8 of 10 simulated Septembers") |
 | Many plausible trajectories | ensemble of thin lines, or hypothetical outcome plots (animated draws) |
 | Distribution of a model metric across seeds | dots for each seed, with the summary marked |
 
@@ -92,8 +92,8 @@ Bad: forecast line extending three months with no band and a solid style.
 Good: dashed forecast with 50% and 80% prediction bands, caption naming the
 model and training cut-off.
 
-Bad: grey band on the bookings chart labelled "uncertainty".
-Good: "Band: 90% range of weekly bookings in 2023–2025 for the same week"
+Bad: grey band on the orders chart labelled "uncertainty".
+Good: "Band: 90% range of weekly orders in 2023–2025 for the same week"
 (a historical range, labelled as such, not a confidence interval).
 
 ## Checklist

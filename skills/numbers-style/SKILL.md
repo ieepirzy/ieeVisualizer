@@ -24,11 +24,11 @@ the evidence, and formatted the same way everywhere in a report.
 - **Percentage points for differences between rates; percent for relative
   change.** "Conversion rose 3 percentage points, from 21% to 24% (a 14%
   relative increase)." Never "conversion rose 3%" for that change.
-- **Give both levels.** "from 188 to 212 bookings (+13%)", not only "+13%".
+- **Give both levels.** "from 188 to 212 orders (+13%)", not only "+13%".
 - **Growth from zero or a negative base is undefined.** Write the levels.
 - **Decreases cannot exceed 100%.** Use "fell to a third", not "fell 300%".
   Avoid "three times less".
-- **Small bases: counts first.** "2 of 10 Espoo jobs were cancelled", not
+- **Small bases: counts first.** "2 of 10 East-region orders were cancelled", not
   "20% cancellation". When a rate on a small base must be shown, give n and
   an interval (`uncertainty-display`).
 
@@ -39,10 +39,10 @@ the evidence, and formatted the same way everywhere in a report.
 - **Currency.** State whether prices include VAT (Finland's standard rate is
   25.5% since 1 September 2024); state nominal vs inflation-adjusted for
   comparisons across years, and name the index and base year.
-- **Normalise to the decision.** Per booking, per 100 moves, per crew-hour,
+- **Normalise to the decision.** Per order, per 100 deliveries, per staff-hour,
   per € of ad spend; say which denominator.
 - **Name the average.** Mean, median, or weighted mean; for skewed values
-  (job value, lead time) prefer the median and say so.
+  (order value, lead time) prefer the median and say so.
 - **Percent storage.** Decide whether rates are stored as fractions (0.24) or
   percent (24) and declare it in the unit; ieeVisualizer will not convert.
 
@@ -67,8 +67,9 @@ Pick one locale per report and apply it everywhere, including chart ticks.
 
 - **Name the period exactly.** "ISO week 40 (28 Sep–4 Oct 2026)" or "the week
   to 4 October". Not "last week" in a document that will be read later.
-- **State the timezone** for daily or weekly buckets (Europe/Helsinki unless
-  stated) and the data cut-off ("retrieved 5 Oct 06:00 EEST").
+- **State the timezone** for daily or weekly buckets (the business's own
+  timezone, named, e.g. Europe/Berlin) and the data cut-off ("retrieved
+  5 Oct 06:00 CEST").
 - **Partial periods are labelled** ("October to date, 1–14 Oct").
 
 ## ieeVisualizer enforcement
@@ -91,9 +92,9 @@ Pick one locale per report and apply it everywhere, including chart ticks.
 |---|---|
 | Conversion up 3% (21% → 24%) | Conversion up 3 percentage points, to 24% |
 | Revenue €182,437.18 (in a headline) | Revenue €182,000 |
-| Cancellations doubled to 20% (Espoo) | 2 of 10 Espoo jobs cancelled, up from 1 of 10 |
-| Avg job value €870 | Revenue per move €691 (weighted; Helsinki and Tampere) |
-| CPA €45 | Ad spend per confirmed booking €45 (28-day click attribution, ex VAT) |
+| Cancellations doubled to 20% (East region) | 2 of 10 East-region orders cancelled, up from 1 of 10 |
+| Avg order value €870 | Revenue per order €691 (weighted; North and South regions) |
+| CPA €45 | Ad spend per paid order €45 (28-day click attribution, ex VAT) |
 | Accuracy 0.71 vs 71% in the same table | 71.0% throughout |
 
 ## Checklist

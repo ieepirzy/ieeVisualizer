@@ -14,16 +14,16 @@ A figure that cannot be traced cannot be corrected.
 
 | Field | Example |
 |---|---|
-| Source system | booking-service; finance-service; Google Ads API via AdIntel |
-| Query / metric id | `weekly_confirmed_bookings` v3 |
-| Retrieved at (with timezone) | 2026-10-05 06:00 EEST |
+| Source system | order-service; finance-service; Google Ads API via the ad-data pipeline |
+| Query / metric id | `weekly_paid_orders` v3 |
+| Retrieved at (with timezone) | 2026-10-05 06:00 CEST |
 | Coverage | ISO weeks 36–40, 2026; all regions |
-| Unit | bookings; € excl. VAT; % of quotes |
-| Denominator (rates) | quotes created in the same week |
-| Aggregation | count per ISO week, Europe/Helsinki |
-| Filters / exclusions | test bookings and internal moves excluded |
+| Unit | orders; € excl. VAT; % of consultations |
+| Denominator (rates) | design consultations held in the same week |
+| Aggregation | count per ISO week, Europe/Berlin |
+| Filters / exclusions | test orders and staff orders excluded |
 | Transformations | none / 7-day rolling mean / deflated to 2026 € with CPI |
-| Version / run | report run `report-2026-W40`; model `bookings-forecast` v3 |
+| Version / run | report run `report-2026-W40`; model `orders-forecast` v3 |
 
 Readers see a short **source line** (`chart-text-wsj-like`); the full record lives in the
 artifact manifest and the report's methodology note.
@@ -37,7 +37,7 @@ artifact manifest and the report's methodology note.
 3. **Frozen vs refreshed.** A sent report's figures come from a frozen
    snapshot. A later re-query is a new analysis with its own timestamp; never
    silently overwrite what recipients saw. If numbers changed, say what
-   changed and why ("finance restated September after late invoices").
+   changed and why ("finance restated September after late refunds").
 4. **Value provenance and explanation provenance are different.** The number
    comes from computation and cites its query. An agent's explanation of
    the number cites the agent run that produced it. A citation never makes
@@ -75,14 +75,14 @@ artifact manifest and the report's methodology note.
 ## Good / bad
 
 Bad caption: "Source: internal data."
-Good: "Source: booking service, query weekly_confirmed_bookings v3, retrieved
-5 Oct 2026 06:00 EEST. Weeks are ISO weeks in Helsinki time. Test bookings
+Good: "Source: order service, query weekly_paid_orders v3, retrieved
+5 Oct 2026 06:00 CEST. Weeks are ISO weeks in Berlin time. Test orders
 excluded."
 
 Bad: the weekly report is re-generated on Monday with refreshed data and the
 September figures quietly change.
 Good: the original artifact is kept; the new one notes "September revenue
-restated from €182,400 to €184,100 (late invoices, finance, 12 Oct)".
+restated from €182,400 to €184,100 (late refunds, finance, 12 Oct)".
 
 ## Checklist
 

@@ -23,14 +23,14 @@ Classify every value before drawing it. Only the first is drawn as a number.
 | **Not collected** | Nothing records it (yet) | omit the panel, or a plain no-data state |
 | **Not applicable** | Undefined (rate with zero denominator, budget not set) | `n/a` or "no budget set", never 0 |
 
-`budget_total_cents = null` means "no budget set". It is not 0, and a burn rate
-against it is undefined, not 0%.
+A nullable budget column where null means "no budget set" is not 0, and a
+burn rate against it is undefined, not 0%.
 
 ## Rules
 
 1. **No default-to-zero.** `COALESCE(x, 0)`, `fillna(0)`, `?? 0`, `or 0` on a
    measure that feeds a figure is a defect unless the source semantics say a
-   missing row *is* a zero (e.g. no booking rows for a day the office was
+   missing row *is* a zero (e.g. no order rows for a day the shop was
    open and the export succeeded). Write that justification next to the code.
 2. **Failed source → no figure, not an empty one.** If the request for a
    panel's data failed, the panel says it failed (and when it last
@@ -76,10 +76,10 @@ Bad: weekly ad spend tile shows `€0` because the Google Ads sync failed.
 Good: tile reads "Ad spend: no data (sync failed 6 Oct; last complete week 28
 Sep–4 Oct: €1,240)".
 
-Bad: crew utilisation chart for October with a flat line at 0% for crews
+Bad: team utilisation chart for October with a flat line at 0% for teams
 whose shift data has not been imported.
-Good: those crews are absent from the chart and the caption says "3 of 7
-crews: shift data not imported for October."
+Good: those teams are absent from the chart and the caption says "3 of 7
+teams: shift data not imported for October."
 
 Bad: eval table shows `0.0` accuracy for a benchmark that timed out.
 Good: cell shows `—` with footnote "run timed out after 6 h; not scored".

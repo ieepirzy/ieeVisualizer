@@ -30,7 +30,7 @@ trends rather than the calendar.
 1. **Lede (paragraph 1).** A specific, concrete opening: the fact, the
    customer case, the campaign. Not the calendar ("This week, …") and not the
    process ("We analysed …"). In a business briefing the lede is usually the
-   number itself; an anecdote (one customer's cancelled move) is used only
+   number itself; an anecdote (one customer's cancelled order) is used only
    when it stands for the pattern, and says so.
 2. **Nut graf (right after the lede; by paragraph 2–4 at the latest).** One
    paragraph that steps back from the case to the pattern and answers "why
@@ -60,14 +60,14 @@ organised material around six blocks (as described by Chip Scanlan at
 Poynter). Use them as a reporting checklist for any exception or analysis,
 and as the skeleton of the body. Skip a block only deliberately.
 
-| Block | Question | Muutto365 example (figures invented): conversion fell to 24% |
+| Block | Question | Example, fictional online furniture shop (figures invented): conversion fell to 24% |
 |---|---|---|
 | **History** | When did it start; what led here? | first week below 28% since March; price list v7 on 28 Sep |
-| **Scope** | How big; how many affected; how much money? | 412 quotes a week; about €12,000 a month per point |
-| **Reasons** | What forces drive it? | mix shift toward Meta leads; v7 minimum charge +€40 |
-| **Impact** | Who gains or loses, and how much? | Helsinki apartment moves most affected; crews under-booked mid-October |
-| **Countermoves** | Who is acting on it, and with what effect? | Meta spend capped since 2 Oct; sales calling back open quotes |
-| **Future** | What happens if nothing changes, per the people and data involved? | October bookings ~15% under plan on the current trend (forecast v3) |
+| **Scope** | How big; how many affected; how much money? | 412 design consultations a week; about €12,000 a month per point |
+| **Reasons** | What forces drive it? | mix shift toward Meta leads; v7 delivery fee +€40 |
+| **Impact** | Who gains or loses, and how much? | sofa orders most affected; delivery slots under-filled mid-October |
+| **Countermoves** | Who is acting on it, and with what effect? | Meta spend capped since 2 Oct; sales calling back open consultations |
+| **Future** | What happens if nothing changes, per the people and data involved? | October orders ~15% under plan on the current trend (forecast v3) |
 
 The same blocks work for research: history (prior results), scope (how
 many benchmarks, effect size), reasons (mechanism), impact (who should
@@ -78,7 +78,7 @@ future (open questions, what would falsify it).
 
 - **Numbers carry unit, period and base.** "Revenue was €182,400 in
   September, up 9% from August" not "revenue grew strongly".
-- **Attribute every claim.** Data: "according to the booking service
+- **Attribute every claim.** Data: "according to the order service
   (retrieved 5 Oct)". People: name and role. Inference: say whose ("the
   analysis suggests"). An unattributed claim is the writer's opinion; label
   it or cut it.
@@ -95,7 +95,7 @@ future (open questions, what would falsify it).
   courtesy titles (Mr., Ms., Dr. as an honorific). The Journal reportedly
   dropped courtesy titles in 2023. Occupational titles are kept ("analyst",
   "CFO"); that part is our own rule, not something the reports describe.
-  In an internal founders' briefing, first names are acceptable if used
+  In a small team's internal briefing, first names are acceptable if used
   consistently.
 - **Company names** without legal suffixes (Inc., Corp., Oy, Ab) in running
   text unless the legal entity matters (also reportedly dropped by the
@@ -105,8 +105,8 @@ future (open questions, what would falsify it).
   it supports, not before a string of clauses.
 - **Quotes for judgement and colour, not for facts.** A number belongs in
   your sentence with its source; a quote earns its place when it carries a
-  view or a voice ("We lost three jobs to the price floor this week," the
-  Tampere crew lead said). Never paraphrase a person into more certainty
+  view or a voice ("We lost three sofa orders to the delivery fee this week," the
+  head of customer service said). Never paraphrase a person into more certainty
   than they expressed.
 - **Absolute time.** "the week to 4 October", "since 28 September", not
   "last week" or "recently": briefings are read later and forwarded.
@@ -130,19 +130,20 @@ Bad:
 > This week we saw some really interesting developments in conversion,
 > which dropped significantly, probably due to the new pricing.
 
-Good (illustrative; Muutto365-style figures invented):
-> Quote-to-booking conversion fell to 24% in the week to 4 October, from 31%
-> a week earlier, on 412 quotes, according to the booking service.
+Good (illustrative; a fictional online furniture shop, figures invented):
+> Consultation-to-order conversion fell to 24% in the week to 4 October, from
+> 31% a week earlier, on 412 design consultations, according to the order
+> service.
 >
-> The drop matters because October is when the autumn lease cycle fills
-> the calendar: at about 1,800 quotes a month and September's average job
-> value of €690, each lost point of conversion is roughly €12,000 of
-> monthly revenue. [nut graf]
+> The drop matters because October opens the pre-holiday buying season: at
+> about 1,800 consultations a month and September's average order value of
+> €690, each lost point of conversion is roughly €12,000 of monthly revenue.
+> [nut graf]
 >
-> The fall coincided with price list v7, which raised the minimum charge by
-> €40. But the share of quotes from Meta ads, which convert at half the rate
-> of referrals, also rose from 18% to 29%; the data do not yet separate the
-> two. [support, then counter-evidence]
+> The fall coincided with price list v7, which raised the delivery fee by
+> €40. But the share of consultations from Meta ads, which convert at half
+> the rate of referrals, also rose from 18% to 29%; the data do not yet
+> separate the two. [support, then counter-evidence]
 
 ## Checklist
 
