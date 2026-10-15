@@ -26,7 +26,24 @@ unknown_node               an edge ``from``/``to`` names no node
 causal_edge_unlabelled     a causal edge without a label stating the claim
 cycle_in_layered_layout    (info) cycle; the named edges are drawn reversed
 self_loop                  (info) an edge from a node to itself
+column_length_mismatch     columns of a view dataset differ in length
+invalid_text               a string holds a control character / lone surrogate
+text_too_long              one string longer than ``MAX_TEXT_CHARS``
+too_much_text              the view's text adds up to more than allowed
+too_deep                   containers nested deeper than ``MAX_DEPTH``
+too_many_nodes             too many view nodes, or flow nodes in the view
+too_many_edges             too many flow edges in the view
+too_many_dummy_nodes       layered flows would need too many long-edge slots
+too_many_figures           more figures than ``MAX_FIGURES``
+too_many_rows              a table's ``max_rows`` above ``MAX_TABLE_ROWS``
+too_many_cells             the tables draw more cells than allowed
+table_truncated            (warning) a table longer than ``MAX_TABLE_ROWS``
+                           shows its first rows and says so
 ========================== ===================================================
+
+The size limits (:mod:`.limits`) are checked here, before any layout, so an
+oversized view is refused quickly with a pointer instead of rendering for
+minutes.
 """
 
 from __future__ import annotations
@@ -39,13 +56,15 @@ from typing import Any
 
 from ..spec import (
     DatasetRef,
+    FigureSpec,
     SpecValidationError,
     ValidationIssue,
 )
 from ..spec import validate as validate_figure
 from ..spec._common import canonical_json, fail, is_number, ptr_join, sha256_of
 from ..spec.patch import _apply_one, _err
-from .flow import back_edges
+from . import limits as L
+from .flow import back_edges, dummy_count
 from .model import (
     CONTAINERS,
     DIRECTIONS,
@@ -55,18 +74,73 @@ from .model import (
     NODE_COMPONENTS,
     SUPPORTED_VIEW_SCHEMA_VERSIONS,
     TEXT_STYLES,
+    Card,
     FigureComponent,
     Flow,
+    FlowNode,
     Grid,
     Kpi,
+    Note,
     Stack,
     Table,
     Text,
     ViewSpec,
+    too_deep_at,
+    too_deep_message,
     view_from_dict,
     view_to_dict_raw,
     walk,
 )
+
+MAX_TEXT_ISSUES = 20  # invalid_text / text_too_long issues reported per view
+
+
+class _Budget:
+    """View-wide counters for the :mod:`.limits` budgets; each limit is
+    reported once, at the node where it was exceeded."""
+
+    def __init__(self, out: list):
+        self.out = out
+        self.used: dict[str, int] = {}
+
+    def take(self, what: str, n: int, limit: int, path: str, code: str, msg: str) -> bool:
+        before = self.used.get(what, 0)
+        self.used[what] = before + n
+        if before <= limit < before + n:
+            self.out.append(ValidationIssue(path, code, msg.format(n=before + n, limit=limit)))
+        return before + n <= limit
+
+
+def _node_text(n: Any) -> int:
+    """Characters of a node's own strings that the layout measures."""
+    if isinstance(n, Flow):
+        k = len(n.title or "") + len(n.description or "")
+        k += sum(len(x.label) + len(x.group or "") for x in n.nodes if isinstance(x, FlowNode))
+        return k + sum(len(e.label or "") for e in n.edges)
+    if isinstance(n, Kpi):
+        return (len(n.label or "") + len(n.unit or "") + len(n.source or "")
+                + len((n.comparison.label or "") if n.comparison else ""))
+    if isinstance(n, (Text, Note)):
+        return len(n.text or "")
+    if isinstance(n, (Card, Table)):
+        return len(n.title or "")
+    return 0
+
+
+def _strings(out: list, view: ViewSpec) -> None:
+    try:
+        doc = view_to_dict_raw(view)
+    except Exception:  # noqa: BLE001 - a malformed object model is reported elsewhere
+        return
+    found = 0
+    for path, code, msg in L.scan_strings(doc):
+        found += 1
+        if found <= MAX_TEXT_ISSUES:
+            out.append(ValidationIssue(path, code, msg))
+    if found > MAX_TEXT_ISSUES:
+        out.append(ValidationIssue("", "invalid_text",
+                                   f"{found - MAX_TEXT_ISSUES} more string(s) with the same "
+                                   "problems are not listed."))
 
 
 def _choice(out: list, path: str, value: Any, allowed: Sequence[str], what: str) -> None:
@@ -75,7 +149,21 @@ def _choice(out: list, path: str, value: Any, allowed: Sequence[str], what: str)
                                    f"{what} must be one of {', '.join(allowed)}, got {value!r}."))
 
 
-def _flow(out: list, f: Flow, path: str) -> None:
+def _flow_size(f: Flow, path: str, budget: _Budget, unique: bool) -> None:
+    ok = budget.take("flow_nodes", len(f.nodes), L.MAX_FLOW_NODES, ptr_join(path, "nodes"),
+                     "too_many_nodes", "the view's flows have {n} nodes in total; the limit is "
+                     "{limit}. Split the diagram or summarise groups of nodes as one node.")
+    ok &= budget.take("flow_edges", len(f.edges), L.MAX_FLOW_EDGES, ptr_join(path, "edges"),
+                      "too_many_edges", "the view's flows have {n} edges in total; the limit "
+                      "is {limit}. Split the diagram or merge parallel edges.")
+    if ok and unique and f.layout.algorithm == "layered":
+        budget.take("dummies", dummy_count(f), L.MAX_FLOW_DUMMY_NODES, ptr_join(path, "edges"),
+                    "too_many_dummy_nodes", "edges spanning several layers would need {n} "
+                    "routing slots in total; the limit is {limit}. Use layout 'grid', or "
+                    "shorten long edges (they skip many layers).")
+
+
+def _flow(out: list, f: Flow, path: str, budget: _Budget) -> None:
     add = out.append
     if not f.nodes:
         add(ValidationIssue(ptr_join(path, "nodes"), "empty_flow",
@@ -108,7 +196,9 @@ def _flow(out: list, f: Flow, path: str) -> None:
     _choice(out, ptr_join(lp, "direction"), f.layout.direction, FLOW_DIRECTIONS, "direction")
     if f.layout.columns is not None and f.layout.columns < 1:
         add(ValidationIssue(ptr_join(lp, "columns"), "invalid_value", "columns must be >= 1."))
-    if f.layout.algorithm == "layered" and len(seen) == len(f.nodes):
+    _flow_size(f, path, budget, len(seen) == len(f.nodes))
+    if (f.layout.algorithm == "layered" and len(seen) == len(f.nodes)
+            and len(f.nodes) <= L.MAX_FLOW_NODES and len(f.edges) <= L.MAX_FLOW_EDGES):
         cyc = [k for k in back_edges(f) if f.edges[k].source != f.edges[k].target]
         if cyc:
             add(ValidationIssue(lp, "cycle_in_layered_layout",
@@ -124,8 +214,18 @@ def validate_view(view: ViewSpec) -> list[ValidationIssue]:  # noqa: C901 - one 
     if view.schema_version not in SUPPORTED_VIEW_SCHEMA_VERSIONS:
         add(ValidationIssue("/schema_version", "unsupported_schema_version",
                             f"schema_version {view.schema_version!r} is not supported."))
+    where = too_deep_at(view.root, L.MAX_DEPTH)
+    if where is not None:  # nothing below may recurse into such a tree
+        add(ValidationIssue(where, "too_deep", too_deep_message()))
+        return out
+    _strings(out, view)
+    budget = _Budget(out)
     used: set[str] = set()
     for path, n in walk(view.root):
+        budget.take("nodes", 1, L.MAX_VIEW_NODES, path, "too_many_nodes",
+                    "the view has more than {limit} nodes; split it into several views.")
+        budget.take("text", _node_text(n), L.MAX_TOTAL_TEXT_CHARS, path, "too_much_text",
+                    "the view's text adds up to {n} characters; the limit is {limit}.")
         if isinstance(n, CONTAINERS) and not n.children:
             add(ValidationIssue(ptr_join(path, "children"), "empty_container",
                                 f"this {n.type} has no children.", "warning"))
@@ -135,6 +235,9 @@ def validate_view(view: ViewSpec) -> list[ValidationIssue]:  # noqa: C901 - one 
             add(ValidationIssue(ptr_join(path, "columns"), "invalid_value",
                                 f"columns must be an integer >= 1, got {n.columns!r}."))
         elif isinstance(n, FigureComponent):
+            budget.take("figures", 1, L.MAX_FIGURES, path, "too_many_figures",
+                        "the view places more than {limit} figures; split it into several "
+                        "views.")
             if not (is_number(n.aspect) and math.isfinite(n.aspect) and 0.1 <= n.aspect <= 4):
                 add(ValidationIssue(ptr_join(path, "aspect"), "invalid_value",
                                     "aspect (height/width) must be in [0.1, 4], got "
@@ -163,6 +266,11 @@ def validate_view(view: ViewSpec) -> list[ValidationIssue]:  # noqa: C901 - one 
                     add(ValidationIssue(path + "/" + key, "invalid_type",
                                         f"{key} must be a finite number or null (= no data), "
                                         f"got {v!r}."))
+            d = n.decimals
+            if d is not None and not (isinstance(d, int) and not isinstance(d, bool)
+                                      and 0 <= d <= 10):
+                add(ValidationIssue(ptr_join(path, "decimals"), "invalid_value",
+                                    f"decimals must be an integer from 0 to 10, got {d!r}."))
             if n.dataset is not None and n.dataset not in view.datasets:
                 add(ValidationIssue(ptr_join(path, "dataset"), "unknown_dataset",
                                     f"no dataset {n.dataset!r} in /datasets."))
@@ -184,8 +292,17 @@ def validate_view(view: ViewSpec) -> list[ValidationIssue]:  # noqa: C901 - one 
             if n.max_rows is not None and n.max_rows < 0:
                 add(ValidationIssue(ptr_join(path, "max_rows"), "invalid_value",
                                     "max_rows must be >= 0."))
+            elif n.max_rows is not None and n.max_rows > L.MAX_TABLE_ROWS:
+                add(ValidationIssue(ptr_join(path, "max_rows"), "too_many_rows",
+                                    f"max_rows {n.max_rows} is above the limit of "
+                                    f"{L.MAX_TABLE_ROWS} drawn rows; a table that long belongs "
+                                    "in a data export, not a view."))
+            if ds is not None and not isinstance(ds, DatasetRef):
+                _table_size(n, ds, path, budget)
         elif isinstance(n, Flow):
-            _flow(out, n, path)
+            _flow(out, n, path, budget)
+    out.extend(i for i in validate_figure(FigureSpec(datasets=dict(view.datasets)))
+               if i.code == "column_length_mismatch")
     for key, fig in view.figures.items():
         fp = ptr_join("/figures", key)
         out.extend(ValidationIssue(fp + i.path, i.code, i.message, i.severity)
@@ -194,6 +311,29 @@ def validate_view(view: ViewSpec) -> list[ValidationIssue]:  # noqa: C901 - one 
             add(ValidationIssue(fp, "unused_figure", f"figure {key!r} is not placed in the view.",
                                 "info"))
     return out
+
+
+def _table_size(n: Table, ds: Any, path: str, budget: _Budget) -> None:
+    total = ds.num_rows
+    if total is None:  # column_length_mismatch is reported for the dataset
+        return
+    if n.max_rows is None and total > L.MAX_TABLE_ROWS:
+        budget.out.append(ValidationIssue(
+            path, "table_truncated", f"the table has {total} rows; the first "
+            f"{L.MAX_TABLE_ROWS} are drawn, followed by 'Showing {L.MAX_TABLE_ROWS} of "
+            f"{total} rows'. Set max_rows to choose fewer.", "warning"))
+    names = [c for c in (n.columns if n.columns is not None else list(ds.columns))
+             if c in ds.columns]
+    shown = min(total, L.MAX_TABLE_ROWS if n.max_rows is None
+                 else max(0, min(n.max_rows, L.MAX_TABLE_ROWS)))
+    if budget.take("cells", shown * len(names), L.MAX_TABLE_CELLS, path, "too_many_cells",
+                   "the view's tables draw {n} cells in total; the limit is {limit}. Show "
+                   "fewer rows (max_rows) or columns."):
+        chars = sum(len(v) for c in names for v in ds.columns[c].values[:shown]
+                    if isinstance(v, str))
+        budget.take("text", chars + sum(len(c) for c in names), L.MAX_TOTAL_TEXT_CHARS, path,
+                    "too_much_text", "the view's text adds up to {n} characters; the limit "
+                    "is {limit}.")
 
 
 def errors(view: ViewSpec) -> list[ValidationIssue]:
@@ -222,6 +362,8 @@ def view_from_json(s: str) -> ViewSpec:
         d = json.loads(s, parse_constant=refuse)
     except json.JSONDecodeError as e:
         raise fail("", "invalid_json", f"not valid JSON: {e}") from None
+    except RecursionError:
+        raise fail("", "too_deep", "the JSON text is nested too deeply to read.") from None
     return view_from_dict(d)
 
 

@@ -30,6 +30,7 @@ from ..spec._common import (
 )
 from ..spec.data import Dataset, dataset_from_dict, dataset_to_dict
 from ..spec.figure import figure_from_dict, figure_to_dict
+from .limits import MAX_DEPTH, scan_strings
 
 VIEW_SCHEMA_VERSION = "1.0"
 SUPPORTED_VIEW_SCHEMA_VERSIONS = ("1.0",)
@@ -254,9 +255,17 @@ NODE_TYPES = ("stack", "grid", "card", "figure", "text", "kpi", "table", "caveat
               "flow")
 
 
-def _children(d: dict[str, Any], path: str) -> list[Node]:
+def too_deep_message() -> str:
+    return (f"containers are nested more than {MAX_DEPTH} deep here; flatten the layout "
+            "(a grid or a horizontal stack instead of nested stacks).")
+
+
+def _children(d: dict[str, Any], path: str, depth: int) -> list[Node]:
     items = expect_list(d.get("children", []), ptr_join(path, "children"), "children")
-    return [node_from_dict(c, ptr_join(path, "children", i)) for i, c in enumerate(items)]
+    if items and depth >= MAX_DEPTH:
+        raise fail(ptr_join(path, "children"), "too_deep", too_deep_message())
+    return [node_from_dict(c, ptr_join(path, "children", i), depth + 1)
+            for i, c in enumerate(items)]
 
 
 def _s(d: dict[str, Any], path: str, key: str, optional: bool = True,
@@ -275,7 +284,9 @@ def figure_spec_at(d: Any, path: str) -> FigureSpec:
                               for i in e.issues]) from None
 
 
-def node_from_dict(d: Any, path: str) -> Node:  # noqa: C901 - one branch per node type
+def node_from_dict(d: Any, path: str, depth: int = 1
+                   ) -> Node:  # noqa: C901 - one branch per node type
+    """``depth`` is the container depth of ``d`` (the root is 1)."""
     d = expect_dict(d, path, "a view node")
     t = d.get("type")
     if t not in NODE_TYPES:
@@ -284,15 +295,15 @@ def node_from_dict(d: Any, path: str) -> Node:  # noqa: C901 - one branch per no
                    f"Supported: {', '.join(NODE_TYPES)}.")
     if t == "stack":
         check_keys(d, path, "a stack", ("type", "direction", "children"))
-        return Stack(children=_children(d, path), direction=_s(d, path, "direction", False,
+        return Stack(children=_children(d, path, depth), direction=_s(d, path, "direction", False,
                                                                "vertical"))
     if t == "grid":
         check_keys(d, path, "a grid", ("type", "columns", "children"))
         cols = expect_int(d.get("columns", 2), ptr_join(path, "columns"), "columns")
-        return Grid(children=_children(d, path), columns=cols)
+        return Grid(children=_children(d, path, depth), columns=cols)
     if t == "card":
         check_keys(d, path, "a card", ("type", "title", "children"))
-        return Card(children=_children(d, path), title=_s(d, path, "title"))
+        return Card(children=_children(d, path, depth), title=_s(d, path, "title"))
     if t == "figure":
         check_keys(d, path, "a figure component", ("type", "figure", "spec", "aspect"))
         spec = (figure_spec_at(d["spec"], ptr_join(path, "spec"))
@@ -372,6 +383,13 @@ def _flow_from_dict(d: dict[str, Any], path: str) -> Flow:
 
 
 def view_from_dict(d: Any) -> ViewSpec:
+    try:
+        return _view_from_dict(d)
+    except RecursionError:  # backstop: e.g. metadata nested thousands deep
+        raise fail("", "too_deep", "the document is nested too deeply to read.") from None
+
+
+def _view_from_dict(d: Any) -> ViewSpec:
     d = expect_dict(d, "", "a ViewSpec")
     if "schema_version" not in d:
         raise fail("/schema_version", "missing_schema_version",
@@ -385,6 +403,8 @@ def view_from_dict(d: Any) -> ViewSpec:
     check_keys(d, "", "a ViewSpec",
                ("schema_version", "id", "title", "root", "figures", "datasets", "metadata"),
                ("root",))
+    for p, code, msg in scan_strings(d):  # before anything stores or measures a string
+        raise fail(p, code, msg)
     figs = expect_dict(d.get("figures", {}), "/figures", "figures")
     dsets = expect_dict(d.get("datasets", {}), "/datasets", "datasets")
     return ViewSpec(
@@ -400,8 +420,26 @@ def view_from_dict(d: Any) -> ViewSpec:
 
 
 def walk(node: Node, path: str = "/root"):
-    """Yield ``(path, node)`` for every node, depth first, in document order."""
-    yield path, node
-    if isinstance(node, CONTAINERS):
-        for i, c in enumerate(node.children):
-            yield from walk(c, ptr_join(path, "children", i))
+    """Yield ``(path, node)`` for every node, depth first, in document order.
+    Iterative, so an over-deep tree is reported by validation, not by Python."""
+    stack = [(path, node)]
+    while stack:
+        p, n = stack.pop()
+        yield p, n
+        if isinstance(n, CONTAINERS):
+            stack.extend(reversed([(ptr_join(p, "children", i), c)
+                                   for i, c in enumerate(n.children)]))
+
+
+def too_deep_at(node: Node, limit: int) -> str | None:
+    """Pointer of the first node (document order) nested deeper than
+    ``limit`` (the root is at depth 1), or None. Iterative and stops there."""
+    stack = [("/root", node, 1)]
+    while stack:
+        p, n, d = stack.pop()
+        if d > limit:
+            return p
+        if isinstance(n, CONTAINERS):
+            stack.extend(reversed([(ptr_join(p, "children", i), c, d + 1)
+                                   for i, c in enumerate(n.children)]))
+    return None

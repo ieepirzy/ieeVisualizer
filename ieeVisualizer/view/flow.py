@@ -17,7 +17,14 @@ a :class:`FlowGeometry` in pure Python:
     5. boxes share one size; layers are spaced to fit the widest edge label.
 
 ``grid``
-    declaration order, row-major, ``columns`` (default: ceil(sqrt(n))).
+    declaration order, row-major, ``columns`` (default: ceil(sqrt(n))). An
+    edge is straight when the line clears every other box; otherwise it
+    detours orthogonally through the empty gaps between rows and columns, so
+    it never crosses a node it does not connect.
+
+Layering, crossing counts and lane placement are O((V + D) log(V + D)) per
+sweep for V nodes and D dummy slots; :mod:`.limits` bounds V, E and D before
+layout runs.
 
 Every step breaks ties by declaration order, so the same flow always yields
 the same coordinates. :func:`reading_order` / :func:`flow_outline` give the
@@ -27,6 +34,7 @@ accessible list form of the same graph.
 from __future__ import annotations
 
 import math
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -101,41 +109,60 @@ def back_edges(flow: Flow) -> list[int]:
 
 
 def _layers(flow: Flow, rev: set[int]) -> tuple[dict[str, int], list[tuple[str, str, int]]]:
+    """Longest-path layering in O(V + E) (Kahn's topological order)."""
     ids = [n.id for n in flow.nodes]
     known = set(ids)
     dag = []  # (u, v, edge index) with u before v
+    succ: dict[str, list[str]] = {i: [] for i in ids}
+    indeg = {i: 0 for i in ids}
     for k, e in enumerate(flow.edges):
         if e.source in known and e.target in known and e.source != e.target:
-            dag.append((e.target, e.source, k) if k in rev else (e.source, e.target, k))
-    indeg = {i: 0 for i in ids}
-    for _, v, _ in dag:
-        indeg[v] += 1
+            u, v = (e.target, e.source) if k in rev else (e.source, e.target)
+            dag.append((u, v, k))
+            succ[u].append(v)
+            indeg[v] += 1
     layer = {i: 0 for i in ids}
-    ready = [i for i in ids if indeg[i] == 0]
-    pos = {i: n for n, i in enumerate(ids)}
+    ready = deque(i for i in ids if indeg[i] == 0)
     while ready:
-        u = ready.pop(0)
-        for a, v, _ in dag:
-            if a == u:
-                layer[v] = max(layer[v], layer[u] + 1)
-                indeg[v] -= 1
-                if indeg[v] == 0:
-                    ready.append(v)
-                    ready.sort(key=pos.__getitem__)
+        u = ready.popleft()
+        for v in succ[u]:
+            layer[v] = max(layer[v], layer[u] + 1)
+            indeg[v] -= 1
+            if indeg[v] == 0:
+                ready.append(v)
     return layer, dag
+
+
+def dummy_count(flow: Flow) -> int:
+    """Invisible slots a layered layout of ``flow`` inserts: the sum of
+    ``span - 1`` over its edges. O(V + E); used by validation before layout."""
+    layer, dag = _layers(flow, set(back_edges(flow)))
+    return sum(layer[v] - layer[u] - 1 for u, v, _ in dag)
 
 
 def _crossings(layers: list[list[str]], links: list[tuple[str, str]],
                where: dict[str, int]) -> int:
+    """Edge crossings between adjacent layers: per layer, the number of
+    strictly inverted segment pairs, counted with a Fenwick tree (E log E)."""
     pos = {n: i for lay in layers for i, n in enumerate(lay)}
     by_layer: dict[int, list[tuple[int, int]]] = {}
     for u, v in links:
         by_layer.setdefault(where[u], []).append((pos[u], pos[v]))
     total = 0
     for segs in by_layer.values():
-        for i, (a, b) in enumerate(segs):
-            for c, d in segs[i + 1:]:
-                total += (a - c) * (b - d) < 0
+        segs.sort()
+        size = max(b for _, b in segs) + 1
+        tree = [0] * (size + 1)
+        for seen, (_, b) in enumerate(segs):
+            i, at_most = b + 1, 0  # earlier segments ending at or before b
+            while i > 0:
+                at_most += tree[i]
+                i -= i & -i
+            total += seen - at_most
+            i = b + 1
+            while i <= size:
+                tree[i] += 1
+                i += i & -i
     return total
 
 
@@ -208,25 +235,111 @@ def _mid(points: list[tuple[float, float]]) -> tuple[float, float]:
     return (x0 + x1) / 2, (y0 + y1) / 2
 
 
+def _hits(p: tuple[float, float], q: tuple[float, float], b: Box, pad: float) -> bool:
+    """Does segment p-q pass through ``b`` grown by ``pad`` (Liang-Barsky)?"""
+    lo, hi = 0.0, 1.0
+    dx, dy = q[0] - p[0], q[1] - p[1]
+    for d, a, mn, mx in ((dx, p[0], b.x - pad, b.x + b.w + pad),
+                         (dy, p[1], b.y - pad, b.y + b.h + pad)):
+        if d == 0:
+            if not mn < a < mx:
+                return False
+            continue
+        t0, t1 = (mn - a) / d, (mx - a) / d
+        if t0 > t1:
+            t0, t1 = t1, t0
+        lo, hi = max(lo, t0), min(hi, t1)
+        if lo >= hi:
+            return False
+    return True
+
+
+def _longest_mid(points: list[tuple[float, float]]) -> tuple[float, float]:
+    """Midpoint of the longest segment (the channel run of a detour)."""
+    segs = list(zip(points, points[1:]))
+    (x0, y0), (x1, y1) = max(segs, key=lambda s: abs(s[1][0] - s[0][0]) + abs(s[1][1] - s[0][1]))
+    return (x0 + x1) / 2, (y0 + y1) / 2
+
+
 def _grid(flow: Flow, w: float, h: float, gap: float) -> FlowGeometry:
+    """Row-major cells. An edge is a straight line when that line clears every
+    other box (by 4 px); otherwise it detours orthogonally through the gaps
+    between rows and columns, which never contain a box, so an edge never
+    reads as passing through a node it does not touch."""
     n = len(flow.nodes)
     cols = flow.layout.columns or max(1, math.ceil(math.sqrt(n)))
-    boxes = {nd.id: Box(MARGIN + (i % cols) * (w + gap), MARGIN + (i // cols) * (h + gap), w, h)
-             for i, nd in enumerate(flow.nodes)}
+    ncols = min(cols, n)
+    rows = math.ceil(n / cols) if n else 0
+    boxes: dict[str, Box] = {}
+    cell: dict[str, tuple[int, int]] = {}
+    for i, nd in enumerate(flow.nodes):
+        r, c = divmod(i, cols)
+        boxes[nd.id] = Box(MARGIN + c * (w + gap), MARGIN + r * (h + gap), w, h)
+        cell[nd.id] = (r, c)
+    all_boxes = list(boxes.items())
+    used: dict[tuple[str, int], int] = {}  # channel -> runs already in it
+    extra = [0.0, 0.0]  # canvas growth right / below for outer channels
+
+    def lane_offset(key: tuple[str, int]) -> float:
+        k = used.get(key, 0)
+        used[key] = k + 1
+        step = (k + 1) // 2 * 8.0 * (1 if k % 2 else -1)
+        lim = gap / 2 - 8
+        return max(-lim, min(lim, step))
+
     routes: list = []
+    labels: list = []
     for e in flow.edges:
         a, b = boxes.get(e.source), boxes.get(e.target)
         if a is None or b is None:
             routes.append(None)
-        elif a is b:
-            routes.append(_self_loop(a, True))
-        else:
-            routes.append([_clip(a, b.cx, b.cy), _clip(b, a.cx, a.cy)])
-    rows = math.ceil(n / cols) if n else 0
+            labels.append(None)
+            continue
+        if a is b:
+            pts = _self_loop(a, True)
+            routes.append(pts)
+            labels.append(_mid(pts))
+            continue
+        straight = [_clip(a, b.cx, b.cy), _clip(b, a.cx, a.cy)]
+        if not any(_hits(straight[0], straight[1], bx, 4.0) for k, bx in all_boxes
+                   if k not in (e.source, e.target)):
+            routes.append(straight)
+            labels.append(_mid(straight))
+            continue
+        (r1, c1), (r2, c2) = cell[e.source], cell[e.target]
+        # stubs sit a quarter off the box centre lines, where straight edges
+        # between neighbours run, so a detour never overlaps one of them
+        q, s = w / 4, h / 4
+        if r1 == r2:  # run along the row gap below (above for the last row)
+            below = r1 < rows - 1 or r1 == 0
+            if below and r1 == rows - 1:
+                extra[1] = gap / 2
+            y = (a.y + h + gap / 2 if below else a.y - gap / 2)
+            y += lane_offset(("row", 2 * r1 + (1 if below else -1)))
+            ya, yb = (a.y + h, b.y + h) if below else (a.y, b.y)
+            pts = [(a.cx + q, ya), (a.cx + q, y), (b.cx - q, y), (b.cx - q, yb)]
+        elif c1 == c2:  # run along the column gap right (left for the last column)
+            right = c1 < ncols - 1 or c1 == 0
+            if right and c1 == ncols - 1:
+                extra[0] = gap / 2
+            x = (a.x + w + gap / 2 if right else a.x - gap / 2)
+            x += lane_offset(("col", 2 * c1 + (1 if right else -1)))
+            xa, xb = (a.x + w, b.x + w) if right else (a.x, b.x)
+            pts = [(xa, a.cy + s), (x, a.cy + s), (x, b.cy - s), (xb, b.cy - s)]
+        else:  # leave through the row gap toward b, enter b from the column gap beside it
+            down, east = r2 > r1, c2 > c1
+            y = (a.y + h + gap / 2 if down else a.y - gap / 2)
+            y += lane_offset(("row", 2 * r1 + (1 if down else -1)))
+            x = (b.x - gap / 2 if east else b.x + w + gap / 2)
+            x += lane_offset(("col", 2 * c2 + (-1 if east else 1)))
+            pts = [(a.cx + q, a.y + h if down else a.y), (a.cx + q, y), (x, y), (x, b.cy - s),
+                   (b.x if east else b.x + w, b.cy - s)]
+        routes.append(pts)
+        labels.append(_longest_mid(pts))
     return FlowGeometry(
-        width=2 * MARGIN + min(cols, n) * w + max(min(cols, n) - 1, 0) * gap,
-        height=2 * MARGIN + rows * h + max(rows - 1, 0) * gap, boxes=boxes, routes=routes,
-        label_at=[_mid(r) if r else None for r in routes], order=[nd.id for nd in flow.nodes])
+        width=2 * MARGIN + ncols * w + max(ncols - 1, 0) * gap + extra[0],
+        height=2 * MARGIN + rows * h + max(rows - 1, 0) * gap + extra[1], boxes=boxes,
+        routes=routes, label_at=labels, order=[nd.id for nd in flow.nodes])
 
 
 def _layered(flow: Flow, w: float, h: float, lab_w: float,
@@ -241,7 +354,8 @@ def _layered(flow: Flow, w: float, h: float, lab_w: float,
     if None in groups:  # ungrouped nodes form the last lane
         groups.remove(None)
         groups.append(None)
-    lane = {nd.id: groups.index(nd.group) for nd in flow.nodes}
+    lane_of = {g: i for i, g in enumerate(groups)}
+    lane = {nd.id: lane_of[nd.group] for nd in flow.nodes}
     nlayers = max(layer.values(), default=-1) + 1
     layers: list[list[str]] = [[] for _ in range(nlayers)]
     for nd in flow.nodes:
@@ -264,8 +378,15 @@ def _layered(flow: Flow, w: float, h: float, lab_w: float,
     layers = _order(layers, links, lane, layer)
 
     # cross-axis capacity of each lane = most of its members in any one layer
-    cap = [max((sum(1 for n in lay if lane[n] == g) for lay in layers), default=0) or 1
-           for g in range(len(groups))]
+    members: list[dict[int, list[str]]] = []  # per layer: lane -> members in order
+    cap = [1] * len(groups)
+    for lay in layers:
+        by_lane: dict[int, list[str]] = {}
+        for n in lay:
+            by_lane.setdefault(lane[n], []).append(n)
+        members.append(by_lane)
+        for g, ms in by_lane.items():
+            cap[g] = max(cap[g], len(ms))
     named = any(g is not None for g in groups)
     main_ext, cross_ext = (w, h) if lr else (h, w)
     gap = max(MIN_LAYER_GAP, (lab_w + 32) if lr else 0.0, 56.0)
@@ -281,11 +402,10 @@ def _layered(flow: Flow, w: float, h: float, lab_w: float,
     main_total = 2 * MARGIN + head + nlayers * main_ext + max(nlayers - 1, 0) * gap
 
     centre: dict[str, tuple[float, float]] = {}
-    for li, lay in enumerate(layers):
-        for g in range(len(groups)):
-            members = [n for n in lay if lane[n] == g]
-            off = (cap[g] - len(members)) / 2
-            for j, n in enumerate(members):
+    for li, by_lane in enumerate(members):
+        for g, ms in by_lane.items():
+            off = (cap[g] - len(ms)) / 2
+            for j, n in enumerate(ms):
                 m = MARGIN + head + li * (main_ext + gap) + main_ext / 2
                 cc = (lane_start[g] + (LANE_PAD if named else 0)
                       + (off + j) * (cross_ext + SLOT_GAP) + cross_ext / 2)
@@ -345,22 +465,25 @@ def reading_order(flow: Flow) -> list[str]:
     return layout_flow(flow, lambda n: (1.0, 1.0)).order
 
 
-def flow_outline(flow: Flow) -> list[str]:
+def flow_outline(flow: Flow, order: list[str] | None = None) -> list[str]:
     """One sentence per node, in reading order, naming every outgoing edge.
-    A causal edge is always worded as a claim."""
+    A causal edge is always worded as a claim. ``order`` is a reading order
+    already computed (``FlowGeometry.order``), so a renderer that has laid the
+    flow out does not lay it out again."""
     by_id = {n.id: n for n in flow.nodes}
+    outs: dict[str, list[str]] = {}
+    for e in flow.edges:
+        if e.source in by_id and e.target in by_id:
+            s = f"{_VERBS.get(e.kind, e.kind)} {by_id[e.target].label}"
+            if e.kind == "causal":
+                s += f" (causal claim: {e.label})" if e.label else " (unlabelled causal claim)"
+            elif e.label:
+                s += f" ({e.label})"
+            outs.setdefault(e.source, []).append(s)
     lines = []
-    for i, nid in enumerate(reading_order(flow), 1):
+    for i, nid in enumerate(reading_order(flow) if order is None else order, 1):
         n = by_id[nid]
         name = n.label + (f" [{n.group}]" if n.group else "")
-        outs = []
-        for e in flow.edges:
-            if e.source == nid and e.target in by_id:
-                s = f"{_VERBS.get(e.kind, e.kind)} {by_id[e.target].label}"
-                if e.kind == "causal":
-                    s += f" (causal claim: {e.label})" if e.label else " (unlabelled causal claim)"
-                elif e.label:
-                    s += f" ({e.label})"
-                outs.append(s)
-        lines.append(f"{i}. {name}: " + ("; ".join(outs) if outs else "no outgoing links") + ".")
+        mine = outs.get(nid)
+        lines.append(f"{i}. {name}: " + ("; ".join(mine) if mine else "no outgoing links") + ".")
     return lines

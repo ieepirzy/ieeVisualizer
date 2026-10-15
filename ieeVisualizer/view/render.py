@@ -5,7 +5,8 @@
   (:func:`ieeVisualizer.render.render`, so the matplotlib adapter) to SVG and
   nested as an ``<svg>`` element. Its ids are prefixed per placement
   (``v<n>-``) so two figures never share an id, and its RDF ``<metadata>``
-  block is dropped.
+  block is dropped, as is its ``<style>`` (scoped to the figure instead, see
+  :func:`nest_parts`).
 * **html** - a static page: native HTML text/tables/KPIs, inline SVG for
   figures and flows, one ``<style>`` block. No script, no external asset, no
   link; every string is escaped. Flows get a text version in ``<details>``.
@@ -24,10 +25,11 @@ import re
 import xml.etree.ElementTree as ET  # noqa: N817
 from typing import Any
 
-from ..render import RenderRequest, RenderResult, RenderWarning, Resolver, render
-from ..spec import SpecValidationError
+from ..render import RenderError, RenderRequest, RenderResult, RenderWarning, Resolver, render
+from ..spec import SpecValidationError, ValidationIssue
 from .draw import Embed, esc, num, to_png, to_svg
 from .layout import layout_view
+from .limits import MAX_PNG_SIDE_PX
 from .model import ViewSpec
 from .validate import errors
 
@@ -38,6 +40,7 @@ VIEW_FORMATS = {"svg": "image/svg+xml", "html": "text/html", "png": "image/png"}
 _SVG = "{http://www.w3.org/2000/svg}"
 _XLINK = "{http://www.w3.org/1999/xlink}"
 _URL_REF = re.compile(r"url\(#([^)]+)\)")
+_STAR_RULE = re.compile(r"\s*\*\s*\{([^{}]*)\}\s*")
 
 
 class FigureRenderer:
@@ -54,7 +57,10 @@ class FigureRenderer:
         if key not in self.cache:
             req = RenderRequest(format=fmt, width=w_px / 96, height=h_px / 96, units="in",
                                 dpi=dpi)
-            result = render(e.spec, req, resolver=self.resolver)
+            try:
+                result = render(e.spec, req, resolver=self.resolver)
+            except UnicodeError as exc:  # backstop; validation rejects such strings
+                raise _figure_error(e, f"the figure's text cannot be encoded: {exc}") from None
             self.warnings.extend(RenderWarning(w.code, w.message, e.pointer + w.path)
                                  for w in result.warnings if w not in self.warnings)
             self.cache[key] = result
@@ -62,7 +68,12 @@ class FigureRenderer:
 
     def svg_parts(self, e: Embed) -> tuple[str, str]:
         """``(viewBox, inner markup)`` of the figure's SVG, ids prefixed."""
-        return nest_parts(self.render(e, "svg", e.w, e.h).content, f"v{e.index}-")
+        try:
+            return nest_parts(self.render(e, "svg", e.w, e.h).content, f"v{e.index}-")
+        except ET.ParseError as exc:  # backstop; validation rejects XML-illegal text
+            raise _figure_error(e, f"the figure's SVG is not well-formed XML ({exc}); a "
+                                "string in the figure probably holds a control "
+                                "character.") from None
 
     def nested_svg(self, e: Embed) -> str:
         vb, inner = self.svg_parts(e)
@@ -74,6 +85,10 @@ class FigureRenderer:
 
         res = self.render(e, "png", e.w, e.h, dpi=96 * w / e.w)
         return imread(io.BytesIO(res.content), format="png")
+
+
+def _figure_error(e: Embed, msg: str) -> RenderError:
+    return RenderError([ValidationIssue(e.pointer, "figure_render_failed", msg)])
 
 
 def _local(tag: str) -> str:
@@ -89,7 +104,12 @@ def _attr_name(k: str) -> str | None:
 def nest_parts(svg: bytes, prefix: str) -> tuple[str, str]:
     """Parse matplotlib's SVG output and re-serialise its body with every id
     (and every ``#id`` / ``url(#id)`` reference) prefixed. Comments, the
-    DOCTYPE and ``<metadata>`` are dropped; text and attributes re-escaped."""
+    DOCTYPE and ``<metadata>`` are dropped; text and attributes re-escaped.
+
+    A ``<style>`` block would apply to the whole page the figure is placed
+    in, so none is copied. matplotlib's only one, ``*{stroke-linejoin: round;
+    stroke-linecap: butt}``, is turned into the same (inherited) properties
+    on a ``<g>`` around the figure, which styles exactly the figure."""
     root = ET.fromstring(svg)
     ids = {el.get("id") for el in root.iter() if el.get("id")}
 
@@ -100,9 +120,15 @@ def nest_parts(svg: bytes, prefix: str) -> tuple[str, str]:
                             if m.group(1) in ids else m.group(0), v)
 
     out: list[str] = []
+    scoped: list[str] = []
 
     def ser(el: ET.Element) -> None:
         tag = _local(el.tag)
+        if tag == "style":
+            m = _STAR_RULE.fullmatch(el.text or "")
+            if m:
+                scoped.extend(d.strip() for d in m.group(1).split(";") if d.strip())
+            return
         if tag == "metadata" or not el.tag.startswith(_SVG):
             return
         attrs = []
@@ -123,7 +149,10 @@ def nest_parts(svg: bytes, prefix: str) -> tuple[str, str]:
 
     for child in root:
         ser(child)
-    return root.get("viewBox", "0 0 100 100"), "".join(out)
+    inner = "".join(out)
+    if scoped:
+        inner = f'<g style="{esc(";".join(scoped))}">{inner}</g>'
+    return root.get("viewBox", "0 0 100 100"), inner
 
 
 def render_view(view: ViewSpec, format: str = "svg", *, width: float = 960.0,
@@ -151,6 +180,12 @@ def render_view(view: ViewSpec, format: str = "svg", *, width: float = 960.0,
         if format == "svg":
             content = to_svg(items, width, height, figs.nested_svg, view.title).encode("utf-8")
         else:
+            if max(width, height) * scale > MAX_PNG_SIDE_PX:
+                raise RenderError([ValidationIssue(
+                    "", "view_too_large",
+                    f"the view is {round(height)} px tall; at scale {scale} the PNG would be "
+                    f"over {MAX_PNG_SIDE_PX} px. Render HTML or SVG, lower scale, or split "
+                    "the view.")])
             content = to_png(items, width, height, scale, figs.png_array)
     return RenderResult(content=content, format=format, media_type=VIEW_FORMATS[format],
                         adapter_name=RENDERER_NAME, adapter_version=RENDERER_VERSION,

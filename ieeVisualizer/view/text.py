@@ -94,6 +94,14 @@ def text_width(s: str, size: float, bold: bool = False, italic: bool = False,
     return _unit_width(s, bold, italic, mono) * size / 1000.0
 
 
+def measure(s: str, size: float, bold: bool = False, italic: bool = False,
+            mono: bool = False) -> float:
+    """:func:`text_width` without caching, for one-off probes (truncation)."""
+    if not s:
+        return 0.0
+    return _unit_width.__wrapped__(s, bold, italic, mono) * size / 1000.0
+
+
 @lru_cache(maxsize=8192)
 def _unit_width(s: str, bold: bool, italic: bool, mono: bool) -> float:
     # Measured at 1000 px, where hinting no longer rounds glyph advances, so
@@ -150,7 +158,8 @@ def format_number(v: float | int | None, decimals: int | None = None) -> str:
         s = f"{int(v):,}"
     else:
         s = f"{v:,}"
-    return s.replace(",", " ").replace("-", "−", 1)
+    s = s.replace(",", " ")
+    return "−" + s[1:] if s.startswith("-") else s  # not an exponent's "-" (1e-05)
 
 
 def with_unit(s: str, unit: str | None) -> str:

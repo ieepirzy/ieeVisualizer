@@ -12,16 +12,20 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from decimal import Decimal
 
-from ..spec import DataSnapshot
+from ..render import RenderError
+from ..spec import DataSnapshot, ValidationIssue
 from ..spec._common import ptr_join
 from . import flow as _flow
 from .draw import INK, LINE, MUTED, Embed, Group, Item, Label, Path, Rect
+from .limits import MAX_TABLE_ROWS
 from .model import Card, FigureComponent, Flow, Grid, Kpi, Node, Note, Stack, Table, Text, ViewSpec
 from .text import (
     NO_DATA,
     NULL_CELL,
     format_number,
+    measure,
     parse_markdown,
     run_width,
     text_width,
@@ -172,6 +176,13 @@ def _note(n: Note, path, x, y, w, ctx):
             Rect(x, y, 4, h + 20, fill="#bf8700")] + items, h + 20
 
 
+def exact_delta(value: float, ref: float) -> float:
+    """``value - ref`` computed on the numbers as written (``0.3 - 0.1`` is
+    ``0.2``, not ``0.19999999999999998``): the difference of the shortest
+    decimal forms never has more decimal places than its operands."""
+    return float(Decimal(repr(value)) - Decimal(repr(ref)))
+
+
 def kpi_lines(n: Kpi) -> tuple[str, str | None]:
     """(value text, comparison text). Shared with the HTML renderer."""
     value = with_unit(format_number(n.value, n.decimals), n.unit)
@@ -183,7 +194,7 @@ def kpi_lines(n: Kpi) -> tuple[str, str | None]:
         elif n.value is None:
             cmp = f"{c.label}: {with_unit(format_number(c.value, n.decimals), n.unit)}"
         else:
-            delta = n.value - c.value
+            delta = exact_delta(n.value, c.value)
             arrow = "▲" if delta > 0 else "▼" if delta < 0 else "="
             sign = "+" if delta > 0 else ""
             cmp = (f"{arrow} {sign}{with_unit(format_number(delta, n.decimals), n.unit)} vs "
@@ -226,27 +237,40 @@ def _cell(v, decimals=None) -> str:
     return s[:-9] if s.endswith("T00:00:00") else s  # a midnight datetime reads as its date
 
 
-def table_cells(n: Table, ds: DataSnapshot) -> tuple[list[str], list[str], list[list[str]], int]:
-    """(column names, header texts, rows, total row count) - shared with HTML."""
+def table_cells(n: Table, ds: DataSnapshot, path: str = ""
+                ) -> tuple[list[str], list[str], list[list[str]], int]:
+    """(column names, header texts, rows, total row count) - shared with HTML.
+    At most ``MAX_TABLE_ROWS`` rows are returned; callers say "Showing N of M"."""
     names = n.columns if n.columns is not None else list(ds.columns)
     heads = [nm + (f" ({ds.columns[nm].unit})" if ds.columns[nm].unit else "") for nm in names]
-    total = ds.num_rows or 0
-    shown = total if n.max_rows is None else min(total, n.max_rows)
+    total = ds.num_rows
+    if total is None:  # validation reports column_length_mismatch; never draw zero rows
+        raise RenderError([ValidationIssue(ptr_join(path, "data"), "column_length_mismatch",
+                                           f"the columns of dataset {n.data!r} differ in "
+                                           "length; the table cannot be drawn.")])
+    shown = min(total, MAX_TABLE_ROWS if n.max_rows is None else min(n.max_rows, MAX_TABLE_ROWS))
     rows = [[_cell(ds.columns[nm].values[i]) for nm in names] for i in range(shown)]
     return names, heads, rows, total
 
 
 def _fit(s: str, size: float, w: float, bold: bool = False) -> str:
+    """``s``, or its longest prefix + "…" that fits in ``w`` px. Binary search
+    on the cut point: O(n log n) instead of re-measuring per removed char."""
     if text_width(s, size, bold) <= w:
         return s
-    while s and text_width(s + "…", size, bold) > w:
-        s = s[:-1]
-    return s + "…"
+    lo, hi = 0, len(s)  # s[:lo] + "…" fits (or lo == 0); s[:hi] + "…" does not
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if measure(s[:mid] + "…", size, bold) <= w:  # uncached: probes are throwaway
+            lo = mid
+        else:
+            hi = mid
+    return s[:lo] + "…"
 
 
 def _table(n: Table, path, x, y, w, ctx: Ctx):
     ds = ctx.view.datasets[n.data]
-    names, heads, rows, total = table_cells(n, ds)
+    names, heads, rows, total = table_cells(n, ds, path)
     items: list[Item] = []
     cy = y
     if n.title:
@@ -312,8 +336,9 @@ def _arrow(p0, p1, color: str) -> tuple[tuple[float, float], Path]:
     return back, Path(head, None, fill=color, closed=True)
 
 
-def flow_items(f: Flow) -> tuple[list[Item], float, float]:
-    """Display list of a flow in its own coordinates, plus its natural size."""
+def flow_items(f: Flow) -> tuple[list[Item], float, float, list[str]]:
+    """Display list of a flow in its own coordinates, its natural size and its
+    reading order (so the text version reuses this one layout)."""
     geo = _flow.layout_flow(
         f, _node_size, label_size=lambda s: (text_width(s, 12) + 8, 16),
         lane_label_size=lambda s: (text_width(s, 12, True), 16))
@@ -353,7 +378,7 @@ def flow_items(f: Flow) -> tuple[list[Item], float, float]:
         for i, line in enumerate(lines):
             g.items.append(Label(b.cx, top + i * NODE_LH + 14, line, NODE_FONT, anchor="middle"))
         items.append(g)
-    return items, geo.width, geo.height
+    return items, geo.width, geo.height, geo.order
 
 
 def _flow_component(f: Flow, path, x, y, w, ctx):
@@ -362,9 +387,10 @@ def _flow_component(f: Flow, path, x, y, w, ctx):
     if f.title:
         items.append(Label(x, cy + 16, f.title, 15, bold=True))
         cy += 26
-    sub, gw, gh = flow_items(f)
+    sub, gw, gh, order = flow_items(f)
     s = min(1.0, w / gw) if gw else 1.0
-    desc = "\n".join(([f.description] if f.description else []) + _flow.flow_outline(f))
+    desc = "\n".join(([f.description] if f.description else [])
+                     + _flow.flow_outline(f, order))
     items.append(Group(sub, attrs={"data-flow": path, "aria-label": f.title or "Flow diagram"},
                        dx=x + (w - gw * s) / 2, dy=cy, scale=s, desc=desc))
     return items, cy - y + gh * s

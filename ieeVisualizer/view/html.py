@@ -124,12 +124,12 @@ class _Html:
                 parts.append(f'<div class="iv-kpi-src">Source: {esc(n.source)}</div>')
             return f'<div class="iv-kpi">{"".join(parts)}</div>'
         if isinstance(n, Table):
-            return self.table(n)
+            return self.table(n, path)
         return self.flow(n, path)
 
-    def table(self, n: Table) -> str:
+    def table(self, n: Table, path: str) -> str:
         ds = self.view.datasets[n.data]
-        names, heads, rows, total = table_cells(n, ds)
+        names, heads, rows, total = table_cells(n, ds, path)
         num = [ds.columns[c].dtype in ("int", "float") for c in names]
         cap = f"<caption>{esc(n.title)}</caption>" if n.title else ""
         num_cls = ' class="iv-num"'
@@ -149,13 +149,13 @@ class _Html:
                 f'<tbody>{"".join(body)}</tbody></table>{more}')
 
     def flow(self, f: Flow, path: str) -> str:
-        items, gw, gh = flow_items(f)
+        items, gw, gh, order = flow_items(f)
         svg = to_svg(items, gw, gh, lambda e: "", xml_header=False, css_width="100%")
         svg = svg.replace(' role="img">', f' role="img" aria-label="{esc(f.title or "Flow")}">',
                           1)
         cap = f"<figcaption>{esc(f.title)}</figcaption>" if f.title else ""
         desc = f"<p>{esc(f.description)}</p>" if f.description else ""
-        lis = "".join(f"<li>{esc(line.split('. ', 1)[1])}</li>" for line in flow_outline(f))
+        lis = "".join(f"<li>{esc(line.split('. ', 1)[1])}</li>" for line in flow_outline(f, order))
         claims = [edge_text(e) for e in f.edges if e.kind == "causal"]
         note = (f'<p class="iv-small">{len(claims)} causal link(s) are claims, not measured '
                 "effects.</p>" if claims else "")

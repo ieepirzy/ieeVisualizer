@@ -52,7 +52,11 @@ null table cell shows "—" (a real `0` stays `0`). The delta arrow is neutral
 in colour: whether up is good is not something the view knows.
 
 Numbers are never given invented precision: without `decimals` an integral
-value is written without decimals and any other value as stored.
+value is written without decimals and any other value as stored. `decimals`
+must be an integer from 0 to 10. A KPI delta is computed on the numbers as
+written (`0.3` vs `0.1` gives `+0.2`, not `+0.19999999999999998`), so it
+never has more decimal places than its operands. Only a leading minus is
+typeset as `−`; the exponent of `1e-05` is left alone.
 
 ## Flow diagrams
 
@@ -83,11 +87,19 @@ graph still lays out; validation reports `cycle_in_layered_layout` as
 *info*, naming the edges drawn against the flow), longest-path layering,
 dummy slots so long edges bend around boxes, barycentre ordering (four
 down/up sweeps, keeping the order with fewest crossings) within swimlanes,
-and uniform box sizes from measured labels (wrapped at 180 px). Edges leave
+and uniform box sizes from measured labels (wrapped at 180 px). Layering is
+O(V + E) and crossing counts O(E log E), so layout time grows close to
+linearly within the size limits below. Edges leave
 the source box's downstream side and end with an arrow on the target box's
 upstream side; an edge between different rows elbows right after the source
 so its label sits level with its target. A flow wider than its slot is
 scaled down to fit.
+
+**Grid layout** places nodes row-major. An edge is a straight line when that
+line clears every other box; otherwise it detours orthogonally through the
+empty gaps between rows and columns (parallel runs in one gap are offset),
+so an edge never passes through a node it does not connect: `A → C` in a row
+`A B C` is drawn under `B`, never through it.
 
 **Text alternative.** `flow_outline(flow)` lists every node in reading order
 (layer by layer, then lane and position; declaration order for `grid`) with
@@ -102,9 +114,66 @@ feeds Interactive report (SVG + spec)."`. It is written into the SVG
 `figure_source_conflict`, `unknown_figure`, `unused_figure` (info),
 `unknown_dataset`, `table_needs_snapshot`, `unknown_column`, `empty_flow`,
 `duplicate_node_id`, `unknown_node`, `causal_edge_unlabelled`,
-`cycle_in_layered_layout` (info), `self_loop` (info). Issues of embedded or
+`cycle_in_layered_layout` (info), `self_loop` (info),
+`column_length_mismatch` (a view dataset's columns differ in length; a table
+is never drawn with zero rows instead), `invalid_text`, the size-limit codes
+below and `table_truncated` (warning). Issues of embedded or
 referenced FigureSpecs are reported with the figure's pointer prefixed, e.g.
 `/figures/trend/layers/0/data`.
+
+## Strings and size limits
+
+Every string of a view - text, labels, titles, table cells, metadata and
+the strings of embedded or referenced FigureSpecs - must be writable as XML:
+a C0 control character other than tab, newline and carriage return, a lone
+surrogate or U+FFFE/U+FFFF is refused with `invalid_text` and the string's
+pointer (by `view_from_dict`/`view_from_json` at parse time, and by
+`validate_view` for views built in Python; at most 20 such issues are listed
+per view). If a figure's SVG still fails to parse, rendering raises a
+`RenderError` (`figure_render_failed`, with the figure's pointer) rather than
+an XML exception.
+
+A view comes from an agent, so its size is bounded. These limits
+(`ieeVisualizer.view.limits`) are checked by `validate_view` **before any
+layout**, so an oversized view is refused in milliseconds with a pointer to
+where the budget ran out. Flow, table, text and figure budgets are summed
+over the whole view.
+
+| Limit | Value | Code when exceeded |
+|---|---|---|
+| `MAX_DEPTH` | 32 | `too_deep` - container nesting (the root is depth 1); also checked while parsing |
+| `MAX_VIEW_NODES` | 300 | `too_many_nodes` - containers and components |
+| `MAX_FIGURES` | 12 | `too_many_figures` |
+| `MAX_FLOW_NODES` | 400 | `too_many_nodes` - flow nodes |
+| `MAX_FLOW_EDGES` | 800 | `too_many_edges` |
+| `MAX_FLOW_DUMMY_NODES` | 4000 | `too_many_dummy_nodes` - sum of `span - 1` over the edges of layered flows (the slots long edges are routed through) |
+| `MAX_TABLE_ROWS` | 300 | `too_many_rows` for a larger `max_rows`; a longer table without `max_rows` draws its first 300 rows, says "Showing 300 of N rows" and gets a `table_truncated` warning |
+| `MAX_TABLE_CELLS` | 1000 | `too_many_cells` - drawn rows x columns |
+| `MAX_TEXT_CHARS` | 10 000 | `text_too_long` - any one string |
+| `MAX_TOTAL_TEXT_CHARS` | 200 000 | `too_much_text` - text the layout measures (text, notes, labels, titles, drawn table cells) |
+| `MAX_PNG_SIDE_PX` | 32 000 | `view_too_large` (`RenderError`) - PNG side in pixels (`height x scale`), checked after layout; HTML and SVG are not limited |
+
+The values were chosen so that the largest view that passes renders in a few
+seconds. Measured on the development container (Python 3.13, matplotlib
+3.11; svg / html / png at scale 2):
+
+| Largest allowed input | svg | html | png |
+|---|---|---|---|
+| layered chain, 400 nodes | 0.6 s | 0.03 s | 1.6 s |
+| layered random DAG, 400 nodes / 800 edges, 3 lanes | 0.2 s | 0.1 s | 3.3 s |
+| layered flow at 3916 dummy slots | 0.1 s | 0.1 s | 0.7 s |
+| grid, 400 nodes / 800 edges | 0.2 s | 0.2 s | 1.8 s |
+| table 300 x 3 (900 cells, truncated cells) | 0.4 s | 0.01 s | 4.2 s |
+| table cells of 10 000 characters (truncation) | 1.8 s | 0.01 s | 1.8 s |
+| 20 texts of 10 000 characters | 0.5 s | 0.01 s | refused (`view_too_large`) |
+| 299 KPI tiles | 0.3 s | 0.01 s | 5.1 s |
+| 12 distinct figures | 1.5 s | 1.8 s | 2.3 s |
+| every budget at once (flow, table, 12 figures, KPIs; png at scale 1) | 3.0 s | 1.8 s | 7.2 s |
+
+For comparison, before these limits a 10 000-node chain took 10.6 s, an
+800-node / 1597-edge flow 68 s and a 5000-row table 43.6 s (11.6 MB PNG);
+they are now refused (or, for the table, capped) in under 0.3 s. PNG time is
+dominated by matplotlib drawing one text artist per label.
 
 ## Rendering
 
@@ -118,7 +187,10 @@ with validation errors is refused with `SpecValidationError`.
   matplotlib adapter) to SVG and nested as an `<svg data-figure="<pointer>">`
   element; its ids and `#id`/`url(#id)` references are prefixed per
   placement (`v0-`, `v1-` ...) so two figures never collide, and its RDF
-  metadata, comments and DOCTYPE are dropped. Nodes and edges carry
+  metadata, comments and DOCTYPE are dropped. Its `<style>` block is not
+  copied (it would style the whole page): matplotlib's
+  `*{stroke-linejoin: round; stroke-linecap: butt}` becomes the same
+  inherited properties on a `<g>` wrapping just that figure. Nodes and edges carry
   `data-node`, `data-edge`, `data-from`, `data-to`, `data-kind` so the
   connectivity stays inspectable in the output.
 * **HTML**: a static, self-contained page: native HTML text, `<table>` and
@@ -161,6 +233,9 @@ figure artifact.
 - PDF output for views; images, formulas and controls as components.
 - Flow layout: edges are polylines (no splines); parallel edges between the
   same pair overlap; lanes are bands orthogonal to the layer direction only.
+  In a grid, detours sharing a gap are offset 8 px apart but their labels
+  can still overlap, and two detours entering the same side of a box share
+  the entry point.
 - Text measurement assumes DejaVu Sans; corporate themes (fonts, colours)
   are not applied to views yet.
 - Tables take inline snapshots only; a `DatasetRef` must be resolved first.
