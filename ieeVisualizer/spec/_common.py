@@ -7,14 +7,18 @@ consume it; they are not imported by it.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
+import inspect
 import json
 import math
 import numbers
-from collections.abc import Iterable, Sequence
-from typing import Any, Literal
+from abc import ABCMeta
+from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
+from typing import Annotated, Any, Literal
 
-from pydantic import ConfigDict, ValidationError
+from pydantic import BeforeValidator, ConfigDict, PlainValidator, ValidationError
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 #: The schema version written by this library. Bump on any change that alters
@@ -51,13 +55,133 @@ STRICT_CONFIG = ConfigDict(strict=True, extra="forbid", arbitrary_types_allowed=
                            defer_build=True)
 
 
-class _ModelMeta(type):
-    """Translates a ``ValidationError`` raised while constructing an instance
-    (see ``_model.construction_error``): a raw pydantic error never escapes a
-    constructor. Hooked on the metaclass, not on ``__init__``, because pydantic
-    replaces ``__init__`` when it builds a deferred class."""
+# Field types of the STRICT_CONFIG classes for containers, bytes and numbers.
+# Strict mode accepts exactly the declared container; these also take what
+# callers passed before the migration (a list for a tuple, a set for a
+# frozenset, a tuple for a list, any Mapping for a dict, a bytearray or
+# memoryview for bytes) and convert it to the declared type. Element types
+# stay strict.
+
+
+def _is_seq(v: Any) -> bool:
+    return isinstance(v, Sequence) and not isinstance(v, (str, bytes, bytearray))
+
+
+def _to_tuple(v: Any) -> Any:
+    return tuple(v) if _is_seq(v) and not isinstance(v, tuple) else v
+
+
+def _to_list(v: Any) -> Any:
+    return list(v) if _is_seq(v) and not isinstance(v, list) else v
+
+
+def _to_frozenset(v: Any) -> Any:
+    ok = isinstance(v, AbstractSet) or _is_seq(v)
+    return frozenset(v) if ok and not isinstance(v, frozenset) else v
+
+
+def _to_dict(v: Any) -> Any:
+    return dict(v) if isinstance(v, Mapping) and not isinstance(v, dict) else v
+
+
+def _to_bytes(v: Any) -> Any:
+    return bytes(v) if isinstance(v, (bytearray, memoryview)) else v
+
+
+def _real(v: Any, info: Any) -> Any:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        raise fail("", "invalid_type",
+                   f"{info.field_name} must be a number, got {type(v).__name__} {v!r}.")
+    return v
+
+
+def TupleOf(item: Any = Any) -> Any:  # noqa: N802 - a type constructor, used in annotations
+    return Annotated[tuple[item, ...], BeforeValidator(_to_tuple)]
+
+
+def ListOf(item: Any = Any) -> Any:  # noqa: N802
+    return Annotated[list[item], BeforeValidator(_to_list)]
+
+
+def SetOf(item: Any = Any) -> Any:  # noqa: N802
+    return Annotated[frozenset[item], BeforeValidator(_to_frozenset)]
+
+
+def MapOf(key: Any = str, value: Any = Any) -> Any:  # noqa: N802
+    return Annotated[dict[key, value], BeforeValidator(_to_dict)]
+
+
+#: ``bytes``; a bytearray or memoryview is copied to bytes.
+BytesLike = Annotated[bytes, BeforeValidator(_to_bytes)]
+#: An int or a float (not a bool), kept as given.
+Real = Annotated[float, PlainValidator(_real)]
+
+
+def _signature_shadow(cls: Any) -> Any:
+    """A plain ``dataclasses`` class with ``cls``'s ``__init__`` parameters
+    (same names, order and defaults; nothing else). Calling it binds the
+    constructor arguments exactly as the stdlib dataclass did before the
+    pydantic migration, so a bad call raises the same ``TypeError`` text
+    (CPython's own, including its did-you-mean), and its signature is the
+    signature of ``cls``."""
+    shadow = cls.__dict__.get("__init_shadow__")
+    if shadow is None:
+        specs = []
+        for f in dataclasses.fields(cls):
+            if f.init:
+                kw = {"default": f.default, "default_factory": f.default_factory}
+                specs.append((f.name, Any, dataclasses.field(**kw)))
+        shadow = dataclasses.make_dataclass(cls.__name__, specs,
+                                            namespace={"__qualname__": cls.__qualname__})
+        type.__setattr__(cls, "__init_shadow__", shadow)
+    return shadow
+
+
+class _ModelMeta(ABCMeta):
+    """Constructor hook of the model classes (on the metaclass, not on
+    ``__init__``, because pydantic replaces ``__init__`` when it builds a
+    deferred class):
+
+    * the arguments are bound against the ``__init__`` parameters first
+      (:func:`_signature_shadow`): positional arguments go to the init fields
+      in declaration order (pydantic would also count ``init=False`` fields
+      such as a mark's ``type``), and missing, unexpected or too many
+      arguments raise the stdlib dataclass's ``TypeError``;
+    * a ``ValidationError`` is translated (``_model.construction_error``), so
+      a raw pydantic error never escapes a constructor.
+
+    It derives from ``ABCMeta`` so a model class can be mixed with an
+    ``abc.ABC`` base.
+
+    ``__signature__`` is a property here (a data descriptor on the metaclass
+    wins over the class attribute pydantic assigns when it builds a deferred
+    class), so ``inspect.signature(cls)`` shows the ``__init__`` parameters
+    rather than pydantic's ``(*args, **kwargs)``-style signature."""
+
+    @property
+    def __signature__(cls) -> Any:
+        if not dataclasses.is_dataclass(cls):
+            return None
+        sig = cls.__dict__.get("__init_signature__")
+        if sig is None:
+            sig = inspect.signature(_signature_shadow(cls))
+            bare = [p.replace(annotation=p.empty) for p in sig.parameters.values()]
+            sig = sig.replace(parameters=bare, return_annotation=sig.empty)
+            type.__setattr__(cls, "__init_signature__", sig)
+        return sig
+
+    @__signature__.setter
+    def __signature__(cls, value: Any) -> None:
+        pass  # pydantic's; the property above stands
 
     def __call__(cls, *args: Any, **kwargs: Any) -> Any:
+        if dataclasses.is_dataclass(cls):
+            shadow = _signature_shadow(cls)
+            shadow(*args, **kwargs)  # raises TypeError for a bad call, like the stdlib
+            if args:
+                names = [f.name for f in dataclasses.fields(shadow)]
+                kwargs = {**dict(zip(names, args)), **kwargs}
+                args = ()
         try:
             return super().__call__(*args, **kwargs)
         except ValidationError as e:

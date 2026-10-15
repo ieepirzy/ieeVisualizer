@@ -65,7 +65,7 @@ import math
 from collections.abc import Mapping
 from typing import Annotated, Any, Optional
 
-from pydantic import AfterValidator
+from pydantic import AfterValidator, BeforeValidator
 
 from ..spec import (
     DatasetRef,
@@ -76,7 +76,7 @@ from ..spec import (
     ValidationIssue,
     validate,
 )
-from ..spec._common import STRICT_CONFIG, SpecModel, model, ptr, suggest
+from ..spec._common import STRICT_CONFIG, SpecModel, TupleOf, _to_tuple, model, ptr, suggest
 from ..spec.data import DTYPES, dataset_from_dict, dataset_to_dict
 
 #: Parameter types and the JSON-Schema-ish type an agent should send.
@@ -127,7 +127,7 @@ def _dtypes(v: tuple[str, ...]) -> tuple[str, ...]:
 #: parameter type, dtype or unit policy fails when its class is defined.
 _ParamType = Annotated[str, _one_of(PARAM_TYPES, "parameter type")]
 _UnitPolicy = Annotated[str, _one_of(UNIT_POLICIES, "unit policy")]
-_Dtypes = Annotated[tuple[str, ...], AfterValidator(_dtypes)]
+_Dtypes = Annotated[tuple[str, ...], BeforeValidator(_to_tuple), AfterValidator(_dtypes)]
 
 
 @model(frozen=True, config=STRICT_CONFIG)
@@ -145,7 +145,7 @@ class Parameter(SpecModel):
     description: str
     default: Any = None
     required: bool = False
-    allowed: Optional[tuple[Any, ...]] = None
+    allowed: Optional[TupleOf(Any)] = None
 
     def __post_init__(self) -> None:
         if self.required and self.default is not None:

@@ -12,14 +12,22 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections.abc import Mapping
 from dataclasses import field
 from typing import Annotated, Any, Callable, Optional, Protocol, runtime_checkable
 
 from pydantic import PlainValidator
 
 from ..spec import DatasetRef, DataSnapshot, FigureSpec, SpecError, ValidationIssue
-from ..spec._common import STRICT_CONFIG, SpecModel, model
+from ..spec._common import (
+    STRICT_CONFIG,
+    BytesLike,
+    ListOf,
+    MapOf,
+    Real,
+    SetOf,
+    SpecModel,
+    model,
+)
 
 #: Media type per output format. A format being listed here only means a
 #: request may name it; whether an adapter can produce it is a capability.
@@ -58,31 +66,18 @@ class RenderWarning(SpecModel):
         return {"code": self.code, "message": self.message, "path": self.path}
 
 
-def _check_format(v: Any) -> str:
-    if v not in MEDIA_TYPES:
-        raise ValueError(f"unknown output format {v!r}; use one of {', '.join(MEDIA_TYPES)}.")
+def _as_given(v: Any) -> Any:
     return v
 
 
-def _check_units(v: Any) -> str:
-    if v not in SIZE_UNITS:
-        raise ValueError(f"units must be 'in' or 'px', got {v!r}.")
-    return v
-
-
-def _positive(v: Any, info: Any) -> float:
-    """A positive finite int or float, kept as given (``11`` stays an int, so
-    :meth:`RenderRequest.to_dict` writes it as given)."""
-    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0:
-        raise ValueError(f"{info.field_name} must be a positive finite number, got {v!r}.")
-    return v
-
-
-#: Field types of :class:`RenderRequest`. Each raises the ``ValueError`` the
-#: constructor raises for that field (pydantic keeps it; see ``_model``).
-_Format = Annotated[str, PlainValidator(_check_format)]
-_Units = Annotated[str, PlainValidator(_check_units)]
-_Positive = Annotated[float, PlainValidator(_positive)]
+#: Field types of :class:`RenderRequest`: taken as given here and checked by
+#: ``__post_init__`` in the order the pre-pydantic class checked them (format,
+#: units, then width/height/dpi), so the first problem reported is the same.
+#: Numbers stay as given (``11`` stays an int, so :meth:`RenderRequest.to_dict`
+#: writes it as given).
+_Format = Annotated[str, PlainValidator(_as_given)]
+_Units = Annotated[str, PlainValidator(_as_given)]
+_Positive = Annotated[float, PlainValidator(_as_given)]
 
 
 @model(frozen=True, config=STRICT_CONFIG)
@@ -104,6 +99,17 @@ class RenderRequest(SpecModel):
     adapter: Optional[str] = None
 
     def __post_init__(self) -> None:
+        if self.format not in MEDIA_TYPES:
+            raise ValueError(
+                f"unknown output format {self.format!r}; use one of {', '.join(MEDIA_TYPES)}."
+            )
+        if self.units not in SIZE_UNITS:
+            raise ValueError(f"units must be 'in' or 'px', got {self.units!r}.")
+        for name in ("width", "height", "dpi"):
+            v = getattr(self, name)
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) \
+                    or v <= 0:
+                raise ValueError(f"{name} must be a positive finite number, got {v!r}.")
         w, h = self.size_px
         if max(w, h) > MAX_PIXELS_PER_SIDE:
             raise ValueError(
@@ -145,16 +151,16 @@ class RenderRequest(SpecModel):
 class RenderResult(SpecModel):
     """Bytes of one rendered output plus how they were made."""
 
-    content: bytes
+    content: BytesLike
     format: str
     media_type: str
     adapter_name: str
     adapter_version: str
-    warnings: list[RenderWarning] = field(default_factory=list)
+    warnings: ListOf(RenderWarning) = field(default_factory=list)
     request: Optional[RenderRequest] = None
     #: ``{"name", "version", "sha256"}`` of the theme the adapter drew with
     #: (``None`` for an adapter that does not report one).
-    theme: Optional[dict[str, str]] = None
+    theme: Optional[MapOf(str, str)] = None
 
     @property
     def sha256(self) -> str:
@@ -170,23 +176,23 @@ class Capabilities(SpecModel):
     """What an adapter can draw and produce. Selection compares these with
     what a spec + request actually need (:func:`requirements_for`)."""
 
-    coordinate_systems: frozenset[str]
-    mark_types: frozenset[str]
-    output_formats: frozenset[str]
-    annotation_types: frozenset[str] = frozenset({"text", "reference_line", "reference_band"})
+    coordinate_systems: SetOf(str)
+    mark_types: SetOf(str)
+    output_formats: SetOf(str)
+    annotation_types: SetOf(str) = frozenset({"text", "reference_line", "reference_band"})
     three_d: bool = False
     animation: bool = False
     interactive: bool = False
     vector_export: bool = False
     #: Most data points the adapter draws without downsampling; ``None`` = no limit.
-    max_points: Optional[int] = None
+    max_points: Optional[Real] = None
     #: Most histogram bins one histogram may ask for; ``None`` = no limit.
     #: Drawing time grows with the bin count, not the data, so an
     #: agent-supplied ``bins`` is bounded here.
-    max_bins: Optional[int] = None
+    max_bins: Optional[Real] = None
     #: Mark types the adapter cannot draw in a given coordinate system even
     #: though it supports both separately.
-    unsupported: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    unsupported: MapOf(str, SetOf(str)) = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {

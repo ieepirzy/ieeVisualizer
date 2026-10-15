@@ -252,8 +252,8 @@ def test_dataclass_protocols_still_work():
         (lambda: RenderRequest(theme=5), "/theme"),
         (lambda: RenderWarning(1, "m"), "/code"),
         (lambda: FileEntry("f", "image/png", "sha256:x", "12"), "/size_bytes"),
-        (lambda: Parameter("p", "string", "d", allowed=["a"]), "/allowed"),
-        (lambda: ColumnRequirement("r", "p", ["float"], "d"), "/dtypes"),
+        (lambda: Parameter("p", "string", "d", allowed="ab"), "/allowed"),
+        (lambda: ColumnRequirement("r", "p", 5, "d"), "/dtypes"),
         (lambda: ValidationIssue("", "c", "m", "fatal"), "/severity"),
     ],
 )

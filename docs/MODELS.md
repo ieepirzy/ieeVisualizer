@@ -113,7 +113,38 @@ descriptors) use `STRICT_CONFIG` = pydantic strict mode
 no coercion. Where pydantic's strict types would *change a value*, the field
 uses a validator instead: strict `float` turns `11` into `11.0`, which would
 change `RenderRequest.to_dict()` and so the manifest bytes, so `width`,
-`height` and `dpi` use a "positive finite number, kept as given" validator.
+`height` and `dpi` are taken as given and checked by `__post_init__`, in the
+order the pre-pydantic class checked them (format, units, then width, height,
+dpi), so the first problem reported is the same.
+
+Strict mode would also refuse containers and numbers that callers passed
+before the migration. The descriptor fields therefore use the types in
+`spec/_common.py` that accept those and convert them, keeping element types
+strict:
+
+| field type | also accepts | stored as |
+|---|---|---|
+| `TupleOf(T)` (`Parameter.allowed`, `ColumnRequirement.dtypes`) | a list or other non-string sequence | `tuple` |
+| `SetOf(T)` (`Capabilities` sets, `unsupported` values) | a `set`, list or tuple | `frozenset` |
+| `ListOf(T)` (`RenderResult.warnings`, manifest `variants`, `warnings`) | a tuple or other sequence | `list` |
+| `MapOf(K, V)` (manifest dicts, `RenderResult.theme`, `unsupported`) | any `Mapping` | `dict` |
+| `BytesLike` (`RenderResult.content`) | `bytearray`, `memoryview` | `bytes` |
+| `Real` (`FileEntry.size_bytes`, `Capabilities.max_points`/`max_bins`) | an int or a float, not a bool | as given |
+
+Strictness that remains on purpose (the pre-pydantic classes accepted these,
+and they were bugs waiting to surface elsewhere):
+
+* a template that declares an unknown parameter type, dtype or unit policy,
+  or a parameter that is both `required` and has a `default`, fails when the
+  template class is defined, not when the template is first used;
+* `ValidationIssue` fields must be strings and `severity` one of
+  `error`/`warning`/`info` (`ValidationIssue(1, ...)` and
+  `severity="fatal"` used to construct);
+* string fields of the descriptors (`RenderRequest.theme`/`adapter`,
+  `RenderWarning`, manifest names and hashes) refuse non-strings, and bool
+  flags (`Capabilities.three_d`, `Parameter.required`, ...) refuse `0`/`1`;
+* a wrong container (`allowed="ab"`, `dtypes=5`, `content="text"`) is
+  `SpecParseError` with an `invalid_type` issue at the field.
 
 `defer_build=True` builds a class's pydantic validator on first use, which keeps
 `import ieeVisualizer.spec` from building ~20 schemas up front.
@@ -164,7 +195,23 @@ Constructors go through the `SpecModel` metaclass, which catches
   got number 5.`
 
 The hook is on the metaclass, not `__init__`, because pydantic replaces
-`__init__` when it builds a deferred class.
+`__init__` when it builds a deferred class. Before pydantic sees the call, the
+metaclass binds the arguments against the `__init__` parameters
+(`_signature_shadow`: a plain stdlib dataclass with the same init fields,
+order and defaults), which does three things the stdlib dataclass did:
+
+* positional arguments fill the init fields in `dataclasses.fields` order
+  (`LineMark("sales", {"y": "revenue"})`). pydantic alone would also count a
+  field declared `init=False`, such as a mark's or annotation's `type`, and
+  shift every argument by one;
+* a missing, unexpected, duplicate or surplus argument raises CPython's own
+  `TypeError`, with the same text as before (from 3.12 including
+  `Did you mean 'title'?`), whatever other problems the call has;
+* `inspect.signature(cls)` is the `__init__` signature
+  (`(data=None, encoding=<factory>, ...)`), not pydantic's.
+
+The metaclass derives from `ABCMeta`, so a model class can be mixed with
+`abc.ABC`.
 
 `tests/spec/test_spec_models.py` pins the mapping: one test per issue code
 with its pointer, no coercion, parse order, constructor exceptions,
@@ -238,18 +285,29 @@ six specs takes about 6 ms instead of 3 ms.
 
 ## Verification
 
-* `tools/spec_hashes.py` enumerates 35 specs (shared test examples, renderer
+* `tools/spec_hashes.py` enumerates 50 specs (shared test examples, renderer
   test examples, the gallery: every mark type, every template example, the
-  legacy bridge) and records `spec_hash`, the `indent=2` bytes, the parse
-  round-trip hash, dataset `content_hash`es and `validate()` issues, plus the
-  JSON schema, template catalogue, adapter capabilities and render-request
-  dicts. The baseline was written from `main` before any change;
-  `tests/test_spec_hash_baseline.py` compares on every run. The
-  `vector_field_2d` template stamps numpy/sympy versions into provenance, so
-  its exact entry is per environment and a "versions blanked" entry is
-  compared everywhere.
+  themed examples, the legacy bridge and the network gallery) and records
+  `spec_hash`, the `indent=2` bytes, the parse round-trip hash, dataset
+  `content_hash`es and `validate()` issues, plus the JSON schema, template
+  catalogue, adapter capabilities and render-request dicts. The baseline was
+  written from `main`'s pre-migration code; `tests/test_spec_hash_baseline.py`
+  compares on every run. Specs built with transcendental numpy functions are
+  not bit-portable across CPUs (numpy's AVX-512 and AVX2 `exp` differ by 1 ulp
+  on some inputs), so those are compared exactly only in a recorded
+  environment and through a 12-significant-digit "portable" record elsewhere;
+  every other spec is compared exactly everywhere (see the tool's docstring).
+* `tests/spec/test_spec_constructors.py` constructs every model class
+  positionally from its `dataclasses.fields` order (the init-field order of
+  all 33 classes is identical to `main`'s) and pins the bad-call
+  `TypeError`s, the signature and the accepted containers.
+* Differential fuzzing against `main`: a construction fuzzer (random classes,
+  random positional and keyword arguments; 48,000 cases) and a parse fuzzer
+  (mutated specs through `from_dict`, `to_json`, `spec_hash`, `validate()`,
+  `content_hash`; 68,000 cases) agree with `main` except for the
+  intended `ValidationIssue` strictness above.
 * `tools/capture_spec_hashes.py` is a pytest plugin that hashes every spec the
-  whole test suite serializes or validates (411 tests, 327 distinct specs);
+  whole test suite serializes or validates (508 tests, 405 distinct specs);
   before/after runs of the full suite compare with zero differences.
 
 ## Gaps and follow-ups
@@ -258,7 +316,9 @@ six specs takes about 6 ms instead of 3 ms.
   annotations in a third, "check" mode and collect every error.
 * `VisualizationArtifact.from_dict` and friends still read their (differently
   shaped) JSON by hand; construction now type-checks what they read.
-* Views, themes and animation (unmerged branches) migrate when they land.
+* The `network` package (and the `themes` value classes) keep plain
+  dataclasses; they migrate in a follow-up. The theme fields `main` added to
+  `RenderResult` and the manifest are declared on the pydantic models.
 * `SpecParseError` still reports only the first problem; pydantic already
   collects all of them, so reporting every problem is a small change if the
   contract is widened.

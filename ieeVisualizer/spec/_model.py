@@ -303,15 +303,20 @@ def construction_error(exc: ValidationError, cls: Any) -> Exception:
     exception of a ``__post_init__`` or field validator, ``TypeError`` for
     bad arguments, else :class:`SpecParseError` with structured issues."""
     errors = exc.errors(include_url=False)
-    first = errors[0]
-    error = (first.get("ctx") or {}).get("error")
-    if isinstance(error, Exception):
-        return error
-    if first.get("type") in _ARGUMENT_ERRORS:
-        loc = _named_loc(tuple(first.get("loc", ())), cls)
-        name = loc[-1] if loc else "?"
-        return TypeError(f"{cls.__name__}.__init__() {_ARGUMENT_ERRORS[first['type']]} "
-                         f"{name!r}")
+    # A bad call (missing / unexpected / surplus argument) is a TypeError,
+    # whichever position pydantic lists it in. The metaclass binds arguments
+    # before pydantic sees them, so this is a fallback for calls that bypass it.
+    for err in errors:
+        if err.get("type") in _ARGUMENT_ERRORS:
+            loc = _named_loc(tuple(err.get("loc", ())), cls)
+            name = loc[-1] if loc else "?"
+            return TypeError(f"{cls.__name__}.__init__() {_ARGUMENT_ERRORS[err['type']]} "
+                             f"{name!r}")
+    error = (errors[0].get("ctx") or {}).get("error")
+    from_field = bool(errors[0].get("loc"))
+    if isinstance(error, Exception) and not (isinstance(error, SpecError) and from_field):
+        return error  # a __post_init__ / value check: its own exception and text
+    # A field validator's SpecError: re-pointed at the field.
     return SpecParseError(issues_from_validation_error(exc, cls))
 
 
