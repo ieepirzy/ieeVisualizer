@@ -13,7 +13,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 
 const want = new Set(process.argv.slice(2).length ? process.argv.slice(2) : ['a11y', 'ssr', 'det', 'perf']);
 const sha = (s) => createHash('sha256').update(s).digest('hex').slice(0, 16);
-const theme = JSON.parse(readFileSync('specs/theme.muutto365-report-light.json', 'utf8'));
+const theme = JSON.parse(readFileSync('specs/theme.report-light.json', 'utf8'));
 const spec = (n) => JSON.parse(readFileSync(`specs/${n}.json`, 'utf8'));
 mkdirSync('out/probe', { recursive: true });
 const report = {};

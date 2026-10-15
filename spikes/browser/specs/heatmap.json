@@ -165,5 +165,5 @@
  "metadata": {},
  "title": "Bookings by weekday and start time",
  "caption": "Sunday not collected (blank). Sat 16 is a measured zero.",
- "theme": "muutto365-report-light"
+ "theme": "report-light"
 }

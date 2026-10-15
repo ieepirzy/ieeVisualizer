@@ -7,7 +7,7 @@ branch), from the repository root::
     PYTHONPATH=. python spikes/browser/reference/make_specs.py
 
 Outputs (next to this file's parent): ``specs/*.json`` (canonical FigureSpec
-JSON as the browser adapters read it), ``specs/theme.muutto365-report-light.json``
+JSON as the browser adapters read it), ``specs/theme.report-light.json``
 (``Theme.to_json()``, i.e. the token export the Vue package would consume) and
 ``out/mpl/*.png`` (the Matplotlib adapter's render of each spec).
 
@@ -30,7 +30,7 @@ from ieeVisualizer.spec import from_dict, to_dict, validate
 HERE = Path(__file__).resolve().parent.parent
 SPECS = HERE / "specs"
 MPL_OUT = HERE / "out" / "mpl"
-THEME = "muutto365-report-light"
+THEME = "report-light"
 WIDTH_PX, HEIGHT_PX = 800, 500
 
 
