@@ -150,7 +150,7 @@ class MatplotlibAdapter:
             _warnings.simplefilter("always")
             built = self._draw(prepared, request, warnings, theme)
         _backend_warnings(caught, built.warnings)
-        built.warnings = _dedupe(built.warnings)
+        built.warnings[:] = _dedupe(built.warnings)  # same list: draw-time warnings land here
         return built
 
     def render(
@@ -211,7 +211,7 @@ class MatplotlibAdapter:
 
         from .data import infer_axes
         from .decorate import apply_annotations, apply_axes, apply_caption, apply_legend
-        from .marks import DRAW, DrawContext
+        from .marks import DRAW, DrawContext, fit_value_labels
 
         spec = prepared.spec
         axes_info = infer_axes(spec, warnings)
@@ -233,6 +233,7 @@ class MatplotlibAdapter:
         if theme is not None and theme.typography.caption:
             cap["fontsize"] = theme.typography.caption
         caption = apply_caption(fig, spec.caption, figsize[1], figsize[0], **cap)
+        fit_value_labels(ctx)  # fits value labels at draw time, after layout
         return BuiltFigure(figure=fig, axes=ax, warnings=warnings,
                            layer_artists=ctx.layer_artists, annotation_artists=ann,
                            caption=caption)

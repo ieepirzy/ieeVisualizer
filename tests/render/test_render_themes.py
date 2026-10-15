@@ -246,3 +246,71 @@ def test_default_theme_keeps_matplotlibs_tick_locator():
     t = templates.get("funnel")
     built = build_figure(t.build_payload(t.example()))
     assert type(built.axes.xaxis.get_major_locator()) is AutoLocator
+
+
+def _value_label_boxes(built):
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    canvas = FigureCanvasAgg(built.figure)
+    canvas.draw()
+    r = canvas.get_renderer()
+    labels = [a for arts in built.layer_artists.values() for a in arts
+              if hasattr(a, "get_text") and a.get_text() not in ("", "no data")]
+    return ([(a.get_text(), a.get_window_extent(r)) for a in labels],
+            built.axes.get_window_extent(r), built.figure.bbox)
+
+
+@pytest.mark.parametrize("theme", [DARK, LIGHT])
+@pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
+@pytest.mark.parametrize("sign", [1, -1])
+def test_value_labels_stay_inside_the_axes_at_email_size(theme, orientation, sign):
+    t = templates.get("bar_comparison")
+    payload = t.example()
+    payload["params"].update(theme=theme, orientation=orientation)
+    if sign < 0:
+        for c in ("revenue", "revenue_prev"):
+            col = payload["data"]["columns"][c]
+            col["values"] = [None if v is None else -v for v in col["values"]]
+    built = build_figure(t.build_payload(payload), themes.get(theme).request("email"))
+    boxes, ax_box, fig_box = _value_label_boxes(built)
+    assert len(boxes) == 9  # 5 + 5 bars, one current value is null
+    for text, b in boxes:
+        assert fig_box.x0 <= b.x0 and b.x1 <= fig_box.x1, (text, b, fig_box)
+        assert fig_box.y0 <= b.y0 and b.y1 <= fig_box.y1, (text, b, fig_box)
+        assert ax_box.x0 <= b.x0 and b.x1 <= ax_box.x1, (text, b, ax_box)
+        assert ax_box.y0 <= b.y0 and b.y1 <= ax_box.y1, (text, b, ax_box)
+    assert "value_label_outside_axes" not in [w.code for w in built.warnings]
+
+
+def test_a_value_label_past_a_fixed_axis_limit_is_reported():
+    from ieeVisualizer.spec import Axis
+
+    spec = bars([18450.5, 900.0])
+    spec.axes["y"] = Axis(limits=[0, 18500])
+    request = themes.get(LIGHT).request("email")
+    built = build_figure(spec, request)
+    built.figure.draw_without_rendering()  # labels are fitted when drawn
+    assert built.axes.get_ylim()[1] == 18500  # the spec's limit is kept
+    assert "value_label_outside_axes" in [w.code for w in built.warnings]
+    assert [w.code for w in render(spec, request).warnings].count(
+        "value_label_outside_axes") == 1
+
+
+@pytest.mark.parametrize("theme", [DARK, LIGHT])
+@pytest.mark.parametrize("horizontal", [False, True])
+@pytest.mark.parametrize("values", [[18450.5, 900.0, -3000.0], [-18450.5, -900.0, 3000.0]])
+def test_value_labels_on_both_sides_of_zero_stay_inside_a_short_figure(theme, horizontal,
+                                                                       values):
+    # a wide, short figure: the 12 % value margin is a few pixels on y
+    data = DataSnapshot.from_columns({"k": ["x", "y", "z"], "v": values}, units={"v": "EUR"})
+    enc = {"x": "v", "y": "k"} if horizontal else {"x": "k", "y": "v"}
+    spec = FigureSpec(datasets={"d": data}, theme=theme, layers=[BarMark(
+        data="d", encoding=enc, orientation="horizontal" if horizontal else "vertical",
+        style={"value_labels": True})])
+    size = dict(width=3, height=4) if horizontal else dict(width=6, height=2)
+    built = build_figure(spec, RenderRequest(dpi=200, **size))
+    boxes, ax_box, _ = _value_label_boxes(built)
+    assert len(boxes) == 3
+    for text, b in boxes:
+        assert ax_box.x0 <= b.x0 and b.x1 <= ax_box.x1, (text, b, ax_box)
+        assert ax_box.y0 <= b.y0 and b.y1 <= ax_box.y1, (text, b, ax_box)

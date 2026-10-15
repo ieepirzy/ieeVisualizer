@@ -63,7 +63,10 @@ with the unit on the axis label. Nothing is converted.
 Display rounding is half-up on the value as written (`18.25` -> `18,3 %`,
 `0.125` -> `0,13 €`); recorded values (template metadata, datasets) stay
 exact. A non-zero percent that would round to zero is shown as a bound,
-`< 0,1 %` (`> −0,1 %` below zero), never `0,0 %`. When the locale groups
+`< 0,1 %` (`> −0,1 %` below zero), never `0,0 %`; likewise a percent that
+would round to 100 but is not exactly 100 is `> 99,9 %` (or `< 100,1 %`
+above it, since rates over 100 % occur; mirrored for −100), never
+`100,0 %`. The bound's step follows the display decimals. When the locale groups
 digits, the x axis takes the largest tick count whose narrowest gap between
 labels is at least 1.5 times the group separator's width, so `10 000` and
 `12 500` cannot run together; positions stay matplotlib's 1-2-2.5-5-10
@@ -165,7 +168,9 @@ Measured (`themes.describe(name)["accessibility"]`):
 
 Bar style keys (renderer-neutral hints, matplotlib honours them):
 `value_labels: true` prints each bar's value at its end in the theme's
-locale; `bar_width` (0-1) and `bar_offset` (-0.5-0.5) place a layer's bars
+locale (when the figure is drawn, the value axis is widened just enough that
+every label lies inside the plot; an end fixed by `axes.<ch>.limits` is kept
+and a label that does not fit is a `value_label_outside_axes` warning); `bar_width` (0-1) and `bar_offset` (-0.5-0.5) place a layer's bars
 as fractions of the category slot, so layers can sit side by side. A
 template that writes numbers into text records `label_locale` in its
 metadata; rendering with a theme that formats numbers differently adds a

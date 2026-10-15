@@ -72,3 +72,26 @@ def test_a_non_zero_percent_never_displays_as_zero():
     assert format_percent(-0.0, FI_FI) == f"0,0{S}%"
     assert format_percent(0.05, FI_FI) == f"0,1{S}%"
     assert format_quantity(0.016, "%", FI_FI) == f"<{S}0,1{S}%"
+
+
+def test_a_percent_that_is_not_100_never_displays_as_100():
+    # just below 100: the bound it is above, never "100,0 %"
+    assert format_percent(99.97, FI_FI) == f">{S}99,9{S}%"
+    assert format_percent(99.95, FI_FI) == f">{S}99,9{S}%"
+    assert format_percent(99.9999999, FI_FI) == f">{S}99,9{S}%"
+    assert format_percent(99.996, FI_FI, decimals=2) == f">{S}99,99{S}%"
+    assert format_percent(99.7, FI_FI, decimals=0) == f">{S}99{S}%"
+    assert format_percent(99.97) == f">{S}99.9%"  # neutral locale
+    assert format_quantity(99.97, "%", FI_FI) == f">{S}99,9{S}%"
+    # percentages above 100 (growth, share of target) are possible: same rule
+    assert format_percent(100.03, FI_FI) == f"<{S}100,1{S}%"
+    assert format_percent(100.004, FI_FI, decimals=2) == f"<{S}100,01{S}%"
+    # and a change of almost exactly -100 % is not a total loss
+    assert format_percent(-99.97, FI_FI) == f"<{S}−99,9{S}%"
+    assert format_percent(-100.03, FI_FI) == f">{S}−100,1{S}%"
+    # exactly 100 is 100; values that round away from 100 are shown normally
+    assert format_percent(100, FI_FI) == f"100,0{S}%"
+    assert format_percent(-100.0, FI_FI) == f"−100,0{S}%"
+    assert format_percent(99.94, FI_FI) == f"99,9{S}%"
+    assert format_percent(100.05, FI_FI) == f"100,1{S}%"
+    assert format_percent(1000.0, FI_FI) == f"1{S}000,0{S}%"

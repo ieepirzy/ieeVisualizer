@@ -17,7 +17,9 @@ exact one.
 
 A non-zero percent never displays as zero: a value that would round to
 ``0,0`` at the display precision is written as a bound, ``< 0,1 %`` (or
-``> −0,1 %`` below zero), in the locale's conventions.
+``> −0,1 %`` below zero), in the locale's conventions; for the same reason a
+value that is not exactly ±100 never displays as ``100,0 %`` (``> 99,9 %``,
+``< 100,1 %``).
 """
 
 from __future__ import annotations
@@ -141,16 +143,29 @@ def format_percent(value: Any, loc: NumberLocale | None = None,
 
     A non-zero value that rounds to zero at ``decimals`` places is shown as
     the bound it is below, ``< 0,1 %`` (``> −0,1 %`` when negative), never as
-    ``0,0 %``; exactly 0 stays ``0,0 %``."""
+    ``0,0 %``; exactly 0 stays ``0,0 %``. Likewise a value that rounds to
+    100 but is not exactly 100 is shown as a bound: ``> 99,9 %`` for 99.97,
+    ``< 100,1 %`` for 100.03 (rates above 100 % are possible: growth, share
+    of target), and mirrored below zero (``< −99,9 %`` for −99.97, a change
+    that is not a total loss); exactly ±100 stays ``100,0 %``."""
     loc = loc or NEUTRAL
     s = format_number(value, loc, decimals)
     if s is None:
         return None
     v = float(value)
-    if v != 0 and Decimal(_round_half_up(v, decimals)) == 0:
-        step = format_number(10.0 ** -decimals, loc, decimals)
-        bound = f"<{NBSP}{step}" if v > 0 else f">{NBSP}{loc.minus}{step}"
+    shown = abs(Decimal(_round_half_up(v, decimals)))
+    step = 10.0 ** -decimals
+    if v != 0 and shown == 0:
+        b = format_number(step, loc, decimals)
+        bound = f"<{NBSP}{b}" if v > 0 else f">{NBSP}{loc.minus}{b}"
         return f"{bound}{loc.percent_sep}%"
+    if shown == 100 and abs(v) != 100:
+        # 99.97 is not 100 %: the bound on the side of 100 it is on
+        inside = abs(v) < 100
+        b = format_number(100 - step if inside else 100 + step, loc, decimals)
+        sign = "" if v > 0 else loc.minus
+        rel = (">" if inside else "<") if v > 0 else ("<" if inside else ">")
+        return f"{rel}{NBSP}{sign}{b}{loc.percent_sep}%"
     return f"{s}{loc.percent_sep}%"
 
 
