@@ -25,6 +25,7 @@ from ..render.base import RenderWarning, issue
 from ..render.mpl import CAPABILITIES as FIGURE_CAPABILITIES
 from ..render.mpl import MatplotlibAdapter
 from ..spec import Axis, FigureSpec, SpecValidationError
+from ._scope import scoped
 from .base import (
     AnimationCapabilities,
     AnimationError,
@@ -84,6 +85,7 @@ class MatplotlibAnimationAdapter:
 
     # ---------------------------------------------------------------- frames
 
+    @scoped
     def plan(self, anim: AnimationSpec, request: AnimationRequest | None = None, *,
              resolver=None) -> tuple[FramePlan, list[RenderWarning]]:
         """The frame plan with fixed axis limits applied to every state spec.
@@ -105,11 +107,17 @@ class MatplotlibAnimationAdapter:
             # (the full figure): per-frame autoscaling of a lone point or date
             # is degenerate (matplotlib widens one date to +-2 years). A sweep
             # takes the union of its states, each of which is a whole figure.
+            # A heatmap cannot be drawn with all frames together (each frame
+            # has its own value for a cell), so its range is the union of
+            # the frames, like a sweep's.
             source = None
             if isinstance(anim.timeline, FrameColumn):
                 from ..render.prepare import prepare
 
-                source = [prepare(anim.figure, resolver).spec]
+                full = prepare(anim.figure, resolver).spec
+                if not any(m.type == "heatmap" and m.data == anim.timeline.dataset
+                           for m in full.layers):
+                    source = [full]
             self._fix_limits(fp, request, warnings, source)
         return fp, warnings
 
@@ -131,16 +139,9 @@ class MatplotlibAnimationAdapter:
             return
         from ..render.mpl.data import infer_axes
 
-        ranges: dict[str, list[float]] = {}
         kinds = {k: info.kind for k, info in infer_axes(specs[0], []).items()}
-        for spec in specs:
-            built = self._static.build_figure(spec, request.frame_request())
-            for key in ("x", "y"):
-                lo, hi = getattr(built.axes, f"get_{key}lim")()
-                r = ranges.setdefault(key, [lo, hi])
-                r[0], r[1] = min(r[0], lo), max(r[1], hi)
-        new_limits = {}
-        for key, (lo, hi) in ranges.items():
+        open_keys = []
+        for key in ("x", "y"):
             current = specs[0].axes.get(key)
             have = list(current.limits) if current and current.limits else [None, None]
             if None not in have:
@@ -150,6 +151,19 @@ class MatplotlibAnimationAdapter:
                     "axis_limits_auto", f"the {key} axis is categorical; its range is not held "
                     "fixed across frames.", "/axis_limits"))
                 continue
+            open_keys.append((key, have))
+        if not open_keys:
+            return  # nothing to measure: no figure is built
+        ranges: dict[str, list[float]] = {}
+        for spec in specs:
+            built = self._static.build_figure(spec, request.frame_request())
+            for key, _ in open_keys:
+                lo, hi = getattr(built.axes, f"get_{key}lim")()
+                r = ranges.setdefault(key, [lo, hi])
+                r[0], r[1] = min(r[0], lo), max(r[1], hi)
+        new_limits = {}
+        for key, have in open_keys:
+            lo, hi = ranges[key]
             conv = _num_to_iso if kinds.get(key) == "time" else float
             new_limits[key] = [have[0] if have[0] is not None else conv(lo),
                                have[1] if have[1] is not None else conv(hi)]
@@ -190,6 +204,7 @@ class MatplotlibAnimationAdapter:
                                           "/figure" + path if path else ""))
         return fp, _dedupe(warnings), pixels
 
+    @scoped
     def render(self, anim: AnimationSpec, request: AnimationRequest | None = None, *,
                resolver=None) -> AnimationResult:
         request = request or AnimationRequest()

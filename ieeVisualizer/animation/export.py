@@ -32,6 +32,7 @@ from ..artifacts.writers import ArtifactWriter
 from ..render.base import issue as _issue
 from ..spec import spec_hash
 from ..spec._common import canonical_json
+from ._scope import scoped
 from .base import (
     ANIMATION_MEDIA_TYPES,
     AnimationError,
@@ -103,6 +104,7 @@ class AnimationArtifact:
         return canonical_json(self.to_dict(), indent=indent)
 
 
+@scoped
 def export_animation(
     anim: AnimationSpec,
     formats=("gif",),

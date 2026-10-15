@@ -25,6 +25,7 @@ from .export import AnimationArtifact, export_animation
 from .frames import FramePlan, FrameState, plan
 from .spec import (
     ANIMATION_SCHEMA_VERSION,
+    MAX_ANIMATION_ANNOTATIONS,
     MAX_DURATION_S,
     MAX_FPS,
     MAX_FRAMES,
@@ -44,6 +45,7 @@ from .validate import validate_animation
 __all__ = [
     "ANIMATION_MEDIA_TYPES",
     "ANIMATION_SCHEMA_VERSION",
+    "MAX_ANIMATION_ANNOTATIONS",
     "MAX_DURATION_S",
     "MAX_FPS",
     "MAX_FRAMES",

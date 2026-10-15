@@ -62,7 +62,7 @@ from __future__ import annotations
 
 import copy
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -295,6 +295,22 @@ class ComponentTemplate:
         self._run_checks(data, params, issues)
         return issues.items
 
+    def sweep_checker(self, data: Any, params: dict[str, Any], parameter: str
+                      ) -> Callable[[dict[str, Any]], list[ValidationIssue]] | None:
+        """Optional fast path for checking many values of one number
+        parameter (``parameter`` is ``name`` or ``map.key``, as an animation
+        sweep names it).
+
+        Returns ``check_at(params)``: the issues :meth:`check` would report for
+        ``params``, which differ from ``params`` given here only in
+        ``parameter``, computed without repeating work that does not depend
+        on that parameter. Callers use it only after :meth:`check` has found
+        no error at one value of the sweep, and :meth:`build` stays the final
+        word at every value. ``None`` (the default) means there is no fast
+        path; callers then use :meth:`check`. Never changes what
+        :meth:`check` or :meth:`build` do."""
+        return None
+
     def build(self, data: Any = None, **params: Any) -> FigureSpec:
         """Build the FigureSpec. Raises :class:`TemplateInputError` if the
         request has errors, and ``SpecValidationError`` if the produced spec
@@ -348,7 +364,11 @@ class ComponentTemplate:
 
     # -------------------------------------------------------------- internals
     def _run_checks(self, data: Any, params: dict[str, Any],
-                    issues: Issues) -> tuple[DataSnapshot | None, dict[str, Any]]:
+                    issues: Issues, **check_options: Any
+                    ) -> tuple[DataSnapshot | None, dict[str, Any]]:
+        """The checks behind :meth:`check` and :meth:`build`. ``check_options``
+        are passed to :meth:`_check` (only a template's own fast paths use
+        them; :meth:`check` and :meth:`build` pass none)."""
         resolved = self._check_params(params, issues)
         snapshot = None
         if data is None:
@@ -361,7 +381,7 @@ class ComponentTemplate:
             if snapshot is not None:
                 self._check_columns(snapshot, resolved, issues)
         if not issues.errors:
-            self._check(snapshot, resolved, issues)
+            self._check(snapshot, resolved, issues, **check_options)
         return snapshot, resolved
 
     def _check_params(self, params: dict[str, Any], issues: Issues) -> dict[str, Any]:

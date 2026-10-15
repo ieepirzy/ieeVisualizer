@@ -270,6 +270,11 @@ def plan(anim: AnimationSpec, resolver=None) -> FramePlan:
 
         base = prepare(anim.figure, resolver).spec  # references resolved once
     if isinstance(tl, ParameterSweep):
+        from ._scope import anim_key, cache
+
+        built = cache("build")
+        key = anim_key(anim) if built is not None and isinstance(tl.target, TemplateTarget) \
+            else None
         for i, v in enumerate(sweep_values(tl, anim.fps)):
             label = f"{tl.parameter} = {format(v, '.4g')}"
             if isinstance(tl.target, MarkTarget):
@@ -277,6 +282,10 @@ def plan(anim: AnimationSpec, resolver=None) -> FramePlan:
                 mark = spec.layers[tl.target.layer]
                 assert isinstance(mark, FunctionMark)
                 mark.parameters = {**mark.parameters, tl.parameter: v}
+            elif key is not None:  # one build per state within a render/export call chain
+                if (key, i) not in built:
+                    built[(key, i)] = _build_template(tl, i, v)
+                spec = built[(key, i)]
             else:
                 spec = _build_template(tl, i, v)
             states.append(FrameState(i, v, label, _labelled(spec, anim, label)))

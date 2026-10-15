@@ -201,7 +201,8 @@ class VectorField2DTemplate(ComponentTemplate):
     )
 
     # ----------------------------------------------------------------- checks
-    def _check(self, data: DataSnapshot | None, p: dict[str, Any], issues: Issues) -> None:
+    def _check(self, data: DataSnapshot | None, p: dict[str, Any], issues: Issues, *,
+               sample: bool = True) -> None:
         has_expr = p["u"] is not None or p["v"] is not None
         if data is not None and has_expr:
             issues.error(param_path("u" if p["u"] is not None else "v"),
@@ -220,11 +221,12 @@ class VectorField2DTemplate(ComponentTemplate):
             issues.error(param_path("scale"), "invalid_parameter",
                          f"scale must be > 0 (or omitted for auto), got {p['scale']!r}.")
         if data is None:
-            self._check_expressions(p, issues)
+            self._check_expressions(p, issues, sample=sample)
         else:
             self._check_sampled(data, p, issues)
 
-    def _check_expressions(self, p: dict[str, Any], issues: Issues) -> None:
+    def _check_expressions(self, p: dict[str, Any], issues: Issues, *,
+                           sample: bool = True) -> None:
         constants = p["constants"] or {}
         for k in constants:
             if (not k.isidentifier() or keyword.iskeyword(k) or k in VARIABLES
@@ -244,7 +246,7 @@ class VectorField2DTemplate(ComponentTemplate):
         if any(not lo <= n <= hi for n in p["grid"]):
             issues.error(param_path("grid"), "invalid_parameter",
                          f"grid must be between {lo} and {hi} points per axis, got {p['grid']}.")
-        if not issues.errors:
+        if sample and not issues.errors:
             # Dry-run the sampling so check() reports everything build() would refuse
             # (SymPy arity errors, a field that is non-finite everywhere). Its warnings
             # are dropped here; build() samples again and records them once.
@@ -323,15 +325,8 @@ class VectorField2DTemplate(ComponentTemplate):
         import sympy
 
         constants = dict(p["constants"] or {})
-        ns: dict[str, Any] = {n: sympy.Symbol(n, real=True) for n in VARIABLES}
-        ns.update({n: sympy.Symbol(n) for n in constants})
-        ns.update({"pi": sympy.pi, "E": sympy.E, "abs": sympy.Abs, "ceiling": sympy.ceiling,
-                   "Min": sympy.Min, "Max": sympy.Max})
-        for f in FUNCTIONS:
-            if f not in ns:
-                ns[f] = getattr(sympy, f)
-        values = {ns[k]: sympy.Float(c) if isinstance(c, float) else sympy.Integer(c)
-                  for k, c in constants.items()}
+        ns = _namespace(constants)
+        values = _substitutions(ns, constants)
         exprs = {}
         for key in ("u", "v"):
             try:
@@ -365,9 +360,7 @@ class VectorField2DTemplate(ComponentTemplate):
             return DataSnapshot(), {}
 
         nx, ny = p["grid"]
-        xs = np.linspace(p["x_range"][0], p["x_range"][1], nx)
-        ys = np.linspace(p["y_range"][0], p["y_range"][1], ny)
-        gx, gy = np.meshgrid(xs, ys, indexing="xy")
+        gx, gy = _grid(p)
         values = {}
         for key, e in exprs.items():
             try:
@@ -377,16 +370,10 @@ class VectorField2DTemplate(ComponentTemplate):
                              f"{key} = {p[key]!r} cannot be converted to a numeric function: "
                              f"{type(err).__name__}: {err}")
                 continue
-            with np.errstate(all="ignore"):
-                raw = np.broadcast_to(np.asarray(fn(gx, gy)), gx.shape)
-            if np.iscomplexobj(raw):  # e.g. a fractional power of a negative number
-                raw = np.where(np.imag(raw) == 0, np.real(raw), np.nan)
-            arr = raw.astype(float).ravel()
+            arr = _field_values(fn, gx, gy)
             bad = ~np.isfinite(arr)
             if bad.all():
-                issues.error(param_path(key), "all_null_column",
-                             f"{key} = {p[key]!r} is not finite at any grid point; nothing "
-                             "would be drawn. Check the expression and ranges.")
+                _all_null(issues, key, p[key])
             elif bad.any():
                 issues.warn(param_path(key), "nonfinite_samples",
                             f"{key} = {p[key]!r} is nan/inf at {int(bad.sum())} of {arr.size} "
@@ -423,6 +410,82 @@ class VectorField2DTemplate(ComponentTemplate):
         }
         return field, meta
 
+    # ------------------------------------------------------------ sweeps
+    def sweep_checker(self, data: Any, params: dict[str, Any], parameter: str):
+        """Fast path for an animation sweeping ``scale`` or ``constants.<k>``
+        (see :meth:`ComponentTemplate.sweep_checker`).
+
+        Every check except the sampling dry-run is cheap and runs per value
+        unchanged. The dry-run (SymPy parse, bounded rebuild, ``lambdify``,
+        sampling) does not depend on ``scale`` and is skipped for it. For a
+        swept constant ``k`` the expressions are parsed, rebuilt and
+        lambdified once, with ``k`` kept as a symbol and passed as a third
+        argument; each value then only evaluates the field with NumPy on the
+        grid and reports ``all_null_column`` where the dry-run would.
+
+        What this does not repeat per value: SymPy refusals that appear only
+        once ``k`` is substituted (an exponent over the limit, a part that
+        becomes undefined such as ``x/(k*y)`` at ``k = 0`` where NumPy may
+        still give finite numbers elsewhere). ``build()`` still refuses those
+        at the state that needs them, before any frame is drawn. ``None`` if
+        the expressions cannot be built with ``k`` symbolic (callers then
+        check every value in full)."""
+        name, _, key = parameter.partition(".")
+        numeric = None
+        if data is None and name == "constants" and key:
+            numeric = self._numeric_sweep(params, key)
+            if numeric is None:
+                return None
+        elif name != "scale" or key:
+            return None
+
+        def check_at(p: dict[str, Any]) -> list:
+            issues = Issues()
+            _, resolved = self._run_checks(data, p, issues, sample=False)
+            if numeric is not None and not issues.errors:
+                numeric(resolved, issues)
+            return issues.items
+
+        return check_at
+
+    def _numeric_sweep(self, params: dict[str, Any], key: str):
+        """``numeric(resolved_params, issues)`` for a swept constant ``key``,
+        or ``None`` if the request does not check or ``k`` cannot stay symbolic."""
+        import sympy
+
+        issues = Issues()
+        p = self._check_params(params, issues)
+        constants = dict(p.get("constants") or {})
+        if issues.errors or key not in constants or p["u"] is None or p["v"] is None:
+            return None
+        ns = _namespace(constants)
+        swept = ns[key]
+        subs = _substitutions(ns, {k: c for k, c in constants.items() if k != key})
+        fns = {}
+        for name in ("u", "v"):
+            try:
+                tree = parse_unevaluated(p[name], ns)
+                if not isinstance(tree, sympy.Expr):
+                    return None
+                e = build_bounded(tree, subs)
+                if not isinstance(e, sympy.Expr) or \
+                        e.free_symbols - {ns["x"], ns["y"], swept}:
+                    return None
+                fns[name] = sympy.lambdify((ns["x"], ns["y"], swept), e, modules="numpy")
+            except Exception:  # noqa: BLE001 - no fast path; the caller checks in full
+                return None
+        gx, gy = _grid(p)
+
+        def numeric(resolved: dict[str, Any], out: Issues) -> None:
+            import numpy as np
+
+            v = resolved["constants"][key]
+            for name, fn in fns.items():
+                if not np.isfinite(_field_values(fn, gx, gy, v)).any():
+                    _all_null(out, name, resolved[name])
+
+        return numeric
+
     def example(self) -> dict[str, Any]:
         return {
             "data": None,
@@ -435,3 +498,51 @@ class VectorField2DTemplate(ComponentTemplate):
                 "title": "Rotation field",
             },
         }
+
+
+def _namespace(constants: dict[str, Any]) -> dict[str, Any]:
+    """The SymPy names an expression may use (see :func:`check_expression`)."""
+    import sympy
+
+    ns: dict[str, Any] = {n: sympy.Symbol(n, real=True) for n in VARIABLES}
+    ns.update({n: sympy.Symbol(n) for n in constants})
+    ns.update({"pi": sympy.pi, "E": sympy.E, "abs": sympy.Abs, "ceiling": sympy.ceiling,
+               "Min": sympy.Min, "Max": sympy.Max})
+    for f in FUNCTIONS:
+        if f not in ns:
+            ns[f] = getattr(sympy, f)
+    return ns
+
+
+def _substitutions(ns: dict[str, Any], constants: dict[str, Any]) -> dict[Any, Any]:
+    import sympy
+
+    return {ns[k]: sympy.Float(c) if isinstance(c, float) else sympy.Integer(c)
+            for k, c in constants.items()}
+
+
+def _grid(p: dict[str, Any]):
+    import numpy as np
+
+    nx, ny = p["grid"]
+    xs = np.linspace(p["x_range"][0], p["x_range"][1], nx)
+    ys = np.linspace(p["y_range"][0], p["y_range"][1], ny)
+    return np.meshgrid(xs, ys, indexing="xy")
+
+
+def _field_values(fn, gx, gy, *extra):
+    """``fn`` on the grid as a flat float array (complex results with an
+    imaginary part, e.g. a fractional power of a negative number, are nan)."""
+    import numpy as np
+
+    with np.errstate(all="ignore"):
+        raw = np.broadcast_to(np.asarray(fn(gx, gy, *extra)), gx.shape)
+    if np.iscomplexobj(raw):
+        raw = np.where(np.imag(raw) == 0, np.real(raw), np.nan)
+    return raw.astype(float).ravel()
+
+
+def _all_null(issues: Issues, key: str, text: Any) -> None:
+    issues.error(param_path(key), "all_null_column",
+                 f"{key} = {text!r} is not finite at any grid point; nothing would be drawn. "
+                 "Check the expression and ranges.")

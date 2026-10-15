@@ -42,6 +42,7 @@ import numpy as np
 
 from ..render.base import Capabilities, RenderWarning, issue
 from ..spec import FunctionMark
+from ._scope import scoped
 from .base import (
     AnimationCapabilities,
     AnimationError,
@@ -117,6 +118,7 @@ class ManimAdapter:
                 out.append("vector_field_2d in expression mode only (u and v, no data)")
         return out
 
+    @scoped
     def render(self, anim: AnimationSpec, request: AnimationRequest | None = None, *,
                resolver=None) -> AnimationResult:
         from ..spec import SpecValidationError

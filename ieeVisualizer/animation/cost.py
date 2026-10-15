@@ -21,11 +21,28 @@ Matplotlib, per state (every state is drawn once)
 * ``MPL_GROUP_US`` 14 ms per ``series`` group or categorical ``color`` group
   (each becomes its own artist and legend entry; measured 8.5 and 14 ms);
 * per point, by mark type (``MPL_POINT_US``): function sample 1 us (0.24),
-  line 15 (12.8), scatter 10 (9.2), area 60 (23-54), bar 1500 (1490),
-  heatmap cell 16 (16), quiver arrow 16 (15), histogram input row 1 (0.3)
+  line 15 (12.8), scatter 10 (9.2), area 60 (23-54), bar 1200 (1130),
+  heatmap cell 110 (54-83; a numeric heatmap frame column builds every state
+  twice for fixed limits), quiver arrow 16 (15), histogram input row 1 (0.3)
   plus ``MPL_BIN_US`` 1.6 ms per bin (1.6). Polar and 3D figures use
-  ``MPL_POINT_US_OTHER`` (polar line 60 (55), 3D scatter 15 (14), 3D
-  function sample 2 (1.05)), else 4x the cartesian cost.
+  ``MPL_POINT_US_OTHER`` (polar line 60 (55), 3D scatter 45 (33-41), 3D
+  function sample 2 (0.2-0.5)), else 4x the cartesian cost;
+* ``MPL_CATEGORY_US`` 1.5 ms per distinct value on a categorical position
+  axis (a tick label; 0.4 ms beside a bar, about 1.3 ms on a heatmap axis);
+* per annotation (``MPL_ANNOTATION_US``): text 9 ms (7.0-7.8), reference line
+  1 ms (0.9), reference band 2 ms (1.4-1.7), plus ``MPL_LEGEND_ENTRY_US`` 12
+  ms for a labelled line or band (its legend entry; 9.3-12.2 in all). An
+  animation has at most ``MAX_ANIMATION_ANNOTATIONS`` (200) annotations;
+* a template sweep's build per state (expression mode, ``template_build_us``):
+  ``TEMPLATE_NODE_US`` 0.7 ms per syntax node of ``u`` and ``v`` (SymPy parse,
+  bounded rebuild and lambdify; 0.2-0.6 ms measured across expression
+  families), ``TEMPLATE_MINMAX_ARG_US`` 10 ms per ``Min``/``Max`` argument
+  plus ``TEMPLATE_MINMAX_NEST_US`` 1 ms per pair of nested ``Min``/``Max``
+  arguments (SymPy compares them pairwise: 40 alternately nested ``Max``/``Min``
+  calls build in 4.3 s), and ``TEMPLATE_GRID_US`` 35 us per grid point
+  (sampling, the dry-run in ``check()`` and the snapshot; 18-33). Measured on
+  12 expression families at grids 2-200, the estimate is 1.1-5x the build
+  time (worst nested same-kind ``Max``, which SymPy flattens).
 
 A frame column state counts only the rows that state shows (``current``,
 ``cumulative`` or ``window``); every other dataset counts in full in every
@@ -51,6 +68,14 @@ curve (about 5 s per frame) is refused before Manim starts.
 
 These are estimates of one machine's speed, not promises: they keep the worst
 accepted input near a minute rather than an hour.
+``tests/animation/test_anim_cost_calibration.py`` renders one case per term
+and requires measured / estimated within [1/6, 1.5]: under by at most half
+again (machine noise), over by at most 6x (re-measured after round 3:
+0.69-1.18).
+
+Validation (which does not know the request) refuses a template sweep whose
+:func:`min_work_us` (the cheaper cost model at zero frame area) is over the
+budget before it checks any value beyond the first.
 """
 
 from __future__ import annotations
@@ -69,9 +94,17 @@ MPL_LAYER_US = 9_500
 MPL_GROUP_US = 14_000
 MPL_BIN_US = 1_600
 MPL_POINT_US: dict[str, float] = {"function": 1, "line": 15, "scatter": 10, "area": 60,
-                                  "bar": 1_500, "heatmap": 16, "quiver": 16, "histogram": 1}
-MPL_POINT_US_OTHER: dict[str, float] = {"function": 2, "line": 60, "scatter": 15, "quiver": 16}
+                                  "bar": 1_200, "heatmap": 110, "quiver": 16, "histogram": 1}
+MPL_POINT_US_OTHER: dict[str, float] = {"function": 2, "line": 60, "scatter": 45, "quiver": 16}
+MPL_CATEGORY_US = 1_500
+MPL_ANNOTATION_US: dict[str, float] = {"text": 9_000, "reference_line": 1_000,
+                                       "reference_band": 2_000}
+MPL_LEGEND_ENTRY_US = 12_000
 TEMPLATE_LAYERS = 2
+TEMPLATE_NODE_US = 700
+TEMPLATE_MINMAX_ARG_US = 10_000
+TEMPLATE_MINMAX_NEST_US = 1_000
+TEMPLATE_GRID_US = 35
 
 MANIM_FRAME_US = 100_000
 MANIM_LAYER_US = 2_000
@@ -120,6 +153,34 @@ def _layer_parts(spec: FigureSpec, m) -> tuple[float, float]:
     return fixed, _point_us(spec, m.type)
 
 
+def categories(spec: FigureSpec) -> int:
+    """Distinct values on categorical (``str``/``bool``) position axes, summed
+    over the axes: each is a tick label drawn in every state (counted over
+    the whole dataset, so a frame column showing a subset is over-counted)."""
+    seen: dict[str, set] = {}
+    for m in spec.layers:
+        ds = spec.datasets.get(m.data) if getattr(m, "data", None) is not None else None
+        if not isinstance(ds, DataSnapshot):
+            continue
+        for axis in ("x", "y", "z"):
+            enc = m.encoding.get(axis) if isinstance(m.encoding, dict) else None
+            col = ds.columns.get(enc.field) if enc is not None else None
+            if col is not None and col.dtype in ("str", "bool"):
+                seen.setdefault(axis, set()).update(v for v in col.values if v is not None)
+    return sum(len(v) for v in seen.values())
+
+
+def annotations_us(spec: FigureSpec) -> float:
+    """Per-state cost of the figure's annotations (a labelled reference line
+    or band also adds a legend entry)."""
+    total = 0.0
+    for a in spec.annotations if isinstance(spec.annotations, list) else []:
+        total += MPL_ANNOTATION_US.get(getattr(a, "type", ""), MPL_ANNOTATION_US["text"])
+        if getattr(a, "type", "") != "text" and getattr(a, "label", None) is not None:
+            total += MPL_LEGEND_ENTRY_US
+    return total
+
+
 def frame_rows(snapshot: DataSnapshot, tl: FrameColumn) -> list[int]:
     """Rows shown in each frame-column state, in state order."""
     from .frames import _key, frame_keys
@@ -163,6 +224,54 @@ def _template_points(t: TemplateTarget) -> tuple[int, int]:
     return rows, 0
 
 
+def _expression_us(text: Any) -> float:
+    """Estimated SymPy time of one template build for one expression (see
+    module doc): per syntax node, plus ``Min``/``Max`` arguments and their
+    nesting (SymPy compares the arguments of nested ``Min``/``Max`` pairwise)."""
+    import ast
+
+    if not isinstance(text, str):
+        return 0.0
+    try:
+        tree = ast.parse(text.strip(), mode="eval")
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return 0.0  # refused by validation before anything is built
+    nodes = args = nested = 0
+    for node in ast.walk(tree):
+        nodes += 1
+        if _is_minmax(node):
+            args += len(node.args)
+            nested += sum(len(n.args) for n in ast.walk(node) if _is_minmax(n))
+    return (TEMPLATE_NODE_US * nodes + TEMPLATE_MINMAX_ARG_US * args
+            + TEMPLATE_MINMAX_NEST_US * (nested - args))
+
+
+def _is_minmax(node: Any) -> bool:
+    import ast
+
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+        and node.func.id in ("Min", "Max")
+
+
+def template_build_us(t: TemplateTarget) -> float:
+    """Estimated time of one ``build()`` of a template target in expression
+    mode (SymPy per expression plus sampling per grid point); 0 for data mode."""
+    if t.data is not None or not isinstance(t.params, dict):
+        return 0.0
+    exprs = [t.params.get(k) for k in ("u", "v")]
+    if not any(isinstance(e, str) for e in exprs):
+        return 0.0
+    return sum(_expression_us(e) for e in exprs) + TEMPLATE_GRID_US * _template_points(t)[1]
+
+
+def min_work_us(anim: AnimationSpec, n_states: int, n_frames: int) -> float:
+    """The cheapest cost model's estimate at zero frame area: a lower bound of
+    every adapter's estimate for any request (used by validation, which does
+    not know the request)."""
+    return min(matplotlib_work_us(anim, (0, 0), n_states, anim.figure),
+               manim_work_us(anim, n_frames))
+
+
 def matplotlib_work_us(anim: AnimationSpec, size_px: tuple[int, int], n_states: int,
                        figure: FigureSpec | None) -> float:
     """Estimated Matplotlib render time of ``n_states`` states (see module doc)."""
@@ -174,12 +283,15 @@ def matplotlib_work_us(anim: AnimationSpec, size_px: tuple[int, int], n_states: 
             and isinstance(tl.target, TemplateTarget) else (0, 0)
         per_state += TEMPLATE_LAYERS * MPL_LAYER_US + rows * MPL_POINT_US["line"] \
             + grid * MPL_POINT_US["quiver"]
+        if isinstance(tl, ParameterSweep) and isinstance(tl.target, TemplateTarget):
+            per_state += template_build_us(tl.target)
         return n_states * per_state
     framed = None
     if isinstance(tl, FrameColumn) and isinstance(figure.datasets.get(tl.dataset), DataSnapshot) \
             and tl.column in figure.datasets[tl.dataset].columns:
         framed = frame_rows(figure.datasets[tl.dataset], tl)
     total = 0.0
+    per_state += annotations_us(figure) + MPL_CATEGORY_US * categories(figure)
     for m in figure.layers:
         fixed, per_row = _layer_parts(figure, m)
         if not per_row:
@@ -204,4 +316,8 @@ def manim_work_us(anim: AnimationSpec, n_frames: int) -> float:
     elif isinstance(tl, ParameterSweep) and isinstance(tl.target, TemplateTarget):
         rows, grid = _template_points(tl.target)
         per_frame += MANIM_LAYER_US + MANIM_ARROW_US * (rows + grid)
+        # the expressions are parsed and lambdified once for the whole clip
+        once = sum(_expression_us(tl.target.params.get(k)) for k in ("u", "v")) \
+            if isinstance(tl.target.params, dict) else 0.0
+        return once + n_frames * per_frame
     return n_frames * per_frame

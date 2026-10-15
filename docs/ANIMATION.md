@@ -97,27 +97,48 @@ Animation codes: `figure_missing`, `figure_not_allowed`, `invalid_value`,
 `unknown_layer`, `not_a_symbolic_function`, `unknown_parameter`,
 `unknown_template`, `unsupported_parameter`, `unknown_dataset`,
 `unknown_column`, `frame_dataset_unused`, `no_frames`, `too_many_frames`,
-`duration_too_long`, `invalid_poster`; warnings `frame_value_missing` and
+`duration_too_long`, `invalid_poster`, `too_many_annotations` (more than
+`MAX_ANIMATION_ANNOTATIONS` = 200 on an animated figure: each is drawn again
+in every state), `animation_too_expensive` (a template sweep, see below);
+warnings `frame_value_missing` and
 `quiver_rescaled_per_frame` (a quiver without `scale` rescales its arrows in
 every frame, hiding changes in magnitude). `from_dict`/`from_json` raise
 `SpecParseError` for structural problems (`not_an_animation`,
 `unsupported_schema_version`, unknown keys, NaN/Infinity).
 
-A template sweep runs the template's own check at **every** sweep value (at
-most 300, after the frame guard), not only the ends. An issue that does not
-depend on the value is reported once under `/timeline/target/...`; one raised
-at some values is reported at the first, `/timeline/values/<i>` (`/timeline`
-for an interpolated sweep, with the state index), naming the template path and
-how many other values fail. If a template's `build()` still refuses a value,
-the render reports it at the same sweep-value path.
+A template sweep is checked in three steps. (1) The template's own full
+check runs once, at the first value; if it fails, it runs at one other value
+to tell value-independent issues (reported once under `/timeline/target/...`)
+from value-dependent ones (reported at the first value), and validation
+stops there. (2) The render-work estimate of the cheapest adapter at zero
+frame area, including the template's per-state SymPy and sampling cost, must
+be within budget (`animation_too_expensive`) before any per-value work.
+(3) **Every** value (at most 300, after the frame guard) is then checked: the
+full check at the smallest and largest value and at 0, and elsewhere the
+template's fast path where it has one (`ComponentTemplate.sweep_checker`;
+`vector_field_2d` parses and lambdifies its expressions once with the swept
+constant as a symbol and evaluates the field with NumPy per value). An issue
+that does not depend on the value is reported once under
+`/timeline/target/...`; one raised at some values is reported at the first,
+`/timeline/values/<i>` (`/timeline` for an interpolated sweep, with the state
+index), naming the template path and how many other values fail. SymPy
+refusals that appear only once a particular value is substituted (an
+exponent over the limit, a part that becomes undefined) are not repeated per
+value: `build()` refuses them, and the render reports them at the same
+sweep-value path before any frame is drawn.
+
+Within one `render_animation`, `export_animation` or adapter `render`/`plan`
+call, the spec is validated once (per `animation_hash`) and each template
+state is built once, however many formats and the poster need it.
 
 **Guards:** at most 300 output frames, 60 s and 60 fps (validation errors
 `too_many_frames`, `duration_too_long`), and at most 120 million pixels as
 frame area x output frames, hold and repeated frames included
 (`animation_too_large`), and an estimated render time of at most 60 s
 (`animation_too_expensive`): states x (layers + series groups + points per
-state, weighted by mark type) plus a per-state cost that grows with the frame
-area, for Matplotlib; output frames x (layers + samples, or vector-field
+state, weighted by mark type, + category tick labels + annotations + a
+template's SymPy and sampling work) plus a per-state cost that grows with the
+frame area, for Matplotlib; output frames x (layers + samples, or vector-field
 arrows) for Manim, which redraws every frame in Python. The constants are
 measured render times and listed, with the measurements at the limit, in
 `ieeVisualizer/animation/cost.py`; e.g. 300 states x 1000 function layers
@@ -170,8 +191,11 @@ unchanged.
 `notes` says why it is missing; requesting MP4 without it is refused with
 `format_unavailable` (adapter) or `CapabilityError` (selection), never
 silently turned into a GIF. Frames are streamed to ffmpeg's stdin one at a
-time; `timeout` bounds the whole encode, writing included (a stalled ffmpeg
-is killed and reaped, `encoder_timeout`). Encoding: libx264 (`-threads 1`, bitexact flags,
+time; `timeout` bounds the whole encode from the call, the encoder probe,
+frame drawing and writing included (ffmpeg is killed and reaped,
+`encoder_timeout`, whose message says whether a frame was still being drawn,
+ffmpeg had stopped reading, or ffmpeg had every frame but did not finish; a
+frame still being drawn is waited for at most 2 s). Encoding: libx264 (`-threads 1`, bitexact flags,
 metadata stripped, yuv420p, odd sizes padded by one pixel, with a
 `frame_size_padded` warning) or MPEG-4 part 2
 without libx264. With ffmpeg 6.1.1 here the bytes were identical across two
@@ -300,7 +324,11 @@ to its state, and `poster_frame` is the validated poster index.
 * Category axes are not held fixed, and a category's position can change
   between `current` frames; a legend at `position: "auto"` may move between
   frames (set a position).
-* Fixed limits cost one extra (unexported) build per state.
+* Fixed limits cost one extra (unexported) build per state (for a frame
+  column, one build of the whole figure; a heatmap frame column, whose frames
+  cannot be drawn together, takes the union of its frames).
+* A static figure has no annotation-count limit of its own yet (a separate
+  follow-up for the spec); animations cap annotations at 200.
 * Manim: no frame columns, data layers, annotations or legend; tick labels
   only at the axis ends; title from the figure/template only.
 * HTML/interactive playback, live streams and a Manim scene escape hatch are

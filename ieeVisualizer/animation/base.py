@@ -17,6 +17,7 @@ from typing import Any, Protocol, runtime_checkable
 from ..render.base import Capabilities, CapabilityError, RenderError, RenderRequest, RenderWarning
 from ..render.base import issue as _issue
 from ..spec import FigureSpec, SpecValidationError
+from ._scope import scoped
 from .spec import MAX_DURATION_S, MAX_FRAMES, AnimationSpec, FrameColumn, TemplateTarget
 
 ANIMATION_MEDIA_TYPES = {"gif": "image/gif", "mp4": "video/mp4"}
@@ -317,6 +318,7 @@ def default_animation_registry() -> AnimationRegistry:
     return _DEFAULT
 
 
+@scoped
 def render_animation(anim: AnimationSpec, request: AnimationRequest | None = None, *,
                      resolver=None, registry: AnimationRegistry | None = None
                      ) -> AnimationResult:

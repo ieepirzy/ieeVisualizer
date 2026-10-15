@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 import io
+import json
+import os
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
 
 import numpy as np
 
@@ -14,6 +20,9 @@ from ieeVisualizer.animation import (
     TemplateTarget,
 )
 from ieeVisualizer.spec import Axis, DataSnapshot, FigureSpec, FunctionMark, LineMark, Provenance
+
+ROOT = Path(__file__).resolve().parents[2]
+HERE = Path(__file__).resolve().parent
 
 SMALL = AnimationRequest(width=160, height=120, units="px", dpi=50)
 TWO_PI = 6.283185307179586
@@ -95,3 +104,39 @@ def gif_frames(content: bytes) -> tuple[list[np.ndarray], list[int]]:
 
 def codes(issues) -> list[str]:
     return [i.code for i in issues]
+
+
+def run_limited(body: str, *, mem_mb: int = 1500, timeout: float = 60.0) -> dict:
+    """Run ``body`` in a child Python with RLIMIT_AS = ``mem_mb`` and a
+    timeout; it must print one JSON line last. A MemoryError, a crash or a
+    timeout fails the calling test with the child's output."""
+    code = textwrap.dedent(f"""
+        import json, sys, time
+        sys.path[:0] = [{str(ROOT)!r}, {str(HERE)!r}]
+        t0 = time.perf_counter()
+    """) + textwrap.dedent(body)
+
+    import resource
+
+    import pytest
+
+    def limit():
+        resource.setrlimit(resource.RLIMIT_AS, (mem_mb << 20, mem_mb << 20))
+
+    env = dict(os.environ, OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1", MPLBACKEND="Agg")
+    try:
+        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                              timeout=timeout, preexec_fn=limit, env=env)
+    except subprocess.TimeoutExpired as e:
+        pytest.fail(f"child did not finish in {timeout} s (guard not applied before "
+                    f"allocation?): {e.stdout!r} {e.stderr!r}")
+    assert proc.returncode == 0, f"child failed:\n{proc.stdout}\n{proc.stderr}"
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def minmax_expression() -> str:
+    """A 474-character u/v expression whose SymPy build is slow (about 0.3 s)."""
+    u = "+".join(f"Max(Min(k*x,{i}*y),floor(k*y+{i}))" for i in range(20))
+    while len(u) > 500:
+        u = u[:u.rfind("+")]
+    return u

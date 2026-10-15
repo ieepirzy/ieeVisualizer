@@ -8,15 +8,18 @@ the test instead of exhausting memory or hanging the run.
 """
 
 import dataclasses
-import json
-import os
-import subprocess
-import sys
-import textwrap
-from pathlib import Path
 
 import pytest
-from anim_helpers import SMALL, codes, sine_anim, vector_field_anim, weekly_anim, weekly_data
+from anim_helpers import (
+    ROOT,
+    SMALL,
+    codes,
+    run_limited,
+    sine_anim,
+    vector_field_anim,
+    weekly_anim,
+    weekly_data,
+)
 
 from ieeVisualizer.animation import (
     AnimationCapabilities,
@@ -33,34 +36,7 @@ from ieeVisualizer.animation.frames import sweep_values
 from ieeVisualizer.render import Capabilities
 from ieeVisualizer.spec import DatasetRef, SpecValidationError
 
-ROOT = Path(__file__).resolve().parents[2]
-HERE = Path(__file__).resolve().parent
-
 resource = pytest.importorskip("resource", reason="address-space limits need POSIX")
-
-
-def run_limited(body: str, *, mem_mb: int = 1500, timeout: float = 60.0) -> dict:
-    """Run ``body`` in a child Python with RLIMIT_AS = ``mem_mb`` and a
-    timeout; it must print one JSON line last. A MemoryError, a crash or a
-    timeout fails the calling test with the child's output."""
-    code = textwrap.dedent(f"""
-        import json, sys, time
-        sys.path[:0] = [{str(ROOT)!r}, {str(HERE)!r}]
-        t0 = time.perf_counter()
-    """) + textwrap.dedent(body)
-
-    def limit():
-        resource.setrlimit(resource.RLIMIT_AS, (mem_mb << 20, mem_mb << 20))
-
-    env = dict(os.environ, OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1", MPLBACKEND="Agg")
-    try:
-        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
-                              timeout=timeout, preexec_fn=limit, env=env)
-    except subprocess.TimeoutExpired as e:
-        pytest.fail(f"child did not finish in {timeout} s (guard not applied before "
-                    f"allocation?): {e.stdout!r} {e.stderr!r}")
-    assert proc.returncode == 0, f"child failed:\n{proc.stdout}\n{proc.stderr}"
-    return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
 # ---------------------------------------------------------------- HIGH 1
@@ -495,22 +471,35 @@ def test_huge_frame_column_is_refused_for_its_work():
     assert e.value.issues[0].code == "animation_too_expensive"
 
 
-def test_template_sweep_work_is_estimated_before_the_template_runs():
+def test_template_sweep_work_is_estimated_before_the_template_runs(monkeypatch):
+    """300 states x 6400 arrows: over budget for every adapter at any size.
+    Validation refuses it after one template check at the first value and
+    before any per-value work: no state is built, the template is checked
+    (and sampled) once, not once per value."""
+    from ieeVisualizer import templates
     from ieeVisualizer.animation import frames as F
 
-    # 300 states x 6400 arrows: about 74 s estimated (validation already
-    # dry-runs the template at every value, so the grid is kept moderate).
     anim = vector_field_anim(values=[i / 10 for i in range(300)], params={"grid": 80},
                              fps=30)
-    calls = []
-    orig = F._build_template
-    F._build_template = lambda *a: calls.append(a) or orig(*a)
-    try:
-        with pytest.raises(AnimationError) as e:
-            render_animation(anim, SMALL)
-    finally:
-        F._build_template = orig
-    assert e.value.issues[0].code == "animation_too_expensive" and calls == []
+    cls = type(templates.get("vector_field_2d", "1.0.0"))
+    calls = {"build": 0, "check": 0, "sample": 0}
+
+    def spy(owner, name, key):
+        orig = getattr(owner, name)
+
+        def wrapped(*a, **k):
+            calls[key] += 1
+            return orig(*a, **k)
+
+        monkeypatch.setattr(owner, name, wrapped)
+
+    spy(F, "_build_template", "build")
+    spy(cls, "check", "check")
+    spy(cls, "_sample", "sample")
+    with pytest.raises((SpecValidationError, AnimationError)) as e:
+        render_animation(anim, SMALL)
+    assert e.value.issues[0].code == "animation_too_expensive"
+    assert calls == {"build": 0, "check": 1, "sample": 1}
 
 
 def test_manim_has_a_stricter_per_frame_points_budget():

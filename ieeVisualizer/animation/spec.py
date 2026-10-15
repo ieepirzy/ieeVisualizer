@@ -57,6 +57,11 @@ AXIS_LIMIT_MODES = ("fixed", "auto")
 MAX_FRAMES = 300
 MAX_DURATION_S = 60.0
 MAX_FPS = 60
+#: Annotations on an animated figure. Every annotation is drawn again in
+#: every state (a text annotation costs about 8 ms per state with Matplotlib),
+#: so an animation refuses more (``too_many_annotations``, at validation,
+#: before any state is built). A still has its own, separate limits.
+MAX_ANIMATION_ANNOTATIONS = 200
 
 
 @dataclass

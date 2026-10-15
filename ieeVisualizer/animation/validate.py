@@ -11,7 +11,9 @@ Codes (besides every FigureSpec code, prefixed with ``/figure``):
 ``unknown_template``, ``unsupported_parameter``, ``unknown_dataset``,
 ``unknown_column``, ``frame_dataset_unused``, ``no_frames``,
 ``frame_value_missing`` (warning), ``too_many_frames``, ``duration_too_long``,
-``invalid_poster``, ``quiver_rescaled_per_frame`` (warning).
+``invalid_poster``, ``quiver_rescaled_per_frame`` (warning),
+``too_many_annotations``, ``animation_too_expensive`` (a template sweep whose
+cheapest render estimate is over budget, refused before any value is checked).
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from .spec import (
     AXIS_LIMIT_MODES,
     DISPLAYS,
     EASINGS,
+    MAX_ANIMATION_ANNOTATIONS,
     MAX_FPS,
     AnimationSpec,
     FrameColumn,
@@ -51,6 +54,21 @@ class _Issues(list):
 
 
 def validate_animation(anim: AnimationSpec) -> list[ValidationIssue]:
+    """Every issue of ``anim`` (empty list = renderable as far as the spec
+    goes). Inside a render or export call chain the result is computed once
+    per ``animation_hash`` (see :mod:`ieeVisualizer.animation._scope`)."""
+    from ._scope import anim_key, cache
+
+    memo = cache("validate")
+    key = anim_key(anim) if memo is not None else None
+    if key is None:
+        return _validate(anim)
+    if key not in memo:
+        memo[key] = _validate(anim)
+    return list(memo[key])
+
+
+def _validate(anim: AnimationSpec) -> list[ValidationIssue]:
     out = _Issues()
     if anim.schema_version != ANIMATION_SCHEMA_VERSION:
         out.add("/schema_version", "unsupported_schema_version",
@@ -72,6 +90,13 @@ def validate_animation(anim: AnimationSpec) -> list[ValidationIssue]:
     elif not templated and anim.figure is None:
         out.add("/figure", "figure_missing", "this timeline animates a figure; add 'figure'.")
     if anim.figure is not None:
+        n_ann = len(anim.figure.annotations) if isinstance(anim.figure.annotations, list) else 0
+        if n_ann > MAX_ANIMATION_ANNOTATIONS:
+            out.add("/figure/annotations", "too_many_annotations",
+                    f"the figure has {n_ann} annotations; an animation draws every annotation "
+                    f"in every state and accepts at most {MAX_ANIMATION_ANNOTATIONS}. Keep the "
+                    "ones the animation needs.")
+            return list(out)
         for i in validate(anim.figure):
             out.add("/figure" + i.path, i.code, i.message, i.severity)
     if out.errors:
@@ -191,7 +216,42 @@ def _check_template_target(anim: AnimationSpec, tl: ParameterSweep, out: _Issues
                 f"{tl.parameter!r} is not a sweepable parameter of {t.name!r}: use a 'number' "
                 "parameter, or 'name.key' of a 'number_map' parameter (e.g. 'constants.k').")
         return False
-    _check_every_value(tpl, t, tl, sweep_values(tl, anim.fps), out)
+    values = sweep_values(tl, anim.fps)
+    # (1) One full check, at the first value: everything that does not
+    # depend on the swept value (and the SymPy dry-run) is found here once.
+    seen = {values[0]: tpl.check(t.data, **template_params(t, tl.parameter, values[0]))}
+    if any(i.severity == "error" for i in seen[values[0]]):
+        other = next((v for v in reversed(values) if v != values[0]), None)
+        if other is not None:
+            seen[other] = tpl.check(t.data, **template_params(t, tl.parameter, other))
+        _report(tl, values, seen, out, complete=other is None)  # one distinct value: all
+        return False
+    # (2) The render-work estimate before any per-value work: the cheapest
+    # adapter at zero frame area, so no request could make it acceptable.
+    work_issue = _work_issue(anim, len(values))
+    if work_issue is not None:
+        out.append(work_issue)
+        return False
+    # (3) Every value: the template's fast path where it has one (no SymPy
+    # per value), plus full checks at the extremes and at 0, where
+    # value-dependent refusals concentrate.
+    hook = getattr(tpl, "sweep_checker", None)
+    fast = hook(t.data, template_params(t, tl.parameter, values[0]), tl.parameter) \
+        if callable(hook) else None
+    for v in {min(values), max(values), *(v for v in values if v == 0)} - set(seen):
+        seen[v] = tpl.check(t.data, **template_params(t, tl.parameter, v))
+    for v in values:
+        if v in seen:
+            continue
+        params = template_params(t, tl.parameter, v)
+        if fast is not None:
+            try:
+                seen[v] = fast(params)
+                continue
+            except Exception:  # noqa: BLE001 - the fast path gave up: check in full
+                pass
+        seen[v] = tpl.check(t.data, **params)
+    _report(tl, values, seen, out, complete=True)
     if out.errors:
         return False
     params = template_params(t, tl.parameter, 0.0)
@@ -203,23 +263,43 @@ def _check_template_target(anim: AnimationSpec, tl: ParameterSweep, out: _Issues
     return True
 
 
-def _check_every_value(tpl, t: TemplateTarget, tl: ParameterSweep, values: list[float],
-                       out: _Issues) -> None:
-    """Run the template's own check at every sweep value (at most MAX_FRAMES,
-    guarded before this is called; repeated values are checked once).
+def _work_issue(anim: AnimationSpec, n_states: int) -> ValidationIssue | None:
+    from .cost import MAX_RENDER_WORK_US, min_work_us
 
-    An issue raised identically at every value, not on the swept parameter,
-    does not depend on the swept value and is reported once under
-    ``/timeline/target``. Any other issue is reported at the first value
-    raising it, ``/timeline/values/<i>`` (or
+    work = min_work_us(anim, n_states, frame_total(anim, n_states))
+    if work <= MAX_RENDER_WORK_US:
+        return None
+    return ValidationIssue("", "animation_too_expensive",
+                           f"{n_states} states would take at least {work / 1e6:.0f} s to render "
+                           "with any adapter at any frame size (estimated from the number of "
+                           "states, the template's grid and expressions); at most "
+                           f"{MAX_RENDER_WORK_US / 1e6:g} s is accepted. Use fewer values, a "
+                           "smaller grid or simpler expressions.")
+
+
+def _report(tl: ParameterSweep, values: list[float], seen: dict[float, list[ValidationIssue]],
+            out: _Issues, complete: bool) -> None:
+    """Report the template issues found at the checked values (``seen``).
+
+    ``complete``: every value was checked. Then an issue raised identically
+    at every value, not on the swept parameter, does not depend on the swept
+    value and is reported once under ``/timeline/target``; any other issue
+    is reported at the first value raising it, ``/timeline/values/<i>`` (or
     ``/timeline`` for an interpolated sweep, with the state index), naming
-    the template path and how many other values fail the same way."""
+    the template path and how many other values fail the same way.
+
+    Otherwise the first value failed and only it and the last distinct
+    value were checked: an issue identical at both, not on the swept
+    parameter, is reported as value-independent, any other at the first
+    value, and the rest of the sweep is checked once it is fixed."""
     swept_path = "/params/" + tl.parameter.partition(".")[0]
-    seen: dict[float, list[ValidationIssue]] = {}
+    if complete:
+        checked = list(enumerate(values))
+    else:
+        last = max(k for k, v in enumerate(values) if v != values[0])
+        checked = [(0, values[0]), (last, values[last])]
     hits: dict[tuple[str, str, str], list[tuple[int, float, str]]] = {}
-    for k, v in enumerate(values):
-        if v not in seen:
-            seen[v] = tpl.check(t.data, **template_params(t, tl.parameter, v))
+    for k, v in checked:
         for i in seen[v]:
             hits.setdefault((i.path, i.code, i.severity), []).append((k, v, i.message))
     for (path, code, severity), where in hits.items():
@@ -227,10 +307,13 @@ def _check_every_value(tpl, t: TemplateTarget, tl: ParameterSweep, values: list[
         target = "/timeline/target" + path
         n_at = len({j for j, *_ in where})
         swept = path == swept_path or path.startswith(swept_path + "/")
-        if n_at == len(values) and not swept and len({m for *_, m in where}) == 1:
+        if n_at == len(checked) and not swept and len({m for *_, m in where}) == 1:
             out.add(target, code, message, severity)  # independent of the swept value
             continue
-        others = f" ({n_at - 1} other value(s) fail the same way)" if n_at > 1 else ""
+        if not complete:
+            others = " (the other values are checked once this is fixed)"
+        else:
+            others = f" ({n_at - 1} other value(s) fail the same way)" if n_at > 1 else ""
         at = f"/timeline/values/{k}" if tl.values is not None else "/timeline"
         out.add(at, code, f"at {tl.parameter} = {v:g} (state {k}), {target}: {message}{others}",
                 severity)
