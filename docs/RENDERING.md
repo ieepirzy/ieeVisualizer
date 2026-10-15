@@ -41,11 +41,12 @@ artifact.artifact_id, artifact.variant("png").sha256
 | `format` | `"png"` | `png`, `svg`, `pdf` (matplotlib); `html` is a known format no current adapter supports |
 | `width`, `height`, `units` | `6.4`, `4.8`, `"in"` | `units="px"` converts with `dpi`; a PNG measures exactly `request.size_px` |
 | `dpi` | `100` | |
-| `theme` | `None` | overrides `spec.theme`; matplotlib themes: `default`, `minimal`, `presentation` |
+| `theme` | `None` | overrides `spec.theme`; a registered theme `name` or `name@version` ([THEMES.md](THEMES.md)): `default`, `minimal`, `presentation`, `muutto365-admin-dark`, `muutto365-report-light` |
 | `adapter` | `None` | pin an adapter by name |
 
 `RenderResult` has `content`, `format`, `media_type`, `adapter_name`,
-`adapter_version`, `warnings`, `request`, plus `sha256` and `size_bytes`.
+`adapter_version`, `warnings`, `request`, `theme` (the resolved theme's
+name, version and hash), plus `sha256` and `size_bytes`.
 
 ## What the matplotlib adapter draws
 
@@ -92,10 +93,33 @@ column reach it unvalidated).
 **Bars.** Bar groups of one layer (`series`/categorical `color`) sit side by
 side in each slot. Bar layers of the same orientation that share a category
 (or position) are dodged the same way, in layer order, instead of being
-drawn over each other; a bar layer that shares no position with another is
-laid out exactly as a single layer. Every slot with no bar -- a null value,
-or a (category, group) or (category, layer) combination with no row -- is
-labelled "no data", so an absent bar never reads as 0.
+drawn over each other. Sharing is followed through: layers linked by a
+shared position, directly or through another layer (A shares a category
+with B, B one with C), form one dodge group, which takes one slot per layer
+(and group) at every position of the group, so its bars never overlap. A
+bar layer that shares no position with another is laid out exactly as a
+single layer, with no slot at other layers' positions. A layer with an
+explicit `bar_width` / `bar_offset` style is placed where those say
+(fractions of the category slot) and is left out of the dodging; when its
+bars then cover bars of dodged layers, a `bars_overlap` warning names the
+layers (explicitly placed layers may overlap each other, e.g. a narrow
+target bar inside a wide one). Horizontal dodged bars are laid out upwards
+(the first layer lowest in each category), so their legend entries are
+listed in reverse layer order, top to bottom as the bars are. Every slot
+with no bar -- a null value, or a (category, group) or (category, layer)
+combination with no row within a dodge group -- is labelled "no data", so
+an absent bar never reads as 0. The note starts at the zero line and reads
+away from it on the positive side, or on the negative side when only that
+side has room inside the axes (an all-negative value axis, whose zero line
+is the plot's edge), so it never lands outside the plot or on the title.
+When `axes.<ch>.limits` exclude zero (e.g. `[50, 100]`) or the value axis is
+logarithmic, it starts at the plot edge nearest to zero instead. In `polar`
+each note is drawn along its slot's angle, outwards from beside the centre
+inside the slot's empty wedge; a note that does not fit there (narrow wedge,
+small figure, or over a radial tick label) is left out and the slot listed
+in a `no_data_unplaceable` warning. Bar value labels (`value_labels`) are
+arranged after layout; see [THEMES.md](THEMES.md). They are drawn on 2D
+cartesian bars only: in `polar` they are not drawn (`style_key_ignored`).
 
 **Roles.** `forecast` is always distinguishable, whatever style it asks for:
 a forecast line uses the requested dash pattern (`solid` or unspecified
@@ -105,11 +129,14 @@ gap doubled, a pattern no observed `linestyle` produces, and is drawn at
 and the legend label says "forecast". So a dotted forecast bound never looks
 like a dotted observed bound. `reference` is lighter and thinner.
 
-**Style keys** `color`, `colormap`, `linewidth`, `linestyle`, `marker`,
-`opacity`. Unknown keys (`unknown_style_key`), keys the mark does not use
+**Style keys** `color`, `colormap` (a matplotlib name, or `sequential` /
+`diverging` for the theme's maps), `linewidth`, `linestyle`, `marker`,
+`opacity`; bars also `value_labels`, `bar_width`, `bar_offset`
+([THEMES.md](THEMES.md)). Unknown keys (`unknown_style_key`), keys the mark does not use
 (`style_key_ignored`) and invalid values (`invalid_style_value`) are warnings.
 
-**Many series.** Series take colours from matplotlib's 10-colour cycle.
+**Many series.** Series take colours from the theme's palette (matplotlib's
+10-colour cycle under `default`).
 When it wraps, a `colour_cycle_wrapped` warning is given once, and observed
 lines / scatter points of later rounds get a dashed, dotted, dash-dot
 linestyle or a different marker (unless the style chose one) so no two
@@ -136,7 +163,11 @@ wide as tall, or when a right-hand legend would take more than 40% of the
 width. Constrained layout makes room for it, so neither the legend nor tick
 or axis labels are clipped. The choice is computed from the figure's own
 geometry, so it is deterministic; a figure whose legend stays inside renders
-byte-identically to before this rule.
+byte-identically to before this rule. Bar value labels (`value_labels`) and
+"no data" notes are annotation text, so they count as data here; the value
+axis is fitted to the labels before the legend is measured (both passes run
+in the layout engine on every draw), so an `"auto"` legend that would cover
+a value label is moved outside instead.
 
 **Functions.** Expressions are checked before SymPy sees them: only numbers,
 `+ - * / ^ ( )`, the mark's variables and parameters, and an allow-list of
@@ -197,6 +228,8 @@ tests check that both routes draw the same data.
 `export(spec, formats, writer, *, resolver=None, clock=None, request=None,
 name=None, registry=None)` renders every format first, then writes
 `figure.<fmt>`, `spec.json` (canonical spec; its SHA-256 is the spec hash),
+`theme.json` (the resolved theme, so the figure can be re-rendered after the
+registered theme changes),
 `spec.resolved.json` when references were resolved (so the figure can be
 re-rendered after the source changes), and `manifest.json` last. A failure
 writes nothing.
@@ -204,15 +237,17 @@ writes nothing.
 The `VisualizationArtifact` manifest records `artifact_id`, `schema_version`,
 `spec_hash`, per-dataset content hash, provenance and column meaning (unit,
 dtype, aggregation, denominator), each variant's format, media type, SHA-256,
-byte size, adapter name/version, request and warnings, library versions
+byte size, adapter name/version, request and warnings, the theme
+(`name`, `version`, `sha256`, `file`), library versions
 (ieeVisualizer, matplotlib, numpy, sympy, python) and `created_at` (from
 `clock`). Two exports of the same spec differ only in `created_at`.
 
 `artifact_id` is `<name or "viz">-<16 hex>` over the spec hash, the
 content hash of every dataset drawn, the list of formats (in order) and the
-render request (width, height, units, dpi, theme, adapter), so different
-data behind the same reference, or the same spec at another size, dpi,
-theme or set of formats, gives a different id. It never depends on a
+render request (width, height, units, dpi, theme, adapter) and the resolved
+theme's record (name, version, hash), so different data behind the same
+reference, or the same spec at another size, dpi, theme, theme version or
+set of formats, gives a different id. It never depends on a
 storage path or URL.
 
 Writers implement `write(artifact_id, name, content, media_type) -> str`

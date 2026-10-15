@@ -8,7 +8,7 @@ expressions. See ``docs/TEMPLATES.md``.
 
     >>> from ieeVisualizer import templates
     >>> [t["name"] for t in templates.list_templates()]
-    ['timeseries', 'vector_field_2d']
+    ['bar_comparison', 'funnel', 'timeseries', 'vector_field_2d']
     >>> spec = templates.get("vector_field_2d").build(u="-y", v="x", grid=5)
 """
 
@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..spec import FigureSpec
+from .bar_comparison import BarComparisonTemplate
 from .base import (
     PARAM_TYPES,
     ColumnRequirement,
@@ -25,6 +26,7 @@ from .base import (
     TemplateInputError,
     TemplateRegistryError,
 )
+from .funnel import FunnelTemplate
 from .registry import TemplateRegistry, parse_semver
 from .timeseries import TimeseriesTemplate
 from .vector_field import VectorField2DTemplate
@@ -34,6 +36,8 @@ def _builtin_registry() -> TemplateRegistry:
     reg = TemplateRegistry()
     reg.register(TimeseriesTemplate())
     reg.register(VectorField2DTemplate())
+    reg.register(BarComparisonTemplate())
+    reg.register(FunnelTemplate())
     return reg
 
 
@@ -70,8 +74,10 @@ def build(name: str, data: Any = None, params: dict[str, Any] | None = None,
 
 __all__ = [
     "PARAM_TYPES",
+    "BarComparisonTemplate",
     "ColumnRequirement",
     "ComponentTemplate",
+    "FunnelTemplate",
     "Parameter",
     "TemplateInputError",
     "TemplateRegistry",
