@@ -330,3 +330,37 @@ def test_timezone_mixing_refused_and_z_suffix_accepted():
     # copied; check() must report that as an issue, not raise.
     assert errors(TS.check(data, time_column="t", value_columns="y")) == [
         ("/data/columns/t/values", "invalid_data")]
+
+
+def test_bounds_are_forecast_styled_and_paired_with_their_value_series():
+    lo = [90.0, None, 110.0, 120.0, 128.0, 135.0]
+    hi = [110.0, None, 130.0, 140.0, 152.0, 165.0]
+    data = revenue(lo=lo, hi=hi, region=["N", "S", "N", "S", "N", "S"])
+    data.columns["lo"].unit = data.columns["hi"].unit = "EUR"
+    spec = TS.build(data, time_column="week", value_columns="revenue", series_column="region",
+                    forecast_from="2026-09-28", lower_column="lo", upper_column="hi")
+    by = [(m.data, m.role, m.encoding["y"].field, m.name, m.style.get("color_of"))
+          for m in spec.layers]
+    rng = "revenue range (lo to hi)"
+    assert by == [
+        ("observed", "observed", "revenue", "revenue", None),
+        ("observed", "observed", "lo", rng, "revenue"),
+        ("observed", "observed", "hi", rng, "revenue"),
+        ("forecast", "forecast", "revenue", "revenue (forecast)", None),
+        ("forecast", "forecast", "lo", rng, "revenue (forecast)"),
+        ("forecast", "forecast", "hi", rng, "revenue (forecast)"),
+    ]
+    # every color_of names exactly one other layer, which draws the same series
+    names = [m.name for m in spec.layers]
+    for m in spec.layers:
+        ref = m.style.get("color_of")
+        if ref is not None:
+            assert names.count(ref) == 1
+            target = spec.layers[names.index(ref)]
+            assert (target.data, target.role) == (m.data, m.role)
+            assert target.encoding["series"].field == m.encoding["series"].field
+    # forecast bounds are forecast-role layers; observed bounds are not
+    assert {m.role for m in spec.layers if m.encoding["y"].field in ("lo", "hi")
+            and m.data == "forecast"} == {"forecast"}
+    assert [b["role"] for b in spec.metadata["template"]["bands"]] == ["observed", "forecast"]
+    assert validate(spec) == []

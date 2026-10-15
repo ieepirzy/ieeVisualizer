@@ -90,7 +90,12 @@ format).
   contradicts a declared one. Nothing is converted.
 - **Uncertainty:** only from caller-supplied `lower_column`/`upper_column`,
   never computed. Spec 1.0 has no band mark, so bounds are two dotted line
-  layers, paired in `metadata["template"]["bands"]`.
+  layers, paired in `metadata["template"]["bands"]`. Bounds of forecast rows
+  are `role="forecast"` layers (drawn as forecasts). Each bound layer has the
+  style hint `color_of: "<value layer name>"` so the renderer draws it in its
+  value series' colour, and both bounds of a segment are named
+  `"<value> range (<lower> to <upper>)"`, which the matplotlib renderer shows
+  as one legend entry per series.
 - **Nulls:** a null value stays null (a gap). A null time, series or role is
   an error because the row cannot be placed. Rows are ordered by time.
 - `target` adds a horizontal reference line; axis labels default to the
