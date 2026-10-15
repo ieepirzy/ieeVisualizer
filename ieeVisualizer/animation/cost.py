@@ -23,6 +23,12 @@ machine (a shared 4-core Linux container, Matplotlib Agg, GIF output,
   node of ``u``/``v``, per ``Min``/``Max`` argument and nested pair, per grid
   point.
 
+Manim (``manim_work_us``) redraws every output frame and maps every curve
+point through ``Axes.c2p`` in Python: ``MANIM_FRAME_US`` 100 ms per output
+frame (70 measured), ``MANIM_LAYER_US`` 2 ms per layer (1.1),
+``MANIM_SAMPLE_US`` 50 us per function sample (46), ``MANIM_ARROW_US`` 5 ms
+per vector-field arrow (2.7-5.6).
+
 A frame column state counts only the rows it shows; a template sweep is
 estimated before the template runs (2 layers, its data rows and grid
 points). ``MAX_RENDER_WORK_US`` = 60 s. ``tests/animation/test_anim_cost_calibration.py``
@@ -57,6 +63,11 @@ TEMPLATE_NODE_US = 700
 TEMPLATE_MINMAX_ARG_US = 10_000
 TEMPLATE_MINMAX_NEST_US = 1_000
 TEMPLATE_GRID_US = 35
+
+MANIM_FRAME_US = 100_000
+MANIM_LAYER_US = 2_000
+MANIM_SAMPLE_US = 50
+MANIM_ARROW_US = 5_000
 
 
 def _point_us(spec: FigureSpec, mark_type: str) -> float:
@@ -217,9 +228,10 @@ def template_build_us(t: TemplateTarget) -> float:
 
 
 def min_work_us(anim: AnimationSpec, n_states: int, n_frames: int) -> float:
-    """The estimate at zero frame area: a lower bound for any request (used
-    by validation, which does not know the request)."""
-    return matplotlib_work_us(anim, (0, 0), n_states, anim.figure)
+    """The cheaper cost model's estimate at zero frame area: a lower bound for
+    any adapter and request (used by validation, which knows neither)."""
+    return min(matplotlib_work_us(anim, (0, 0), n_states, anim.figure),
+               manim_work_us(anim, n_frames))
 
 
 def matplotlib_work_us(anim: AnimationSpec, size_px: tuple[int, int], n_states: int,
@@ -253,3 +265,22 @@ def matplotlib_work_us(anim: AnimationSpec, size_px: tuple[int, int], n_states: 
         else:
             per_state += fixed + per_row * _rows(figure.datasets.get(m.data))
     return total + n_states * per_state
+
+
+def manim_work_us(anim: AnimationSpec, n_frames: int) -> float:
+    """Estimated Manim render time of ``n_frames`` output frames."""
+    per_frame = float(MANIM_FRAME_US)
+    tl = anim.timeline
+    if anim.figure is not None:
+        for m in anim.figure.layers:
+            per_frame += MANIM_LAYER_US
+            if isinstance(m, FunctionMark) and m.expression is not None:
+                per_frame += MANIM_SAMPLE_US * _function_points(anim.figure, m)
+    elif isinstance(tl, ParameterSweep) and isinstance(tl.target, TemplateTarget):
+        rows, grid = _template_points(tl.target)
+        per_frame += MANIM_LAYER_US + MANIM_ARROW_US * (rows + grid)
+        # the expressions are parsed and lambdified once for the whole clip
+        once = sum(_expression_us(tl.target.params.get(k)) for k in ("u", "v")) \
+            if isinstance(tl.target.params, dict) else 0.0
+        return once + n_frames * per_frame
+    return n_frames * per_frame

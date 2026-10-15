@@ -176,7 +176,7 @@ def enforce_limits(anim: AnimationSpec, request: AnimationRequest, n_states: int
     (``animation_too_expensive``, an early refusal only: the deadline bounds
     time). ``figure``: the resolved base figure (``None`` for a template
     sweep; default ``anim.figure``). Returns the output frame count."""
-    from .cost import MAX_RENDER_WORK_US, matplotlib_work_us
+    from .cost import MAX_RENDER_WORK_US, manim_work_us, matplotlib_work_us
     from .limits import frame_limit_issues, frame_total
 
     errors = [i for i in frame_limit_issues(anim, n_states) if i.severity == "error"]
@@ -194,9 +194,12 @@ def enforce_limits(anim: AnimationSpec, request: AnimationRequest, n_states: int
                                      f"{n_frames} frames of {w}x{h} px = {w * h * n_frames} "
                                      f"pixels exceed {MAX_TOTAL_PIXELS}; lower the size, dpi, "
                                      "fps, number of values or hold frames.")])
-    work = matplotlib_work_us(anim, (w, h), n_states,
-                              figure if figure is not None else anim.figure, index)
-    unit = f"{n_states} states"
+    if cost_model == "manim":
+        work, unit = manim_work_us(anim, n_frames), f"{n_frames} output frames"
+    else:
+        work = matplotlib_work_us(anim, (w, h), n_states,
+                                  figure if figure is not None else anim.figure, index)
+        unit = f"{n_states} states"
     if work > MAX_RENDER_WORK_US:
         raise AnimationError([_issue("", "animation_too_expensive",
                                      f"{unit} would take an estimated {work / 1e6:.0f} s to render "
@@ -297,13 +300,17 @@ _DEFAULT: AnimationRegistry | None = None
 
 
 def default_animation_registry() -> AnimationRegistry:
-    """The registry :func:`render_animation` uses: the Matplotlib adapter."""
+    """Matplotlib first; the Manim adapter only if ``import manim`` succeeds
+    (checked once, on first use; importing this package never imports manim)."""
     global _DEFAULT
     if _DEFAULT is None:
+        from .manim_adapter import ManimAdapter, manim_available
         from .mpl import MatplotlibAnimationAdapter
 
         reg = AnimationRegistry()
         reg.register(MatplotlibAnimationAdapter())
+        if manim_available():
+            reg.register(ManimAdapter())
         _DEFAULT = reg
     return _DEFAULT
 

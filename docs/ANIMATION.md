@@ -217,6 +217,37 @@ warnings, library versions and `created_at`.
 `pyproject.toml`; CI runs the same command). They render real animations to
 calibrate the cost estimate; run them with `python -m pytest -m slow`.
 
+## Manim adapter (optional, `pip install -e ".[manim]"`)
+
+Verified here with manim 0.22.0 (Cairo renderer, Python 3.13; CI does not
+install it, its render tests are skipped there). Registered only if `import
+manim` succeeds and **never selected automatically** (`auto_select=False`):
+its frames do not look like the Matplotlib frames or a still, so it is used
+only when named (`AnimationRequest(adapter="manim")`). Supported, nothing else:
+
+* a `parameter_sweep` of a symbolic one-variable `function` mark in
+  `cartesian2d` (every layer such a mark, no annotations, linear axes): the
+  curves morph on Manim `Axes`. Only the target layer's parameter is swept;
+  another layer's parameter of the same name keeps its value. A curve is
+  cut where it leaves the axis range (never clamped onto the edge); a log
+  axis is unmet, not drawn linear;
+* a `parameter_sweep` of `vector_field_2d` in expression mode: an
+  `ArrowVectorField` on the template's grid with ONE length scale for the
+  whole clip (largest magnitude = 0.9 grid cells).
+
+Everything else is reported by `ManimAdapter().unmet(...)`, never
+approximated. Labels use `Text` (no LaTeX). The background and text colours
+come from the render's theme (`unknown_theme` warning otherwise). Its cost
+model is per output frame (`manim_work_us`); the render runs under the
+deadline, checked before every frame Manim draws and while the clip is
+decoded. Manim's config is process-global, so renders are serialized
+behind `RENDER_LOCK` (concurrent renders used to get another render's size,
+lose files or print progress bars). One `play()` covers every output frame;
+the clip is written as MP4 by Manim and decoded one frame at a time (GIF
+through the same Pillow encoder; odd sizes rendered one pixel larger and
+cropped back); the poster is the decoded poster frame, so an export plans and
+builds nothing again for it.
+
 ## Decisions and gaps
 
 * A declarative timeline grammar (sweep / frame column); no hook for
