@@ -1,0 +1,12 @@
+{
+  "name": "ieevisualizer-skills",
+  "version": "0.1.0",
+  "description": "Agent skills for honest, decision-useful figures and reports: when numbers mislead, chart choice, perception, uncertainty, ML results, statistical claims, chart text, editorial voice, numbers style, provenance, report structure, red-team review, and using ieeVisualizer for figures and founder briefings.",
+  "author": {
+    "name": "Ilari Pirkkalainen"
+  },
+  "homepage": "https://github.com/ieepirzy/ieeVisualizer/tree/main/skills",
+  "repository": "https://github.com/ieepirzy/ieeVisualizer",
+  "license": "CC-BY-4.0 AND MIT",
+  "keywords": ["data-visualization", "reporting", "statistics", "uncertainty", "data-journalism", "ieeVisualizer"]
+}
