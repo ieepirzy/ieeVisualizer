@@ -39,7 +39,8 @@ def test_gallery_manifests_match_the_files_written(tmp_path):
     clock = lambda: dt.datetime(2026, 10, 14, 6, 0, tzinfo=dt.timezone.utc)  # noqa: E731
     artifacts = gallery.main(tmp_path, clock=clock)
     manifests = sorted(tmp_path.glob("*.manifest.json"))
-    assert len(manifests) == len(artifacts) == len(gallery.all_specs())
+    assert len(artifacts) == len(gallery.all_specs())
+    assert len(manifests) == len(artifacts) + len(gallery.VIEWS)
     for name, artifact in artifacts.items():
         manifest = json.loads(gallery.output_path(tmp_path, name, "manifest.json").read_text())
         assert manifest["artifact_id"] == artifact.artifact_id
@@ -59,3 +60,25 @@ def test_gallery_manifests_match_the_files_written(tmp_path):
             assert spec_hash(from_json(text)) == manifest["spec_hash"]
         png = gallery.output_path(tmp_path, name, "figure.png").read_bytes()
         assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_gallery_view_manifests_match_the_files_written(tmp_path):
+    gallery = _load_gallery()
+    clock = lambda: dt.datetime(2026, 10, 14, 6, 0, tzinfo=dt.timezone.utc)  # noqa: E731
+    views = gallery.export_views(tmp_path, clock)
+    assert set(views) == set(gallery.VIEWS)
+    for name, artifact in views.items():
+        manifest = json.loads(gallery.output_path(tmp_path, name, "manifest.json").read_text())
+        assert manifest["kind"] == "view"
+        assert manifest["artifact_id"] == artifact.artifact_id
+        assert sorted(v["format"] for v in manifest["variants"]) == ["html", "png", "svg"]
+        listed = [v["file"] for v in manifest["variants"]] + [manifest["view_file"]]
+        listed += [f["spec_file"] for f in manifest["figures"]]
+        for entry in listed:
+            path = gallery.output_path(tmp_path, name, entry["name"])
+            assert _sha(path) == entry["sha256"], path
+    briefing = json.loads(gallery.output_path(tmp_path, "view-weekly-briefing",
+                                              "manifest.json").read_text())
+    assert [f["pointer"] for f in briefing["figures"]] == ["/figures/trend"]
+    assert briefing["figures"][0]["datasets"]["observed"]["provenance"]["source"] == \
+        "ieeVisualizer/view/examples.py"
