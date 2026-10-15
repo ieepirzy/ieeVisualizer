@@ -14,12 +14,14 @@ from ..render.registry import AdapterRegistry, select_adapter
 from ..spec import DatasetRef, DataSnapshot, FigureSpec, spec_hash, to_json
 from ..spec._common import sha256_of
 from ..spec.data import dataset_to_dict
+from ..themes import resolve_for_render
 from .manifest import DatasetRecord, FileEntry, RenderVariant, VisualizationArtifact
 from .writers import ArtifactWriter, check_name
 
 MANIFEST_NAME = "manifest.json"
 SPEC_NAME = "spec.json"
 RESOLVED_SPEC_NAME = "spec.resolved.json"
+THEME_NAME = "theme.json"
 
 
 def _sha(content: bytes) -> str:
@@ -45,15 +47,19 @@ def library_versions() -> dict[str, str]:
 
 def artifact_id_for(spec_digest: str, dataset_hashes: dict[str, str | None],
                     name: str | None = None, *, formats: list[str] | None = None,
-                    request: dict | None = None) -> str:
+                    request: dict | None = None, theme: dict | None = None) -> str:
     """Content-derived id: ``<name or 'viz'>-<16 hex>`` over the spec hash,
-    the hash of every dataset drawn, the exported formats (in order) and the
+    the hash of every dataset drawn, the exported formats (in order), the
     render request (size, units, dpi, theme, adapter; its per-variant
-    ``format`` is left out). Two exports that would store different files
-    therefore never share an id."""
+    ``format`` is left out) and the resolved theme's record (name, version,
+    content hash), so a new version of a theme gives a new id. Two exports
+    that would store different files therefore never share an id."""
     req = {k: v for k, v in (request or {}).items() if k != "format"}
-    digest = sha256_of({"spec_hash": spec_digest, "datasets": dataset_hashes,
-                        "formats": list(formats or []), "request": req})
+    material = {"spec_hash": spec_digest, "datasets": dataset_hashes,
+                "formats": list(formats or []), "request": req}
+    if theme is not None:
+        material["theme"] = dict(theme)
+    digest = sha256_of(material)
     prefix = check_name(name, "artifact name") if name is not None else "viz"
     return f"{prefix}-{digest.split(':', 1)[1][:16]}"
 
@@ -117,8 +123,12 @@ def export(
     prepared = prepare(spec, resolver)
     records = _records(spec, prepared.resolved)
     digest = spec_hash(spec)
+    # The theme is resolved the way the adapter resolves it (an unknown name
+    # falls back to 'default'); its full definition is stored as theme.json
+    # so the figure can be re-rendered after the registered theme changes.
+    theme, _ = resolve_for_render(base.theme if base.theme is not None else spec.theme)
     artifact_id = artifact_id_for(digest, {k: r.content_hash for k, r in records.items()}, name,
-                                  formats=fmts, request=base.to_dict())
+                                  formats=fmts, request=base.to_dict(), theme=theme.record())
 
     outputs: list[tuple[str, bytes, str, RenderVariant]] = []
     for fmt in fmts:
@@ -132,7 +142,9 @@ def export(
             request=req.to_dict(), warnings=[w.to_dict() for w in result.warnings])))
 
     spec_bytes = to_json(spec).encode("utf-8")
-    files = [(SPEC_NAME, spec_bytes, "application/json")]
+    theme_bytes = (theme.to_json() + "\n").encode("utf-8")
+    files = [(SPEC_NAME, spec_bytes, "application/json"),
+             (THEME_NAME, theme_bytes, "application/json")]
     resolved_entry = None
     if prepared.resolved:
         rbytes = to_json(prepared.spec).encode("utf-8")
@@ -153,6 +165,8 @@ def export(
         title=spec.title,
         spec_metadata=dict(spec.metadata),
         resolved_spec_file=resolved_entry,
+        theme=dict(theme.record(), file=_file(THEME_NAME, theme_bytes,
+                                              "application/json").to_dict()),
     )
     blobs = [(f, c, mt) for f, c, mt, _ in outputs] + files
     blobs.append((MANIFEST_NAME, (artifact.to_json() + "\n").encode("utf-8"),

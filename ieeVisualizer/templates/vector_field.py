@@ -40,6 +40,9 @@ SymPy evaluates it (exponents at most 1000 in magnitude, no number beyond
 about 10^+-330, bounded size). A violation is an ``expression_too_large``
 issue from ``check()`` and a :class:`TemplateInputError` from ``build()``,
 raised immediately.
+An expression with a part that evaluates to an undefined or infinite
+constant (``x/0``, ``log(0)``, ``tan(pi/2)``) is an ``invalid_expression``
+issue the same way; ``check()`` never raises for any expression.
 """
 
 from __future__ import annotations
@@ -48,7 +51,12 @@ import ast
 import keyword
 from typing import Any
 
-from .._safe_expr import UnsafeExpression, build_bounded, parse_unevaluated
+from .._safe_expr import (
+    UndefinedExpression,
+    UnsafeExpression,
+    build_bounded,
+    parse_unevaluated,
+)
 from ..spec import Axis, Column, DataSnapshot, FigureSpec, Provenance, QuiverMark
 from ..spec._common import suggest
 from .base import (
@@ -340,6 +348,10 @@ class VectorField2DTemplate(ComponentTemplate):
                              f"{key} = {p[key]!r} cannot be evaluated safely: {err} Simplify "
                              "it or use smaller constants.")
                 continue
+            except UndefinedExpression as err:
+                issues.error(param_path(key), "invalid_expression",
+                             f"{key} = {p[key]!r} cannot be sampled: {err}")
+                continue
             except Exception as err:  # untrusted input: any SymPy failure is reported
                 issues.error(param_path(key), "invalid_expression",
                              f"SymPy cannot interpret {p[key]!r}: {err}")
@@ -358,7 +370,13 @@ class VectorField2DTemplate(ComponentTemplate):
         gx, gy = np.meshgrid(xs, ys, indexing="xy")
         values = {}
         for key, e in exprs.items():
-            fn = sympy.lambdify((ns["x"], ns["y"]), e, modules="numpy")
+            try:
+                fn = sympy.lambdify((ns["x"], ns["y"]), e, modules="numpy")
+            except Exception as err:  # noqa: BLE001 - untrusted input: reported, never raised
+                issues.error(param_path(key), "invalid_expression",
+                             f"{key} = {p[key]!r} cannot be converted to a numeric function: "
+                             f"{type(err).__name__}: {err}")
+                continue
             with np.errstate(all="ignore"):
                 raw = np.broadcast_to(np.asarray(fn(gx, gy)), gx.shape)
             if np.iscomplexobj(raw):  # e.g. a fractional power of a negative number
@@ -375,6 +393,8 @@ class VectorField2DTemplate(ComponentTemplate):
                             "grid points; those samples are stored as null (no arrow), not as "
                             "a number.")
             values[key] = np.where(bad, np.nan, arr).tolist()  # nan -> null in Column
+        if set(values) != set(exprs):
+            return DataSnapshot(), {}
 
         vu = p["vector_unit"]
         field = DataSnapshot(

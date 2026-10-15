@@ -20,6 +20,7 @@ member, with no extra or missing members.
 from __future__ import annotations
 
 import copy
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -29,6 +30,7 @@ from .serialize import from_dict, to_dict
 from .validate import validate
 
 OPS = ("add", "replace", "remove", "test")
+_INDEX_RE = re.compile(r"0|[1-9][0-9]*")
 
 
 def _parse_pointer(path: Any, where: str) -> list[str]:
@@ -66,8 +68,12 @@ def _child(cur: Any, key: str, at: str, where: str) -> Any:
 def _index(lst: list[Any], key: str, at: str, where: str, allow_end: bool) -> int:
     if key == "-" and allow_end:
         return len(lst)
-    if not key.isdigit() or (len(key) > 1 and key.startswith("0")):
-        raise _err(where, "invalid_pointer", f"{at}: {key!r} is not an array index.")
+    # RFC 6901 array index: ASCII digits, no leading zero. (str.isdigit would
+    # also accept '²' or '١', which int() then rejects or misreads.)
+    if _INDEX_RE.fullmatch(key) is None:
+        raise _err(where, "invalid_pointer",
+                   f"{at}: {key!r} is not an array index; use 0, 1, 2, ... (ASCII digits, "
+                   "no leading zeros)" + (" or '-' to append." if allow_end else "."))
     idx = int(key)
     limit = len(lst) if allow_end else len(lst) - 1
     if idx > limit:

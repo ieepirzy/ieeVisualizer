@@ -2,9 +2,10 @@
 
 :func:`requirements_for` derives what a spec + request *actually* need
 (coordinate system, mark types, annotation types, output format, 3D, vector
-export, number of points). :func:`select_adapter` returns the first registered
-adapter that meets all of them, or raises :class:`CapabilityError` listing the
-requirements and, per adapter, the ones it does not meet. Nothing is
+export, number of points, largest histogram bin count). :func:`select_adapter`
+returns the first registered adapter that meets all of them, or raises
+:class:`CapabilityError` listing the requirements and, per adapter, the ones
+it does not meet. Nothing is
 downgraded silently: an adapter that cannot draw a mark is not chosen.
 """
 
@@ -13,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-from ..spec import DataSnapshot, FigureSpec, FunctionMark
+from ..spec import DataSnapshot, FigureSpec, FunctionMark, HistogramMark
 from .base import (
     VECTOR_FORMATS,
     Capabilities,
@@ -40,6 +41,9 @@ class Requirements:
     points: int
     #: Datasets whose size is unknown until resolved (references).
     unknown_size: tuple[str, ...] = field(default_factory=tuple)
+    #: Largest bin count of any histogram layer (``bins``, or the number of
+    #: intervals in ``bin_edges``); 0 without histograms.
+    bins: int = 0
 
     def describe(self) -> list[str]:
         out = [
@@ -57,6 +61,8 @@ class Requirements:
         out.append(f"{self.points} data points"
                    + (f" (+ unresolved: {', '.join(self.unknown_size)})"
                       if self.unknown_size else ""))
+        if self.bins:
+            out.append(f"{self.bins} histogram bins")
         return out
 
     def unmet(self, caps: Capabilities) -> list[str]:
@@ -86,6 +92,8 @@ class Requirements:
         if caps.max_points is not None and self.points > caps.max_points:
             out.append(f"{self.points} data points (max {caps.max_points} without "
                        "downsampling)")
+        if caps.max_bins is not None and self.bins > caps.max_bins:
+            out.append(f"{self.bins} histogram bins (max {caps.max_bins})")
         return out
 
 
@@ -93,7 +101,11 @@ def requirements_for(spec: FigureSpec, request: RenderRequest) -> Requirements:
     points = 0
     unknown: list[str] = []
     counted: set[str] = set()
+    bins = 0
     for m in spec.layers:
+        if isinstance(m, HistogramMark):
+            n = len(m.bin_edges) - 1 if m.bin_edges is not None else (m.bins or 10)
+            bins = max(bins, n)
         if isinstance(m, FunctionMark) and m.expression is not None:
             points += m.samples ** (2 if spec.coordinate_system == "cartesian3d" else 1)
             continue
@@ -114,6 +126,7 @@ def requirements_for(spec: FigureSpec, request: RenderRequest) -> Requirements:
         vector_export=request.format in VECTOR_FORMATS,
         points=points,
         unknown_size=tuple(unknown),
+        bins=bins,
     )
 
 

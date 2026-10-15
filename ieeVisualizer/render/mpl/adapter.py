@@ -48,6 +48,7 @@ CAPABILITIES = Capabilities(
     interactive=False,
     vector_export=True,
     max_points=1_000_000,
+    max_bins=10_000,
 )
 
 
@@ -89,12 +90,15 @@ def _metadata(fmt: str) -> dict[str, str | None]:
 
 
 @contextlib.contextmanager
-def render_context(theme_rc: dict[str, Any]):
-    """matplotlib defaults + theme + determinism settings, restored on exit."""
+def render_context(theme: Any):
+    """matplotlib defaults + theme + determinism settings, restored on exit.
+    ``theme`` is a :class:`~ieeVisualizer.themes.Theme` or an rcParams dict."""
     import matplotlib
     import matplotlib.style
 
-    rc = dict(theme_rc)
+    from .style import theme_rc
+
+    rc = dict(theme) if isinstance(theme, dict) else theme_rc(theme)
     rc.update({"svg.hashsalt": SVG_HASHSALT, "svg.fonttype": "path"})
     with matplotlib.style.context("default"), matplotlib.rc_context(rc):
         yield
@@ -137,17 +141,25 @@ class MatplotlibAdapter:
         *,
         resolver: Resolver | None = None,
     ) -> BuiltFigure:
-        """Validate, resolve and draw ``spec`` into a new Figure (no export)."""
+        """Validate, resolve and draw ``spec`` into a new Figure (no export).
+
+        The figure is laid out once more at the end, inside the same theme
+        context, exactly as :meth:`render` lays it out when it saves: the
+        artists' positions, the value-label arrangement and the layout
+        warnings are those a render at this request ships. Drawing it again
+        outside that context (with other rcParams) may lay it out
+        differently."""
         request = request or RenderRequest()
         prepared = prepare(spec, resolver)
         self._check_capabilities(prepared.spec, request)
         warnings = list(prepared.warnings)
-        theme_rc = self._theme(prepared.spec, request, warnings)
-        with render_context(theme_rc), _warnings.catch_warnings(record=True) as caught:
+        theme = self._theme(prepared.spec, request, warnings)
+        with render_context(theme), _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
-            built = self._draw(prepared, request, warnings)
+            built = self._draw(prepared, request, warnings, theme)
+            built.figure.draw_without_rendering()
         _backend_warnings(caught, built.warnings)
-        built.warnings = _dedupe(built.warnings)
+        built.warnings[:] = _dedupe(built.warnings)  # same list: draw-time warnings land here
         return built
 
     def render(
@@ -160,11 +172,11 @@ class MatplotlibAdapter:
         prepared = prepare(spec, resolver)
         self._check_capabilities(prepared.spec, request)
         warnings = list(prepared.warnings)
-        theme_rc = self._theme(prepared.spec, request, warnings)
+        theme = self._theme(prepared.spec, request, warnings)
         buf = io.BytesIO()
-        with render_context(theme_rc), _warnings.catch_warnings(record=True) as caught:
+        with render_context(theme), _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
-            built = self._draw(prepared, request, warnings)
+            built = self._draw(prepared, request, warnings, theme)
             built.figure.savefig(buf, format=request.format, dpi=request.dpi,
                                  metadata=_metadata(request.format))
         _backend_warnings(caught, built.warnings)
@@ -176,6 +188,7 @@ class MatplotlibAdapter:
             adapter_version=self.version,
             warnings=_dedupe(built.warnings),
             request=request,
+            theme=theme.record(),
         )
 
     # --------------------------------------------------------------- internals
@@ -202,12 +215,12 @@ class MatplotlibAdapter:
 
     @staticmethod
     def _draw(prepared: PreparedSpec, request: RenderRequest,
-              warnings: list[RenderWarning]) -> BuiltFigure:
+              warnings: list[RenderWarning], theme: Any = None) -> BuiltFigure:
         from matplotlib.figure import Figure
 
         from .data import infer_axes
         from .decorate import apply_annotations, apply_axes, apply_caption, apply_legend
-        from .marks import DRAW, DrawContext
+        from .marks import DRAW, DrawContext, fit_value_labels, report_bar_overlaps
 
         spec = prepared.spec
         axes_info = infer_axes(spec, warnings)
@@ -215,16 +228,46 @@ class MatplotlibAdapter:
         fig = Figure(figsize=figsize, dpi=request.dpi, layout="constrained")
         projection = {"cartesian3d": "3d", "polar": "polar"}.get(spec.coordinate_system)
         ax = fig.add_subplot(projection=projection)
-        ctx = DrawContext(spec=spec, fig=fig, ax=ax, axes=axes_info, warnings=warnings)
+        ctx = DrawContext(spec=spec, fig=fig, ax=ax, axes=axes_info, warnings=warnings,
+                          theme=theme)
         for i, mark in enumerate(spec.layers):
             ctx.layer_artists[i] = DRAW[mark.type](ctx, i, mark)
+        report_bar_overlaps(ctx)
         apply_axes(ctx)
         ann = apply_annotations(ctx)
-        apply_legend(ctx)
-        caption = apply_caption(fig, spec.caption, figsize[1], figsize[0])
+        _label_locale(spec, theme, warnings)
+        cap: dict[str, Any] = {}
+        if theme is not None and theme.muted:
+            cap["color"] = theme.muted
+        if theme is not None and theme.typography.caption:
+            cap["fontsize"] = theme.typography.caption
+        caption = apply_caption(fig, spec.caption, figsize[1], figsize[0], **cap)
+        # Value labels are fitted by the layout engine on every draw, so they
+        # are already inside the (widened) axes when the legend pass below
+        # lays the figure out to measure it: an "auto" legend that would
+        # cover a value label is moved outside like one covering data.
+        fit_value_labels(ctx)
+        apply_legend(ctx)  # last: an "auto" legend is placed against the final layout
         return BuiltFigure(figure=fig, axes=ax, warnings=warnings,
                            layer_artists=ctx.layer_artists, annotation_artists=ann,
                            caption=caption)
+
+
+def _label_locale(spec: FigureSpec, theme: Any, warnings: list[RenderWarning]) -> None:
+    """A template that wrote numbers into text (e.g. funnel rates) records the
+    locale it used; say so when this render's theme writes numbers
+    differently, instead of silently mixing conventions."""
+    meta = spec.metadata.get("template") if isinstance(spec.metadata, dict) else None
+    used = meta.get("label_locale") if isinstance(meta, dict) else None
+    if used is None or theme is None:
+        return
+    have = theme.locale.tag if theme.locale is not None else "und"
+    if used != have:
+        warnings.append(RenderWarning(
+            "label_locale_mismatch",
+            f"text written by the template uses number locale {used!r} but theme "
+            f"{theme.name!r} formats numbers as {have!r}; rebuild the spec with "
+            f"theme={theme.name!r} so labels and axes agree.", "/metadata/template/label_locale"))
 
 
 def _backend_warnings(caught, out: list[RenderWarning]) -> None:
