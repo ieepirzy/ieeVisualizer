@@ -2,7 +2,7 @@
 """Themes: corporate visual identity as checked, versioned data.
 
     >>> from ieeVisualizer import themes
-    >>> t = themes.get("muutto365-report-light")
+    >>> t = themes.get("report-light")
     >>> t.record()["version"]
     '1.0.0'
     >>> themes.format_quantity(1234.5, "EUR", t.locale)
