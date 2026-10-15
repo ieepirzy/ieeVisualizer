@@ -364,3 +364,15 @@ def test_bounds_are_forecast_styled_and_paired_with_their_value_series():
             and m.data == "forecast"} == {"forecast"}
     assert [b["role"] for b in spec.metadata["template"]["bands"]] == ["observed", "forecast"]
     assert validate(spec) == []
+
+
+@pytest.mark.parametrize("param", ["target", "forecast_from"])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf"), 10 ** 400],
+                         ids=["nan", "inf", "-inf", "huge-int"])
+def test_non_finite_numbers_are_refused_by_check_and_build(param, bad):
+    data = snap({"t": [1.0, 2.0, 3.0], "v": [1.0, 2.0, 3.0]}, units={"t": "d", "v": "m"})
+    kwargs = {"time_column": "t", "value_columns": ["v"], param: bad}
+    assert errors(TS.check(data, **kwargs)) == [(f"/params/{param}", "invalid_parameter")]
+    with pytest.raises(TemplateInputError) as e:
+        TS.build(data, **kwargs)
+    assert errors(e.value.issues) == [(f"/params/{param}", "invalid_parameter")]

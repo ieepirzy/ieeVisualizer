@@ -49,6 +49,11 @@ of `ieeVisualizer/templates/base.py`. Registry errors (`TemplateRegistryError`)
 use `unknown_template`, `unknown_template_version`, `duplicate_template`,
 `invalid_version`, `invalid_name`.
 
+Numeric parameters (`target`, a numeric `forecast_from`, ranges, constants)
+must be finite: NaN, infinities and integers beyond float64 are an
+`invalid_parameter` issue from `check()` and a `TemplateInputError` from
+`build()`, never a failure of the spec built from them.
+
 Errors stop the build. Warnings do not; they are copied into the spec as
 `metadata["template"]["warnings"]`. `build()` also runs `validate()` on its
 own output and raises `SpecValidationError` rather than return a spec with

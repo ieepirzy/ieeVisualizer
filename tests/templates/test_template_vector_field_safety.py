@@ -108,3 +108,16 @@ def test_lambdify_failure_is_an_issue(monkeypatch):
     assert {(i.path, i.code) for i in e.value.issues} == {
         ("/params/u", "invalid_expression"), ("/params/v", "invalid_expression")}
 
+
+
+@pytest.mark.parametrize("params", [
+    {"constants": {"a": float("nan")}}, {"x_range": [0.0, float("inf")]},
+])
+def test_non_finite_numeric_parameters_are_refused_by_check(params):
+    full = {"u": "a*x" if "constants" in params else "x", "v": "y", "x_range": [-1, 1],
+            "y_range": [-1, 1], "grid": 5, **params}
+    key = next(iter(params))
+    assert [(i.path, i.code) for i in VF.check(None, **full) if i.severity == "error"] == [
+        (f"/params/{key}", "invalid_parameter")]
+    with pytest.raises(TemplateInputError):
+        VF.build(None, **full)
