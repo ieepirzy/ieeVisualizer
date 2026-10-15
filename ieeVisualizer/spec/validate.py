@@ -157,6 +157,8 @@ def _t_number(c: _Ctx, path: str, v: Any, what: str, optional: bool = False) -> 
         return True
     if not is_number(v):
         return _bad_type(c, path, what, "a number", v)
+    if _beyond_float64(v):
+        return _out_of_range(c, path, what, v)
     if not math.isfinite(v):
         c.add(path, "non_finite_number",
               f"{what} is {v!r}; NaN and infinities cannot be stored in JSON. Use a finite "
@@ -168,9 +170,19 @@ def _t_number(c: _Ctx, path: str, v: Any, what: str, optional: bool = False) -> 
 def _t_int(c: _Ctx, path: str, v: Any, what: str, optional: bool = False) -> bool:
     if v is None and optional:
         return True
+    if is_number(v) and _beyond_float64(v):
+        return _out_of_range(c, path, what, v)
     if not (is_number(v) and math.isfinite(v) and float(v).is_integer()):
         return _bad_type(c, path, what, "an integer", v)
     return True
+
+
+def _out_of_range(c: _Ctx, path: str, what: str, v: Any) -> bool:
+    c.add(path, "number_out_of_range",
+          f"{what} {_short_int(v)} is beyond the float64 range (about +-1.8e308), so it cannot "
+          "be stored as a number that readers can hold; rescale it (e.g. change the unit) "
+          "upstream.")
+    return False
 
 
 def _t_bool(c: _Ctx, path: str, v: Any, what: str) -> bool:
