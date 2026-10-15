@@ -398,11 +398,12 @@ def test_kpi_decimals_range(d, ok):
             render_view(v, "html")
 
 
-def test_format_number_only_replaces_a_leading_minus():
-    assert format_number(1e-05) == "1e-05"
-    assert format_number(-1e-05) == "−1e-05"
-    assert format_number(-1234) == "−1 234"
-    assert format_number(-0.5, 2) == "−0.50"
+def test_format_number_uses_one_minus_glyph_for_sign_and_exponent():
+    assert format_number(1e-05) == "1e\u221205"
+    assert format_number(-1e-05) == "\u22121e\u221205"
+    assert format_number(-1234) == "\u22121\u202f234"
+    assert format_number(-0.5, 2) == "\u22120.50"
+    assert "-" not in format_number(-1.5e-300) + format_number(-1e23)
 
 
 # --------------------------------------------------------------------------

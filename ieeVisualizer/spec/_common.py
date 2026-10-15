@@ -302,30 +302,69 @@ def copy_json(value: Any, path: str, what: str) -> Any:
 def copy_tree(value: Any, path: str = "", what: str = "the document",
               limit: int = MAX_TREE_DEPTH) -> Any:
     """Deep copy of a dict/list/tuple tree (other values are deep-copied as
-    leaves), iterative, refusing nesting deeper than ``limit`` with
-    ``too_deep``. Use instead of ``copy.deepcopy`` on anything a caller built."""
+    leaves), iterative, refusing nesting deeper than ``limit`` (or a reference
+    cycle) with ``too_deep``. Use instead of ``copy.deepcopy`` on anything a
+    caller built.
+
+    Like ``deepcopy`` it keeps a memo by ``id()``: an object referenced from
+    several places is copied once and stays shared in the copy, so ``[a, a]``
+    nested ``n`` deep costs ``O(n)``, not ``O(2**n)``. A reference reached
+    again is still checked against ``limit`` at its new depth (by the height
+    of its subtree). A ``namedtuple`` is rebuilt as its own type; any other
+    tuple subclass (``time.struct_time``, ``os.stat_result``, ...), which
+    cannot be rebuilt from its items, is copied as a list, which is what a
+    tuple is in JSON."""
     box: list[Any] = [None]
-    todo: list[tuple[Any, str, int, Any, Any]] = [(value, path, 1, box, 0)]
-    tuples: list[tuple[Any, Any, type, list[Any]]] = []
+    done: dict[int, Any] = {}  # id -> finished copy
+    height: dict[int, int] = {}  # id -> container levels from it down (itself = 1)
+    open_: set[int] = set()  # ids of the containers being copied (the current path)
+    leaf_memo: dict[int, Any] = {}  # deepcopy's own memo for leaves
+    # ("enter", value, pointer, depth, parent, slot) or ("exit", value, out, parent, slot)
+    todo: list[tuple[Any, ...]] = [("enter", value, path, 1, box, 0)]
     while todo:
-        v, p, depth, parent, slot = todo.pop()
-        if isinstance(v, (dict, list, tuple)) and depth > limit:
-            raise _too_deep(p, what, limit)
-        if isinstance(v, dict):
-            out: Any = dict.fromkeys(v)
-            todo.extend((x, ptr_join(p, k), depth + 1, out, k) for k, x in v.items())
-        elif isinstance(v, (list, tuple)):
-            out = [None] * len(v)
-            todo.extend((x, ptr_join(p, i), depth + 1, out, i) for i, x in enumerate(v))
+        item = todo.pop()
+        if item[0] == "exit":
+            _, v, out, parent, slot = item
+            kids = v.values() if isinstance(v, dict) else v
+            height[id(v)] = 1 + max((height[id(x)] for x in kids
+                                     if isinstance(x, (dict, list, tuple))), default=0)
             if isinstance(v, tuple):
-                tuples.append((parent, slot, type(v), out))
+                kind = type(v)
+                if kind is tuple:
+                    out = tuple(out)
+                elif hasattr(kind, "_fields") and hasattr(kind, "_make"):
+                    out = kind._make(out)  # a namedtuple
+                # any other tuple subclass stays the list it was filled into
+                parent[slot] = out
+            open_.discard(id(v))
+            done[id(v)] = out
+            continue
+        _, v, p, depth, parent, slot = item
+        if isinstance(v, (dict, list, tuple)):
+            key = id(v)
+            if key in open_:
+                raise fail(p, "too_deep", f"{what} contains itself here (a reference cycle), "
+                           "so it is nested infinitely deep; JSON cannot hold it.")
+            if depth > limit or (key in done and depth + height[key] - 1 > limit):
+                raise _too_deep(p, what, limit)
+            if key in done:
+                parent[slot] = done[key]
+                continue
+            open_.add(key)
+            if isinstance(v, dict):
+                out: Any = dict.fromkeys(v)
+                kids = [("enter", x, ptr_join(p, k), depth + 1, out, k) for k, x in v.items()]
+            else:
+                out = [None] * len(v)
+                kids = [("enter", x, ptr_join(p, i), depth + 1, out, i)
+                        for i, x in enumerate(v)]
+            todo.append(("exit", v, out, parent, slot))
+            todo.extend(reversed(kids))  # document order: the first child is popped first
         elif v is None or isinstance(v, (str, bool, int, float)):
             out = v
         else:
-            out = copy.deepcopy(v)
+            out = copy.deepcopy(v, leaf_memo)
         parent[slot] = out
-    for parent, slot, kind, items in reversed(tuples):  # innermost first, once filled
-        parent[slot] = tuple(items) if kind is tuple else kind(*items)  # a namedtuple
     return box[0]
 
 

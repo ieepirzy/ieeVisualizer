@@ -1,8 +1,8 @@
 """Second round of hostile-input checks: every measured string is budgeted
 and bounded, table columns are limited, slots never get negative widths,
 free-form JSON depth is bounded, large numbers are written without invented
-digits, grid detours never share a lane, and a delta that rounds to zero
-reads as zero. Anything that could hang on a regression runs in a
+digits, grid detours never share a lane, and a delta's arrow follows its
+exact sign. Anything that could hang on a regression runs in a
 subprocess with a timeout (``run_py``)."""
 
 import dataclasses
@@ -338,7 +338,7 @@ def test_copies_are_iterative_and_bounded():
 @pytest.mark.parametrize("value, decimals, expected", [
     (1e23, None, "1e+23"),
     (-1e23, None, "−1e+23"),
-    (float(2 ** 70), None, "1.1805916207174113e+21"),
+    (float(2 ** 70), None, "1.18059162071741e+21"),  # at most 15 digits of a float
     (1e15, None, "1e+15"),
     (999_999_999_999_999.0, None, "999 999 999 999 999"),
     (1e308, 2, "1e+308"),
@@ -346,24 +346,27 @@ def test_copies_are_iterative_and_bounded():
     (10 ** 400, None, "1e+400"),
     (12345.678, None, "12 345.678"),
     (2.675, 2, "2.68"),  # the decimal form, not the binary 2.67499999...
-    (-0.04, 1, "0.0"),
+    (-0.04, 1, ">−0.1"),  # non-zero is never shown as zero
+    (0.0, 1, "0.0"),
+    (-0.0, 1, "0.0"),
     (-0.0, None, "0"),
-    (1e-05, None, "1e-05"),
+    (1e-05, None, "1e−05"),
 ])
 def test_format_number_writes_only_digits_it_has(value, decimals, expected):
-    assert format_number(value, decimals) == expected.replace(" ", " ")
+    assert format_number(value, decimals) == expected.replace(" ", "\u202f")
 
 
 @pytest.mark.parametrize("value, ref, decimals, expected", [
     (1e308, -1e308, None, "▲ +2e+308 vs prev (−1e+308)"),
     (-1e308, 1e308, 2, "▼ −2e+308 vs prev (1e+308)"),
     (1e23, 0, None, "▲ +1e+23 vs prev (0)"),
-    (-0.04, 0.0, 1, "= 0.0 vs prev (0.0)"),
-    (0.04, 0.0, 1, "= 0.0 vs prev (0.0)"),
+    (-0.04, 0.0, 1, "▼ >−0.1 vs prev (0.0)"),  # below the last decimal, never "0.0"
+    (0.04, 0.0, 1, "▲ <+0.1 vs prev (0.0)"),
+    (0.0, -0.0, 1, "= 0.0 vs prev (0.0)"),
     (-0.06, 0.0, 1, "▼ −0.1 vs prev (0.0)"),
     (5, 5, None, "= 0 vs prev (5)"),
 ])
-def test_kpi_delta_is_exact_and_its_arrow_follows_the_rounded_delta(value, ref, decimals,
+def test_kpi_delta_is_exact_and_its_arrow_follows_the_exact_delta(value, ref, decimals,
                                                                     expected):
     _, cmp = kpi_lines(Kpi("k", value, decimals=decimals, comparison=Comparison(ref, "prev")))
     assert cmp == expected

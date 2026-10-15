@@ -29,7 +29,7 @@ from ..render import RenderError, RenderRequest, RenderResult, RenderWarning, Re
 from ..spec import SpecValidationError, ValidationIssue
 from .draw import Embed, esc, num, to_png, to_svg
 from .layout import layout_view
-from .limits import MAX_PNG_SIDE_PX
+from .limits import MAX_PNG_PIXELS, MAX_PNG_SIDE_PX
 from .model import ViewSpec
 from .validate import errors, too_narrow_at
 
@@ -183,12 +183,20 @@ def render_view(view: ViewSpec, format: str = "svg", *, width: float = 960.0,
         if format == "svg":
             content = to_svg(items, width, height, figs.nested_svg, view.title).encode("utf-8")
         else:
+            px_w, px_h = round(width * scale), round(height * scale)
             if max(width, height) * scale > MAX_PNG_SIDE_PX:
                 raise RenderError([ValidationIssue(
                     "", "view_too_large",
                     f"the view is {round(height)} px tall; at scale {scale} the PNG would be "
                     f"over {MAX_PNG_SIDE_PX} px. Render HTML or SVG, lower scale, or split "
                     "the view.")])
+            if px_w * px_h > MAX_PNG_PIXELS:  # memory follows the area, not the side
+                raise RenderError([ValidationIssue(
+                    "", "view_too_large",
+                    f"at width {width} and scale {scale} the PNG would be {px_w} x {px_h} = "
+                    f"{px_w * px_h / 1e6:.1f} megapixels; the limit is "
+                    f"{MAX_PNG_PIXELS / 1e6:g}. Render HTML or SVG, lower width or scale, or "
+                    "split the view.")])
             content = to_png(items, width, height, scale, figs.png_array)
     return RenderResult(content=content, format=format, media_type=VIEW_FORMATS[format],
                         adapter_name=RENDERER_NAME, adapter_version=RENDERER_VERSION,

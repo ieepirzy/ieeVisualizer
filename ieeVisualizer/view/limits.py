@@ -5,7 +5,8 @@ library's control. Every limit below is checked by :func:`.validate.validate_vie
 (and therefore by ``render_view``) *before* anything is measured or laid
 out, and is reported as a structured error with the JSON pointer where the
 budget ran out. The values were chosen so that the largest view that passes
-still renders in a few seconds; ``docs/VIEWS.md`` ("Size limits") lists the
+renders in seconds (at the default scale, under 3 s as SVG/HTML and about
+9-11 s as PNG at worst); ``docs/VIEWS.md`` ("Size limits") lists the
 timings they were measured with.
 
 Flow, table and text budgets are **per view**, not per component, so many
@@ -50,6 +51,11 @@ MAX_TOTAL_TABLE_COLUMNS = 200
 #: Longest side of a PNG, in pixels (``height * scale``). Checked after layout,
 #: since height depends on wrapping; HTML and SVG have no such limit.
 MAX_PNG_SIDE_PX = 32_000
+#: Pixels in a PNG (``round(width * scale) * round(height * scale)``), checked
+#: with the side limit before rasterising: memory follows the area, not the
+#: side (16 000 x 32 000 px took 2 GB). 64 MP is ~256 MB of RGBA canvas, and
+#: still covers the tallest PNG at the default width and scale (1920 x 32 000).
+MAX_PNG_PIXELS = 64_000_000
 #: Characters in any one string of the view (text, labels, titles, table
 #: cells, embedded figure strings, metadata).
 MAX_TEXT_CHARS = 10_000
@@ -57,6 +63,11 @@ MAX_TEXT_CHARS = 10_000
 #: text, notes, labels, titles, units (a KPI unit three times: value, delta,
 #: comparison), table headers (column name + unit) and drawn string cells.
 MAX_TOTAL_TEXT_CHARS = 50_000
+#: An embedded figure's drawn strings count this many times toward
+#: ``MAX_TOTAL_TEXT_CHARS``: matplotlib lays a figure's text out twice (once
+#: to place an ``auto`` legend, once to draw), so its strings cost about
+#: twice what the view's own text does.
+FIGURE_TEXT_WEIGHT = 2
 #: Narrowest slot a grid cell or horizontal-stack child may get, in px, at
 #: the width the view is rendered at (validation uses the default, 960).
 MIN_SLOT_WIDTH = 80

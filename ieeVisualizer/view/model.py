@@ -75,7 +75,7 @@ class FigureComponent:
     type: str = field(default="figure", init=False)
 
     def __post_init__(self) -> None:
-        self.aspect = canon_float(self.aspect)
+        self.aspect = canon_float(self.aspect, "/aspect", "aspect")
 
 
 @dataclass
@@ -94,7 +94,7 @@ class Comparison:
     label: str
 
     def __post_init__(self) -> None:
-        self.value = canon_float(self.value)
+        self.value = canon_float(self.value, "/value", "value")
 
 
 @dataclass
@@ -113,7 +113,8 @@ class Kpi:
     type: str = field(default="kpi", init=False)
 
     def __post_init__(self) -> None:
-        self.value = canon_float(self.value)  # 55 and 55.0 must hash equally
+        # 55 and 55.0 must hash equally
+        self.value = canon_float(self.value, "/value", "value")
 
 
 @dataclass

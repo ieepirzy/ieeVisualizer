@@ -51,25 +51,43 @@ null comparison value shows "<label>: no data" and no delta is computed. A
 null table cell shows "—" (a real `0` stays `0`). The delta arrow is neutral
 in colour: whether up is good is not something the view knows.
 
-Numbers are never given invented precision or invented digits. A float is
-formatted from its shortest decimal form (`Decimal(repr(v))`), never from its
-binary expansion: without `decimals` an integral value is written without
-decimals and any other value as stored; with `decimals` (an integer from 0
-to 10) that decimal form is rounded half-to-even (`2.675` at 2 decimals is
-`2.68`). From 10^15 in magnitude, where a float no longer holds every integer
-digit, a number is written in exponent notation with at most 17 significant
-digits and `decimals` is ignored: `1e23` is `1e+23`, not
-`99 999 999 999 999 991 611 392`. A KPI delta is computed exactly in
-`Decimal` on the numbers as written (`0.3` vs `0.1` gives `+0.2`, not
-`+0.19999999999999998`), so it can neither gain digits nor overflow:
-`1e308` vs `-1e308` is `▲ +2e+308`, never `inf`. The arrow and sign follow
-the delta *as displayed*: a delta that rounds to zero at `decimals` is
-`= 0.0`, and no value is ever written `−0` / `−0.0`. Only a leading minus is
-typeset as `−`; the exponent of `1e-05` is left alone. Every line of a KPI
-tile stays inside the tile: the value shrinks from 30 to 14 px and then
-wraps.
+Numbers are never given invented precision or invented digits, and nothing
+non-zero is ever shown as zero. A float is formatted from its shortest
+decimal form (`Decimal(repr(v))`), never from its binary expansion. Without
+`decimals` it is written with at most 15 significant digits, the precision
+a float64 holds for every decimal, so float noise disappears (`0.1 + 0.2`
+is `0.3`) and no digit is ever added; an integral value is written without
+decimals (a numpy float32 is written from its own shortest form, `0.1`; once
+widened to a Python float it is `0.100000001490116`, a different number).
+With `decimals` (an integer from 0 to 10) the decimal form is rounded
+**half-up**, the rule of `ieeVisualizer.themes.locale`: `2.5` -> `3`,
+`0.125` -> `0.13`, `18.25` -> `18.3`, `2.675` -> `2.68`. A non-zero value
+that rounds to zero is written as the bound it lies within: `<0.001`, or
+`>−0.001` when negative (exactly `0` stays `0.000`); with the unit `%`, 100
+is a bound too (`99.97` at one decimal is `>99.9%`, `100.03` is `<100.1%`,
+exactly 100 stays `100.0%`). From 10^15 in magnitude, decided on the value
+as rounded, where a float no longer holds every integer digit, a number is
+written in exponent notation and `decimals` is ignored
+(`999999999999999.9` at 0 decimals is `1e+15`; `1e23` is `1e+23`, not
+`99 999 999 999 999 991 611 392`), with at most 15 significant digits for a
+float and 17 for an exact integer. Thousands are grouped with U+202F NARROW
+NO-BREAK SPACE, so a number is never broken across lines, in our layout or
+in a browser; every minus sign, of the number and of its exponent, is
+U+2212 (`−1.5e−05`), and nothing is ever written `−0`.
 
-**Wrapping.** Text, titles, labels and flow node labels wrap at spaces; a
+A KPI delta is computed exactly in `Decimal` on the numbers as written
+(`0.3` vs `0.1` gives `+0.2`, not `+0.19999999999999998`), so it can
+neither gain digits nor overflow: `1e308` vs `-1e308` is `▲ +2e+308`, never
+`inf`. The arrow follows the sign of the exact delta: only an exact tie is
+`= 0.0`; a delta below the last decimal is `▲ <+0.1` / `▼ >−0.1`. Every line
+of a KPI tile stays inside the tile, and no number is split: the value
+shrinks from 30 to 14 px and then wraps between words (at ASCII spaces
+only); a number that still does not fit shrinks down to 8 px and then is
+written in compact exponent notation with 6, 3, 2 and finally 1
+significant digits (`1.2e+8`), the same for the comparison line.
+
+**Wrapping.** Text, titles, labels and flow node labels wrap at ASCII
+spaces and tabs (never at no-break or thin spaces); a
 word wider than its line is broken across lines, so nothing is drawn past its
 slot. Table cells and headers that do not fit their column are cut with `…`
 (only their first 1000 characters are ever measured).
@@ -172,39 +190,54 @@ over the whole view.
 | `MAX_TABLE_COLUMNS` | 50 | `too_many_columns` - columns of one table, counted whatever `max_rows` is (headers are drawn even with no rows) |
 | `MAX_TOTAL_TABLE_COLUMNS` | 200 | `too_many_columns` - table columns summed over the view |
 | `MAX_TEXT_CHARS` | 10 000 | `text_too_long` - any one string |
-| `MAX_TOTAL_TEXT_CHARS` | 50 000 | `too_much_text` - every string the layout measures or draws: view title, text, notes, KPI labels/sources/comparison labels, KPI units (counted three times: value, delta, reference), card/table/flow titles, flow descriptions, node labels, lane names, edge labels, table headers (column name + unit, with or without rows), drawn string cells and the drawn strings of embedded figures (title, caption, axis labels, legend title, layer names, annotation labels) |
+| `MAX_TOTAL_TEXT_CHARS` | 50 000 | `too_much_text` - every string the layout measures or draws: view title, text, notes, KPI labels/sources/comparison labels, KPI units (counted three times: value, delta, reference), card/table/flow titles, flow descriptions, node labels, lane names, edge labels, table headers (column name + unit, with or without rows), drawn string cells and the drawn strings of embedded figures (title, caption, axis labels, legend title, layer names, annotation labels; counted twice, `FIGURE_TEXT_WEIGHT`) |
 | `MAX_JSON_DEPTH` | 64 | `too_deep` - nesting of free-form JSON (view and figure `metadata`, `style`, `provenance.extra`), at parse time and in `validate_view`; `view_to_dict`/`view_hash`/patching a Python-built view nested deeper raise `SpecParseError` `too_deep`, never `RecursionError` |
 | `MIN_SLOT_WIDTH` | 80 | `too_narrow` - narrowest slot a grid cell, horizontal-stack child or card body may get (px); validated at the default width 960 and checked again by `render_view` at the width it is given |
 | `MAX_PNG_SIDE_PX` | 32 000 | `view_too_large` (`RenderError`) - PNG side in pixels (`height x scale`), checked after layout; HTML and SVG are not limited |
+| `MAX_PNG_PIXELS` | 64 000 000 | `view_too_large` (`RenderError`) - PNG area in pixels (`round(width x scale) x round(height x scale)`), checked after layout and before rasterising: memory follows the area, so a wide, tall PNG within the side limit (16 000 x 32 000 px used 2 GB) is refused. The default width and scale (1920 px wide) reach the side limit first |
 
-The values were chosen so that the largest view that passes renders in a few
-seconds. Measured on the development container (Python 3.13, matplotlib
-3.11; svg / html / png at scale 2):
+The values were chosen so that the largest view that passes renders in
+seconds, not minutes. Measured on the development container (Python 3.13,
+matplotlib 3.11, 4 cores) at the **default** `render_view` arguments (width
+960, scale 2), one view per row:
 
 | Largest allowed input | svg | html | png |
 |---|---|---|---|
-| layered chain, 400 nodes | 0.6 s | 0.03 s | 1.6 s |
-| layered random DAG, 400 nodes / 800 edges, 3 lanes | 0.2 s | 0.1 s | 3.3 s |
-| layered flow at 3916 dummy slots | 0.1 s | 0.1 s | 0.7 s |
-| grid, 400 nodes / 800 edges | 0.2 s | 0.2 s | 1.8 s |
-| table 300 x 3 (900 cells, truncated cells) | 0.4 s | 0.01 s | 4.2 s |
-| table cells of 10 000 characters (truncation) | 1.8 s | 0.01 s | 1.8 s |
-| 5 texts of one unbroken 10 000-character word (broken across lines; png at scale 1) | 1.1 s | 0.00 s | 5.4 s |
-| table of 4 columns with 10 000-character units, `max_rows` 0 (png at scale 1) | 0.04 s | 0.00 s | 0.03 s |
-| 299 KPI tiles | 0.3 s | 0.01 s | 5.1 s |
-| 12 distinct figures | 1.5 s | 1.8 s | 2.3 s |
-| every budget at once (flow, table, 12 figures, KPIs; png at scale 1) | 3.0 s | 1.8 s | 7.2 s |
+| layered chain, 400 nodes | 0.4 s | 0.03 s | 1.8 s |
+| layered random DAG, 400 nodes / 800 edges, 3 lanes | 0.2 s | 0.07 s | 6.6 s |
+| layered flow at 3315 dummy slots | 0.1 s | 0.4 s | 1.0 s |
+| grid, 400 nodes / 800 edges | 0.1 s | 0.1 s | 2.1 s |
+| table 300 x 3 (900 cells of 50 characters, truncated) | 2.7 s | 0.00 s | 8.6 s |
+| table cells of 10 000 characters (truncation) | 0.02 s | 0.00 s | 0.09 s |
+| 5 texts of one unbroken 10 000-character word (broken across lines) | 1.5 s | 0.00 s | 7.5 s |
+| table of 4 columns with 10 000-character units, `max_rows` 0 | 0.05 s | 0.00 s | 0.03 s |
+| 299 KPI tiles | 0.4 s | 0.01 s | 4.7 s |
+| 12 distinct figures | 2.2 s | 2.9 s | 8.6 s |
+| flow 120 / 240, 30-row table, 12 figures and 40 KPIs in one view | 2.8 s | 2.7 s | 11.0 s (peak RSS 772 MB) |
+
+So the worst case at the default scale is about **9 s for one component kind
+and 11 s for a PNG mixing all of them**; SVG and HTML stay under 3 s. PNG
+time is matplotlib drawing about 100 us per glyph and rasterising every
+embedded figure at the output scale, so it is roughly halved at `scale=1`.
+These limits were kept rather than lowered to reach a uniform 8 s: lowering
+`MAX_FIGURES` or `MAX_TOTAL_TEXT_CHARS` further would refuse ordinary
+briefings, and SVG/HTML (the interactive formats) are fast throughout. A
+view using every budget at once is taller than `MAX_PNG_SIDE_PX` at scale 2
+and is refused as PNG in 0.07 s (`view_too_large`); its SVG and HTML take
+2.6 s and 2.5 s.
 
 `tests/view/string_field_audit.py` repeats this for every string field that
 is laid out or drawn (titles, text, notes, KPI label/unit/source/comparison
 label, table title/column name/unit/cell, flow title/description/node
 label/lane/id/edge label, embedded figure title/caption, metadata,
 provenance): a 10 000-character value, as many times as validation allows,
-renders in at most 3.7 s as SVG or HTML and 7.9 s as PNG at scale 1 (the
-PNG time is matplotlib drawing about 100 us per glyph, which is why
-`MAX_TOTAL_TEXT_CHARS` is 50 000). The strings of embedded figures (title,
-caption, axis labels, legend title, layer names, annotation labels) count
-toward `MAX_TOTAL_TEXT_CHARS` too.
+renders at the default scale in at most 2.9 s as SVG or HTML and 8.6 s as
+PNG (two audit processes side by side). The strings of embedded figures
+(title, caption, axis labels, legend title, layer names, annotation labels)
+count **twice** toward `MAX_TOTAL_TEXT_CHARS` (`FIGURE_TEXT_WEIGHT`):
+matplotlib lays a figure's text out twice, once to place an `auto` legend
+and once to draw it, so four figures with a 10 000-character title took
+6.6 s as SVG before the weighting and two take 2.1 s now.
 
 For comparison, before these limits a 10 000-node chain took 10.6 s, an
 800-node / 1597-edge flow 68 s and a 5000-row table 43.6 s (11.6 MB PNG);

@@ -65,11 +65,13 @@ from ..spec import (
 )
 from ..spec import validate as validate_figure
 from ..spec._common import (
+    beyond_float64,
     canonical_json,
     copy_tree,
     fail,
     is_number,
     json_problem,
+    out_of_range_error,
     ptr_join,
     sha256_of,
 )
@@ -323,10 +325,13 @@ def validate_view(view: ViewSpec) -> list[ValidationIssue]:  # noqa: C901 - one 
                         "views.")
             spec = n.spec if n.spec is not None else view.figures.get(n.figure)
             if spec is not None:
-                budget.take("text", _figure_text(spec), L.MAX_TOTAL_TEXT_CHARS, path,
-                            "too_much_text", "the view's text adds up to {n} characters; the "
-                            "limit is {limit}.")
-            if not (is_number(n.aspect) and math.isfinite(n.aspect) and 0.1 <= n.aspect <= 4):
+                budget.take("text", L.FIGURE_TEXT_WEIGHT * _figure_text(spec),
+                            L.MAX_TOTAL_TEXT_CHARS, path, "too_much_text",
+                            "the view's text adds up to {n} characters (an embedded figure's "
+                            "strings count twice); the limit is {limit}.")
+            if beyond_float64(n.aspect):
+                add(out_of_range_error(ptr_join(path, "aspect"), "aspect", n.aspect).issues[0])
+            elif not (is_number(n.aspect) and math.isfinite(n.aspect) and 0.1 <= n.aspect <= 4):
                 add(ValidationIssue(ptr_join(path, "aspect"), "invalid_value",
                                     "aspect (height/width) must be in [0.1, 4], got "
                                     f"{n.aspect!r}."))
@@ -350,7 +355,9 @@ def validate_view(view: ViewSpec) -> list[ValidationIssue]:  # noqa: C901 - one 
         elif isinstance(n, Kpi):
             for key, v in (("value", n.value),
                            ("comparison/value", n.comparison and n.comparison.value)):
-                if v is not None and not (is_number(v) and math.isfinite(v)):
+                if beyond_float64(v):
+                    add(out_of_range_error(path + "/" + key, "value", v).issues[0])
+                elif v is not None and not (is_number(v) and math.isfinite(v)):
                     add(ValidationIssue(path + "/" + key, "invalid_type",
                                         f"{key} must be a finite number or null (= no data), "
                                         f"got {v!r}."))

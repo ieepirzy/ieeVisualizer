@@ -2,7 +2,8 @@
 
 For every string field of a view that reaches layout or rendering, builds
 the view holding a 10 000-character value (one unbroken word, and words) as
-many times as validation allows, renders SVG, HTML and PNG (scale 1) and
+many times as validation allows, renders SVG, HTML and PNG (at the default
+scale, 2) and
 prints name, shape, count, seconds per format tab-separated. A PNG
 refused with view_too_large prints refused <seconds>.
 """
@@ -122,7 +123,7 @@ for name in names:
         for fmt in ("svg", "html", "png") if shape == "word" else ("svg", "html"):
             t = time.time()
             try:
-                render_view(v, fmt, scale=1)
+                render_view(v, fmt)
                 times.append(str(round(time.time() - t, 2)))
             except RenderError as e:
                 assert e.issues[0].code == "view_too_large", e

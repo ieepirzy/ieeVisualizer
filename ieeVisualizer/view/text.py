@@ -8,15 +8,23 @@
 * :func:`text_width` - advance width in px of a string in DejaVu Sans (the
   font matplotlib ships, so it is always present), measured with
   matplotlib's FreeType binding. Used for wrapping and box sizes.
-* :func:`format_number` - no invented digits. A float is formatted from its
-  shortest decimal form (``Decimal(repr(v))``), never from its binary
-  expansion: ``decimals=None`` writes integral values without decimals and
-  other values at their stored precision; ``decimals=n`` rounds that decimal
-  form half-to-even. From ``1e15`` in magnitude (where a float stops holding
-  every integer digit) numbers are written in exponent notation with at most
-  17 significant digits, ``decimals`` ignored: ``1e+23``, not
-  ``99 999 999 999 999 991 611 392``. A result that rounds to zero is
-  written without a minus sign.
+* :func:`format_number` - no invented digits, and nothing non-zero shown as
+  zero. A float is formatted from its shortest decimal form
+  (``Decimal(repr(v))``), never from its binary expansion. ``decimals=None``
+  writes at most 15 significant digits (the precision a float64 holds for
+  every decimal; float noise such as ``0.1 + 0.2`` reads ``0.3``), integral
+  values without decimals; this never adds digits. ``decimals=n`` rounds the
+  decimal form half-up (``2.5`` -> ``3``, ``0.125`` -> ``0.13``, ``18.25``
+  -> ``18.3``), the rule of ``themes.locale``. A non-zero value that rounds
+  to zero is written as the bound it is below: ``<0.001`` (``>−0.001`` when
+  negative). From ``1e15`` in magnitude, decided on the rounded value (where
+  a float stops holding every integer digit) numbers are written in exponent
+  notation, ``decimals`` ignored: ``1e+23``, not
+  ``99 999 999 999 999 991 611 392`` (floats with at most 15 significant
+  digits, exact ints and Decimals with at most 17). Thousands are separated
+  by U+202F NARROW NO-BREAK SPACE, so neither our wrapping nor a browser
+  ever breaks a number; every minus sign, of the number and of its
+  exponent, is U+2212 (``1e−05``), and zero is never written ``−0``.
 """
 
 from __future__ import annotations
@@ -24,7 +32,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from decimal import Decimal, localcontext
+from decimal import ROUND_HALF_UP, Decimal, localcontext
 from functools import lru_cache
 
 NO_DATA = "no data"
@@ -130,13 +138,19 @@ def run_width(r: Run, size: float) -> float:
     return text_width(r.text, size, r.bold, r.italic, r.code)
 
 
+#: Lines break only at ASCII whitespace. Not at U+202F / U+2009 / U+00A0,
+#: which group the digits of a number, or join words that belong together.
+_BREAK = re.compile(r"([ \t\n\r\f\v]+)")
+
+
 def wrap_runs(runs: list[Run], size: float, width: float) -> list[list[Run]]:
-    """Greedy word wrap. A word wider than ``width`` is broken across lines
-    (at least one character per line), so no line is wider than ``width``
-    and no label is ever drawn far past its slot."""
+    """Greedy word wrap at ASCII whitespace. A word wider than ``width`` is
+    broken across lines (at least one character per line), so no line is
+    wider than ``width`` and no label is ever drawn far past its slot; callers
+    that must keep a word whole (a KPI number) make it fit first."""
     words: list[Run] = []
     for r in runs:
-        for i, part in enumerate(re.split(r"(\s+)", r.text)):
+        for i, part in enumerate(_BREAK.split(r.text)):
             if part and not (i % 2 and words and words[-1].text.endswith(" ")):
                 words.append(Run(" " if i % 2 else part, r.bold, r.italic, r.code))
     lines: list[list[Run]] = [[]]
@@ -182,6 +196,14 @@ def wrap_text(s: str, size: float, width: float, bold: bool = False) -> list[str
 #: From this magnitude on numbers are written in exponent notation.
 SCI_FROM = Decimal("1e15")
 SCI_DIGITS = 17  # significant digits kept in exponent notation (a float has <= 17)
+#: Significant digits a float is written with when ``decimals`` is None: every
+#: decimal of up to 15 digits survives a round trip through a float64, so
+#: more digits than this can only be binary noise (``0.30000000000000004``).
+FLOAT_DIGITS = 15
+#: Thousands separator: U+202F NARROW NO-BREAK SPACE (no line break inside a
+#: number, in our layout or in a browser).
+GROUP = "\u202f"
+MINUS = "\u2212"
 
 
 def as_decimal(v: float | int | Decimal) -> Decimal:
@@ -190,44 +212,97 @@ def as_decimal(v: float | int | Decimal) -> Decimal:
         return v
     if isinstance(v, int) or (hasattr(v, "dtype") and v.dtype.kind in "iu"):
         return Decimal(int(v))
+    if hasattr(v, "dtype") and v.dtype.kind == "f" and v.dtype.itemsize < 8:
+        # a float32/float16 scalar: its own shortest form (float32 0.1 is "0.1"),
+        # not that of the float64 it widens to (0.10000000149011612)
+        return Decimal(str(v))
     return Decimal(repr(float(v)))  # float() first: repr(numpy.float64) is not a number
 
 
-def _sci(d: Decimal) -> str:
+def _significant(d: Decimal, digits: int) -> Decimal:
+    """``d`` rounded half-up to at most ``digits`` significant digits."""
+    if not d or len(d.as_tuple().digits) <= digits:
+        return d
     with localcontext() as ctx:
-        ctx.prec = SCI_DIGITS
-        d = (+d).normalize()  # unary plus rounds to the context precision
+        ctx.prec = digits
+        ctx.rounding = ROUND_HALF_UP
+        return +d  # unary plus rounds to the context precision
+
+
+def round_half_up(d: Decimal, decimals: int) -> Decimal:
+    """``d`` rounded half-up to ``decimals`` places (as ``themes.locale``)."""
+    with localcontext() as ctx:
+        ctx.prec = 1000  # any finite float, every digit kept
+        return d.quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP)
+
+
+def _sci(d: Decimal) -> str:
+    d = _significant(d, SCI_DIGITS).normalize()
     sign, digits, exp = d.as_tuple()
     m = "".join(map(str, digits))
     e = exp + len(m) - 1
-    return ("-" if sign else "") + m[0] + ("." + m[1:] if len(m) > 1 else "") + f"e+{e}"
+    return ("-" if sign else "") + m[0] + ("." + m[1:] if len(m) > 1 else "") + f"e{e:+d}"
 
 
-def is_zero_text(s: str) -> bool:
-    """Does the formatted number ``s`` read as zero (no non-zero digit)?"""
-    return not re.search("[1-9]", s.split("e")[0])
+def format_number(v: float | int | Decimal | None, decimals: int | None = None,
+                  *, percent: bool = False) -> str:
+    """``None`` -> ``"no data"``. See the module docstring for the rules.
 
-
-def format_number(v: float | int | Decimal | None, decimals: int | None = None) -> str:
-    """``None`` -> ``"no data"``; thousands separated by a thin space. See the
-    module docstring for the rules."""
+    ``percent``: ``v`` is a percentage, so 100 is a bound as well as 0: a
+    value that rounds to 100 but is not 100 is written as the bound on its
+    side of 100 (``>99.9`` for 99.97, ``<100.1`` for 100.03, mirrored below
+    zero), as ``themes.locale.format_percent`` does."""
     if v is None:
         return NO_DATA
     d = as_decimal(v)
     if not d.is_finite():  # validation keeps these out of views; never crash on one
-        s = str(float(d))
-    elif abs(d) >= SCI_FROM:
-        s = _sci(d)
+        return str(float(d))
+    exact = isinstance(v, (int, Decimal)) or (hasattr(v, "dtype") and v.dtype.kind in "iu")
+    if not exact:
+        d15 = _significant(d, FLOAT_DIGITS)
+    shown = d15 if (decimals is None and not exact) else d
+    if decimals is not None and abs(d) < SCI_FROM:
+        shown = round_half_up(d, decimals)
+    if abs(shown) >= SCI_FROM:  # decided on the value as it would be written
+        s = _sci(d if exact else d15)
+    elif d and not shown:
+        step = Decimal(1).scaleb(-(decimals or 0))
+        s = f"<{step:f}" if d > 0 else f">-{step:f}"
     elif decimals is not None:
-        s = f"{d:,.{decimals}f}"
-    elif d == d.to_integral_value():
-        s = f"{int(d):,}"
+        s = _bound_100(d, shown, decimals) if percent else None
+        s = s or f"{shown:,f}"
+    elif shown == shown.to_integral_value():
+        s = f"{int(shown):,}"
     else:
-        s = f"{float(d):,}"  # shortest repr: the digits as written, 1e-05 stays 1e-05
-    if s.startswith("-") and d.is_finite() and is_zero_text(s):
-        s = s[1:]  # -0.04 at one decimal is 0.0, not -0.0
-    s = s.replace(",", "\u2009")
-    return "\u2212" + s[1:] if s.startswith("-") else s  # not an exponent's "-" (1e-05)
+        s = f"{float(shown):,}"  # shortest repr of <= 15 digits: 1e-05 stays 1e-05
+    if not shown and s.startswith("-"):
+        s = s[1:]  # -0.0 is 0
+    return s.replace(",", GROUP).replace("-", MINUS)
+
+
+def format_compact(v: float | int | Decimal | None, decimals: int | None, digits: int, *,
+                   percent: bool = False) -> str:
+    """:func:`format_number`, or exponent notation with at most ``digits``
+    significant digits (rounded half-up) when that is shorter: ``1.2e+8``
+    for ``123456789``. For a KPI number that does not fit its tile."""
+    s = format_number(v, decimals, percent=percent)
+    if v is None or s[:1] in "<>":
+        return s
+    d = as_decimal(v)
+    if not d.is_finite() or not d:
+        return s
+    c = _sci(_significant(d, digits)).replace("-", MINUS)
+    return c if len(c) < len(s) else s
+
+
+def _bound_100(d: Decimal, shown: Decimal, decimals: int) -> str | None:
+    if abs(shown) != 100 or abs(d) == 100:
+        return None
+    step = Decimal(1).scaleb(-decimals)
+    inside = abs(d) < 100
+    b = f"{(100 - step if inside else 100 + step):,f}"
+    rel = (">" if inside else "<") if d > 0 else ("<" if inside else ">")
+    return f"{rel}{'' if d > 0 else '-'}{b}"
 
 
 def fit_len(s: str, size: float, w: float, bold: bool = False, suffix: str = "", *,

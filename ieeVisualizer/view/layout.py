@@ -28,8 +28,8 @@ from .text import (
     SCI_FROM,
     as_decimal,
     fit_len,
+    format_compact,
     format_number,
-    is_zero_text,
     parse_markdown,
     run_width,
     text_width,
@@ -203,65 +203,133 @@ def exact_delta(value: float, ref: float) -> Decimal:
         return as_decimal(value) - as_decimal(ref)
 
 
-def _delta_text(delta: Decimal, decimals: int | None) -> str:
+def _delta_text(delta: Decimal, decimals: int | None, fmt=None) -> str:
+    fmt = fmt or format_number
     if abs(delta) < SCI_FROM:  # the float of an exact difference prints at its shortest
-        return format_number(float(delta), decimals)
-    return format_number(delta, decimals)
+        return fmt(float(delta), decimals)
+    return fmt(delta, decimals)
 
 
-def kpi_lines(n: Kpi) -> tuple[str, str | None]:
+def kpi_lines(n: Kpi, fmt=None) -> tuple[str, str | None]:
     """(value text, comparison text). Shared with the HTML renderer. The
-    arrow follows the delta as displayed: one that rounds to zero at
-    ``decimals`` reads "= 0.0", not "▼ −0.0"."""
-    value = with_unit(format_number(n.value, n.decimals), n.unit)
+    arrow follows the sign of the exact delta, and a non-zero delta is never
+    written as zero: one below the last decimal reads "▲ <+0.1", only an
+    exact tie reads "= 0.0". A ``%`` unit makes 100 a bound too (99.97 at
+    one decimal is ">99.9%"). ``fmt`` replaces :func:`.text.format_number`
+    (the tile uses it for compact notation when a number does not fit)."""
+    fmt = fmt or format_number
+    pct = n.unit == "%"
+
+    def num(v):
+        return with_unit(fmt(v, n.decimals, percent=pct), n.unit)
+
+    value = num(n.value)
     cmp = None
     if n.comparison is not None:
         c = n.comparison
         if c.value is None:
             cmp = f"{c.label}: {NO_DATA}"
         elif n.value is None:
-            cmp = f"{c.label}: {with_unit(format_number(c.value, n.decimals), n.unit)}"
+            cmp = f"{c.label}: {num(c.value)}"
         else:
-            text = _delta_text(exact_delta(n.value, c.value), n.decimals)
-            if is_zero_text(text):
+            delta = exact_delta(n.value, c.value)
+            text = _delta_text(delta, n.decimals, fmt)
+            if not delta:
                 arrow, sign = "=", ""
-            elif text.startswith("\u2212"):
+            elif delta < 0:
                 arrow, sign = "▼", ""
+            elif text.startswith("<"):
+                arrow, sign, text = "▲", "<+", text[1:]
             else:
                 arrow, sign = "▲", "+"
-            cmp = (f"{arrow} {sign}{with_unit(text, n.unit)} vs "
-                   f"{c.label} ({with_unit(format_number(c.value, n.decimals), n.unit)})")
+            cmp = f"{arrow} {sign}{with_unit(text, n.unit)} vs {c.label} ({num(c.value)})"
     return value, cmp
+
+
+#: Font sizes a KPI value may take (px): it shrinks before it wraps.
+KPI_VALUE_SIZES = (30, 28, 26, 24, 22, 20, 18, 16, 14)
+#: Smaller sizes, used only to keep a number on one line (never split it).
+KPI_SMALL_SIZES = (13, 12, 11, 10, 9, 8)
+#: Significant digits tried, in order, when a number does not fit even so.
+COMPACT_DIGITS = (6, 3, 2, 1)
+
+
+def _kpi_variants(n: Kpi) -> list[tuple[tuple[str, str | None], list[str]]]:
+    """``kpi_lines`` as written, then in compact notation of fewer and fewer
+    significant digits; each with the number strings it contains."""
+    out = []
+    for digits in (None, *COMPACT_DIGITS):
+        nums: list[str] = []
+
+        def fmt(v, decimals, percent=False, digits=digits, nums=nums):
+            s = (format_number(v, decimals, percent=percent) if digits is None
+                 else format_compact(v, decimals, digits, percent=percent))
+            nums.append(s)
+            return s
+
+        out.append((kpi_lines(n, fmt), nums))
+    return out
+
+
+def _numbers_fit(text: str, nums: list[str], size: float, w: float, bold: bool) -> bool:
+    """Is every word of ``text`` that holds a number at most ``w`` px wide?
+    Lines break only at ASCII spaces, so such a word is never split."""
+    return all(text_width(t, size, bold=bold) <= w for t in text.split(" ")
+               if any(x in t for x in nums))
+
+
+def _fit_number_text(variants, which: int, sizes: tuple[float, ...], w: float, bold: bool,
+                     shrink_first: bool) -> tuple[list[str], float]:
+    """Lines and size for ``variants[k][0][which]``: the first variant whose
+    numbers fit whole, at the largest size it does; ``shrink_first``: first a
+    single line at a size in ``sizes``, before any wrapping."""
+    text = variants[0][0][which]
+    if shrink_first:
+        for size in sizes:
+            if text_width(text, size, bold=bold) <= w:
+                return [text], size
+        sizes = sizes[-1:]  # as written, wrapped at the smallest size first
+    for lines, nums in variants:
+        text = lines[which]
+        for size in sizes + KPI_SMALL_SIZES:
+            if _numbers_fit(text, nums, size, w, bold):
+                return wrap_text(text, size, w, bold=bold), size
+    # not even one significant digit fits whole: draw it unbroken (lines only
+    # break at ASCII spaces) and let it overflow, rather than split a number
+    size = KPI_SMALL_SIZES[-1]
+    return wrap_text(variants[-1][0][which], size, math.inf, bold=bold), size
 
 
 def _kpi(n: Kpi, path, x, y, w, ctx):
     """Every line stays inside the tile: the value shrinks from 30 to 14 px
-    and then wraps, other lines wrap, and a word wider than the tile is
-    broken (:func:`.text.wrap_runs`)."""
+    and then wraps between words. A number is never split across lines: if
+    one does not fit at 14 px it shrinks further (to 8 px), then is written
+    in compact notation with fewer significant digits (6, 3, 2, 1)."""
     items: list[Item] = []
     ix, iw, cy = x + 16, w - 32, y + 14
     for line in wrap_text(n.label, 13, iw):
         items.append(Label(ix, cy + 13, line, 13, MUTED))
         cy += 18
-    value, cmp = kpi_lines(n)
+    variants = _kpi_variants(n)
     if n.value is None:
         items.append(Label(ix, cy + 30, NO_DATA, 22, MUTED, italic=True))
         cy += 42
     else:
-        size = 30.0
-        while size > 14 and text_width(value, size, bold=True) > iw:
-            size -= 2
-        lines = [value] if text_width(value, size, bold=True) <= iw else wrap_text(
-            value, size, iw, bold=True)
+        lines, size = _fit_number_text(variants, 0, KPI_VALUE_SIZES, iw, True, True)
         lh = size * 1.25
         for i, line in enumerate(lines):
             items.append(Label(ix, cy + 32 + i * lh, line, size, bold=True))
         cy += 42 + (len(lines) - 1) * lh
-    for text, color in ((cmp, INK), (n.source and f"Source: {n.source}", MUTED)):
-        if text:
-            for line in wrap_text(text, 12, iw):
-                items.append(Label(ix, cy + 13, line, 12, color))
-                cy += 17
+    cmp = variants[0][0][1]
+    if cmp:
+        lines, size = _fit_number_text(variants, 1, (12,), iw, False, False)
+        for line in lines:
+            items.append(Label(ix, cy + 13, line, size, INK))
+            cy += size + 5
+    if n.source:
+        for line in wrap_text(f"Source: {n.source}", 12, iw):
+            items.append(Label(ix, cy + 13, line, 12, MUTED))
+            cy += 17
     h = cy - y + 12
     return [Rect(x, y, w, h, fill="#f6f8fa", stroke=LINE, rx=8)] + items, h
 
