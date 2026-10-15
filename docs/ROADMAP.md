@@ -23,7 +23,7 @@ diagrams, Manim and reporting integrations come after it and reuse its spec.
 | Decision | Default | Why |
 |---|---|---|
 | Core language | Python ≥ 3.9; serialized specs are plain JSON | Existing code is Python; JSON keeps a later TS/Vue host possible. |
-| Spec modelling | `pydantic.dataclasses` (pydantic v2) with per-field strict wire validators; Python construction stays permissive, `validate()` reports | Revisited when the hand-written parsers grew: one declared type per field drives parsing and template/descriptor checks. Wire format and hashes unchanged (pinned by `tests/spec_hash_baseline.json`). See `docs/MODELS.md`. |
+| Spec modelling | `pydantic.dataclasses` (pydantic v2) with per-field strict wire parsers; Python construction is the stdlib dataclass `__init__` (permissive), `validate()` reports | Revisited when the hand-written parsers grew: one declared wire type per field drives parsing. Wire format, hashes, parse errors and constructors unchanged (pinned by `tests/spec_hash_baseline.json` and `tests/spec/test_spec_model_parity.py`). See `docs/MODELS.md`. |
 | Spec versioning | every serialized spec carries `schema_version` | Historical report figures must not silently change meaning. |
 | Package layout | `ieeVisualizer/spec/`, `render/`, `artifacts/`, `templates/`; legacy `core.Visualizer` kept | Separates spec / backend / export as §3.2 asks; existing API is bridged, not broken. |
 | First backend | Matplotlib only, headless (`Agg`) | Phase 1 scope. Browser backend chosen in Phase 2 after an evaluation. |

@@ -9,17 +9,19 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import functools
 import hashlib
 import inspect
 import json
 import math
 import numbers
+import sys
 from abc import ABCMeta
-from collections.abc import Iterable, Mapping, Sequence
-from collections.abc import Set as AbstractSet
-from typing import Annotated, Any, Literal
+from collections.abc import Iterable, Sequence
+from contextvars import ContextVar
+from typing import Annotated, Any, Union, get_args, get_origin
 
-from pydantic import BeforeValidator, ConfigDict, PlainValidator, ValidationError
+from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 #: The schema version written by this library. Bump on any change that alters
@@ -36,159 +38,117 @@ SEVERITIES = ("error", "warning", "info")
 # Model classes are pydantic dataclasses (see ``_model`` and docs/MODELS.md).
 # --------------------------------------------------------------------------
 
-#: Configuration of the spec model classes. ``strict`` is not set: their
-#: per-field parse validators (``_model``) are stricter than pydantic's strict
-#: mode (bools are not numbers, NaN/inf and float64 overflow are refused,
-#: numbers are canonicalised) and give the library's own issue codes, and
-#: Python construction stays permissive. Unknown keys are refused by
-#: ``_model.parse_model`` (with a did-you-mean) before pydantic's
-#: ``extra="forbid"`` would see them. ``defer_build`` keeps ``import
-#: ieeVisualizer.spec`` cheap: a class's validator is built on first use.
+#: Configuration of the model classes. Nothing is coerced or checked by
+#: pydantic itself: a spec class's fields are ``Annotated[Any, Wire(...)]``
+#: (``_model``), read from JSON by their own parsers in the old parser's order,
+#: and a descriptor class is only ever built by its constructor. Unknown keys
+#: are refused by ``_model.parse_model`` (with a did-you-mean) before pydantic
+#: sees them. ``defer_build`` keeps ``import ieeVisualizer.spec`` cheap: a
+#: class's validator is built on first use.
 SPEC_CONFIG = ConfigDict(
     extra="forbid", arbitrary_types_allowed=True, revalidate_instances="never", defer_build=True,
 )
 
-#: Configuration of descriptor classes whose fields are checked on
-#: construction (issues, render requests, manifests, template descriptors):
-#: pydantic's strict mode, so nothing is coerced ("5" is not a number, 1 is
-#: not True).
-STRICT_CONFIG = ConfigDict(strict=True, extra="forbid", arbitrary_types_allowed=True,
-                           defer_build=True)
+
+class Wire:
+    """Field-annotation metadata of a spec class: how the field is read from
+    JSON (``parse(value)``, raising :class:`SpecParseError` with paths
+    relative to the field) and its Python type as the stdlib dataclass
+    showed it in signatures (``text``, e.g. ``"str | None"``)."""
+
+    __slots__ = ("parse", "text")
+
+    def __init__(self, parse: Any, text: str) -> None:
+        self.parse, self.text = parse, text
+
+    def __repr__(self) -> str:
+        return f"Wire({self.text})"
 
 
-# Field types of the STRICT_CONFIG classes for containers, bytes and numbers.
-# Strict mode accepts exactly the declared container; these also take what
-# callers passed before the migration (a list for a tuple, a set for a
-# frozenset, a tuple for a list, any Mapping for a dict, a bytearray or
-# memoryview for bytes) and convert it to the declared type. Element types
-# stay strict.
+def _type_text(t: Any) -> str:
+    """``t`` written the way it was in the source before the migration
+    (``Optional[str]`` -> ``"str | None"``), for signatures and ``__doc__``."""
+    if isinstance(t, str):
+        return t
+    if t is Any:
+        return "Any"
+    if t is type(None) or t is None:
+        return "None"
+    if t is Ellipsis:
+        return "..."
+    origin, args = get_origin(t), get_args(t)
+    if origin is Annotated:
+        wire = [m for m in getattr(t, "__metadata__", ()) if isinstance(m, Wire)]
+        return wire[0].text if wire else _type_text(args[0])
+    if origin is Union:
+        return " | ".join(_type_text(a) for a in args)
+    if origin is not None:
+        return f"{getattr(origin, '__name__', origin)}[{', '.join(map(_type_text, args))}]"
+    return getattr(t, "__name__", repr(t))
 
 
-def _is_seq(v: Any) -> bool:
-    return isinstance(v, Sequence) and not isinstance(v, (str, bytes, bytearray))
+def _field_text(cls: Any, f: dataclasses.Field) -> str:
+    if not isinstance(f.type, str):
+        return _type_text(f.type)
+    module = sys.modules.get(cls.__module__)
+    try:
+        return _type_text(eval(f.type, vars(module) if module else {}))  # noqa: S307
+    except Exception:  # noqa: BLE001 - an annotation that cannot be evaluated is shown as written
+        return f.type
 
 
-def _to_tuple(v: Any) -> Any:
-    return tuple(v) if _is_seq(v) and not isinstance(v, tuple) else v
+#: Set by ``_model`` while pydantic builds a parsed object: the box that
+#: receives the exception its ``__post_init__`` raises (see :func:`_guarded`).
+POST_INIT_CATCH: ContextVar[list | None] = ContextVar("POST_INIT_CATCH", default=None)
 
 
-def _to_list(v: Any) -> Any:
-    return list(v) if _is_seq(v) and not isinstance(v, list) else v
+class PostInitFailed(ValueError):
+    """Stands in, inside pydantic, for the exception a ``__post_init__``
+    raised while a parsed object was built; ``_model`` re-raises the original
+    (pydantic would otherwise render its text, which fails for a lone
+    surrogate, and wrap it)."""
 
 
-def _to_frozenset(v: Any) -> Any:
-    ok = isinstance(v, AbstractSet) or _is_seq(v)
-    return frozenset(v) if ok and not isinstance(v, frozenset) else v
+def _guarded(post_init: Any) -> Any:
+    @functools.wraps(post_init)
+    def __post_init__(self: Any) -> None:  # noqa: N807
+        box = POST_INIT_CATCH.get()
+        if box is None:  # a Python constructor (or a constructor inside one): unchanged
+            return post_init(self)
+        POST_INIT_CATCH.set(None)  # objects this hook constructs run unguarded
+        try:
+            return post_init(self)
+        except Exception as e:
+            box.append(e)
+            raise PostInitFailed("__post_init__ failed") from None
 
-
-def _to_dict(v: Any) -> Any:
-    return dict(v) if isinstance(v, Mapping) and not isinstance(v, dict) else v
-
-
-def _to_bytes(v: Any) -> Any:
-    return bytes(v) if isinstance(v, (bytearray, memoryview)) else v
-
-
-def _real(v: Any, info: Any) -> Any:
-    if isinstance(v, bool) or not isinstance(v, (int, float)):
-        raise fail("", "invalid_type",
-                   f"{info.field_name} must be a number, got {type(v).__name__} {v!r}.")
-    return v
-
-
-def TupleOf(item: Any = Any) -> Any:  # noqa: N802 - a type constructor, used in annotations
-    return Annotated[tuple[item, ...], BeforeValidator(_to_tuple)]
-
-
-def ListOf(item: Any = Any) -> Any:  # noqa: N802
-    return Annotated[list[item], BeforeValidator(_to_list)]
-
-
-def SetOf(item: Any = Any) -> Any:  # noqa: N802
-    return Annotated[frozenset[item], BeforeValidator(_to_frozenset)]
-
-
-def MapOf(key: Any = str, value: Any = Any) -> Any:  # noqa: N802
-    return Annotated[dict[key, value], BeforeValidator(_to_dict)]
-
-
-#: ``bytes``; a bytearray or memoryview is copied to bytes.
-BytesLike = Annotated[bytes, BeforeValidator(_to_bytes)]
-#: An int or a float (not a bool), kept as given.
-Real = Annotated[float, PlainValidator(_real)]
-
-
-def _signature_shadow(cls: Any) -> Any:
-    """A plain ``dataclasses`` class with ``cls``'s ``__init__`` parameters
-    (same names, order and defaults; nothing else). Calling it binds the
-    constructor arguments exactly as the stdlib dataclass did before the
-    pydantic migration, so a bad call raises the same ``TypeError`` text
-    (CPython's own, including its did-you-mean), and its signature is the
-    signature of ``cls``."""
-    shadow = cls.__dict__.get("__init_shadow__")
-    if shadow is None:
-        specs = []
-        for f in dataclasses.fields(cls):
-            if f.init:
-                kw = {"default": f.default, "default_factory": f.default_factory}
-                specs.append((f.name, Any, dataclasses.field(**kw)))
-        shadow = dataclasses.make_dataclass(cls.__name__, specs,
-                                            namespace={"__qualname__": cls.__qualname__})
-        type.__setattr__(cls, "__init_shadow__", shadow)
-    return shadow
+    return __post_init__
 
 
 class _ModelMeta(ABCMeta):
-    """Constructor hook of the model classes (on the metaclass, not on
-    ``__init__``, because pydantic replaces ``__init__`` when it builds a
-    deferred class):
+    """Keeps the stdlib dataclass ``__init__`` of the model classes.
 
-    * the arguments are bound against the ``__init__`` parameters first
-      (:func:`_signature_shadow`): positional arguments go to the init fields
-      in declaration order (pydantic would also count ``init=False`` fields
-      such as a mark's ``type``), and missing, unexpected or too many
-      arguments raise the stdlib dataclass's ``TypeError``;
-    * a ``ValidationError`` is translated (``_model.construction_error``), so
-      a raw pydantic error never escapes a constructor.
+    ``pydantic.dataclasses.dataclass`` first lets the stdlib generate
+    ``__init__`` and then replaces it (when decorating, and again when it
+    builds a deferred class) with ``__init__(self, *args, **kwargs)`` that
+    runs its validator, and sets ``__signature__`` to match. The model
+    classes construct exactly as the stdlib dataclasses did before the
+    migration (same binding of positional arguments, ``TypeError`` texts,
+    stored objects, ``__post_init__`` exceptions and cost; pydantic's own
+    ``__init__`` would also count ``init=False`` fields such as a mark's
+    ``type`` as positional parameters), so those two assignments, when
+    pydantic's own code makes them, are ignored. pydantic builds objects only
+    when parsing JSON (``_model.parse_model``), which does not go through
+    ``__init__``.
 
     It derives from ``ABCMeta`` so a model class can be mixed with an
-    ``abc.ABC`` base.
+    ``abc.ABC`` base."""
 
-    ``__signature__`` is a property here (a data descriptor on the metaclass
-    wins over the class attribute pydantic assigns when it builds a deferred
-    class), so ``inspect.signature(cls)`` shows the ``__init__`` parameters
-    rather than pydantic's ``(*args, **kwargs)``-style signature."""
-
-    @property
-    def __signature__(cls) -> Any:
-        if not dataclasses.is_dataclass(cls):
-            return None
-        sig = cls.__dict__.get("__init_signature__")
-        if sig is None:
-            sig = inspect.signature(_signature_shadow(cls))
-            bare = [p.replace(annotation=p.empty) for p in sig.parameters.values()]
-            sig = sig.replace(parameters=bare, return_annotation=sig.empty)
-            type.__setattr__(cls, "__init_signature__", sig)
-        return sig
-
-    @__signature__.setter
-    def __signature__(cls, value: Any) -> None:
-        pass  # pydantic's; the property above stands
-
-    def __call__(cls, *args: Any, **kwargs: Any) -> Any:
-        if dataclasses.is_dataclass(cls):
-            shadow = _signature_shadow(cls)
-            shadow(*args, **kwargs)  # raises TypeError for a bad call, like the stdlib
-            if args:
-                names = [f.name for f in dataclasses.fields(shadow)]
-                kwargs = {**dict(zip(names, args)), **kwargs}
-                args = ()
-        try:
-            return super().__call__(*args, **kwargs)
-        except ValidationError as e:
-            from ._model import construction_error
-
-            raise construction_error(e, cls) from None
+    def __setattr__(cls, name: str, value: Any) -> None:
+        if name in ("__init__", "__signature__") and \
+                str(sys._getframe(1).f_globals.get("__name__")).startswith("pydantic."):
+            return  # assigned by pydantic's own code
+        super().__setattr__(name, value)
 
 
 class SpecModel(metaclass=_ModelMeta):
@@ -197,17 +157,31 @@ class SpecModel(metaclass=_ModelMeta):
 
 def model(cls: Any = None, *, frozen: bool = False, config: ConfigDict = SPEC_CONFIG) -> Any:
     """``pydantic.dataclasses.dataclass`` with the library's configuration, for
-    a :class:`SpecModel` subclass."""
+    a :class:`SpecModel` subclass, keeping what the stdlib dataclass had:
+    its ``__init__`` (see :class:`_ModelMeta`), the field types in
+    ``inspect.signature`` as they were written before the migration, and the
+    generated ``__doc__`` of a class without a docstring."""
 
     def wrap(cls: Any) -> Any:
         if not issubclass(cls, SpecModel):
             raise TypeError(f"{cls.__name__} must subclass SpecModel.")
-        return pydantic_dataclass(cls, config=config, frozen=frozen)
+        doc = cls.__dict__.get("__doc__")
+        post_init = cls.__dict__.get("__post_init__")
+        if post_init is not None:
+            type.__setattr__(cls, "__post_init__", _guarded(post_init))
+        cls = pydantic_dataclass(cls, config=config, frozen=frozen)
+        init = cls.__dict__["__init__"]
+        init.__annotations__ = {**{f.name: _field_text(cls, f) for f in dataclasses.fields(cls)
+                                   if f.init}, "return": None}
+        if doc is None:
+            text = str(inspect.signature(cls)).replace(" -> None", "")
+            type.__setattr__(cls, "__doc__", cls.__name__ + text)
+        return cls
 
     return wrap if cls is None else wrap(cls)
 
 
-@model(frozen=True, config=STRICT_CONFIG)
+@model(frozen=True)
 class ValidationIssue(SpecModel):
     """One structured finding about a spec.
 
@@ -221,7 +195,7 @@ class ValidationIssue(SpecModel):
     path: str
     code: str
     message: str
-    severity: Literal["error", "warning", "info"] = "error"
+    severity: str = "error"
 
     def to_dict(self) -> dict[str, str]:
         return {

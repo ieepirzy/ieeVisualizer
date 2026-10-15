@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import field, fields
-from typing import Any, Optional, Union
+from typing import Any, Union
 
 from ._common import (
     SCHEMA_VERSION,
@@ -66,7 +66,7 @@ def _scalar(v: Any, path: str, what: str) -> Scalar | None:
 
 def Coordinate(what: str) -> Any:  # noqa: N802 - a type factory, used in annotations
     """A number (stored as a canonical float), an ISO-8601 string or null."""
-    return wire(lambda v: _scalar(v, "", what), Optional[Scalar])
+    return wire(lambda v: _scalar(v, "", what), "Scalar | None")
 
 
 def _parse_limits(v: Any) -> list[Scalar | None] | None:
@@ -92,7 +92,7 @@ class Axis(SpecModel):
     label: OptStr("label") = None
     unit: OptStr("unit") = None
     scale: OptStr("scale") = None
-    limits: wire(_parse_limits, Optional[list[Optional[Scalar]]]) = None
+    limits: wire(_parse_limits, "list[Scalar | None] | None") = None
 
     def __post_init__(self) -> None:
         try:
@@ -302,12 +302,12 @@ class FigureSpec(SpecModel):
         "layers", "axes", "legend", "annotations", "metadata"))
 
     title: OptStr("title") = None
-    layers: wire(_parse_layers, list[Mark]) = field(default_factory=list)
-    datasets: wire(_parse_datasets, dict[str, Dataset]) = field(default_factory=dict)
-    axes: wire(_parse_axes, dict[str, Axis]) = field(default_factory=dict)
+    layers: wire(_parse_layers, "list[Mark]") = field(default_factory=list)
+    datasets: wire(_parse_datasets, "dict[str, Dataset]") = field(default_factory=dict)
+    axes: wire(_parse_axes, "dict[str, Axis]") = field(default_factory=dict)
     coordinate_system: Str("coordinate_system") = "cartesian2d"
     legend: Nested(Legend) = field(default_factory=Legend)
-    annotations: wire(_parse_annotations, list[Annotation]) = field(default_factory=list)
+    annotations: wire(_parse_annotations, "list[Annotation]") = field(default_factory=list)
     caption: OptStr("caption") = None
     theme: OptStr("theme") = None
     id: OptStr("id") = None

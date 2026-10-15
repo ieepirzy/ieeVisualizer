@@ -12,22 +12,12 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections.abc import Mapping
 from dataclasses import field
-from typing import Annotated, Any, Callable, Optional, Protocol, runtime_checkable
-
-from pydantic import PlainValidator
+from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 from ..spec import DatasetRef, DataSnapshot, FigureSpec, SpecError, ValidationIssue
-from ..spec._common import (
-    STRICT_CONFIG,
-    BytesLike,
-    ListOf,
-    MapOf,
-    Real,
-    SetOf,
-    SpecModel,
-    model,
-)
+from ..spec._common import SpecModel, model
 
 #: Media type per output format. A format being listed here only means a
 #: request may name it; whether an adapter can produce it is a capability.
@@ -49,7 +39,7 @@ MAX_PIXELS_PER_SIDE = 20000
 Resolver = Callable[[DatasetRef], DataSnapshot]
 
 
-@model(frozen=True, config=STRICT_CONFIG)
+@model(frozen=True)
 class RenderWarning(SpecModel):
     """A fidelity warning attached to a render.
 
@@ -66,21 +56,7 @@ class RenderWarning(SpecModel):
         return {"code": self.code, "message": self.message, "path": self.path}
 
 
-def _as_given(v: Any) -> Any:
-    return v
-
-
-#: Field types of :class:`RenderRequest`: taken as given here and checked by
-#: ``__post_init__`` in the order the pre-pydantic class checked them (format,
-#: units, then width/height/dpi), so the first problem reported is the same.
-#: Numbers stay as given (``11`` stays an int, so :meth:`RenderRequest.to_dict`
-#: writes it as given).
-_Format = Annotated[str, PlainValidator(_as_given)]
-_Units = Annotated[str, PlainValidator(_as_given)]
-_Positive = Annotated[float, PlainValidator(_as_given)]
-
-
-@model(frozen=True, config=STRICT_CONFIG)
+@model(frozen=True)
 class RenderRequest(SpecModel):
     """What output to produce.
 
@@ -90,11 +66,11 @@ class RenderRequest(SpecModel):
     is selected by capability.
     """
 
-    format: _Format = "png"
-    width: _Positive = 6.4
-    height: _Positive = 4.8
-    units: _Units = "in"
-    dpi: _Positive = 100.0
+    format: str = "png"
+    width: float = 6.4
+    height: float = 4.8
+    units: str = "in"
+    dpi: float = 100.0
     theme: Optional[str] = None
     adapter: Optional[str] = None
 
@@ -147,20 +123,20 @@ class RenderRequest(SpecModel):
         return d
 
 
-@model(frozen=True, config=STRICT_CONFIG)
+@model(frozen=True)
 class RenderResult(SpecModel):
     """Bytes of one rendered output plus how they were made."""
 
-    content: BytesLike
+    content: bytes
     format: str
     media_type: str
     adapter_name: str
     adapter_version: str
-    warnings: ListOf(RenderWarning) = field(default_factory=list)
+    warnings: list[RenderWarning] = field(default_factory=list)
     request: Optional[RenderRequest] = None
     #: ``{"name", "version", "sha256"}`` of the theme the adapter drew with
     #: (``None`` for an adapter that does not report one).
-    theme: Optional[MapOf(str, str)] = None
+    theme: Optional[dict[str, str]] = None
 
     @property
     def sha256(self) -> str:
@@ -171,28 +147,28 @@ class RenderResult(SpecModel):
         return len(self.content)
 
 
-@model(frozen=True, config=STRICT_CONFIG)
+@model(frozen=True)
 class Capabilities(SpecModel):
     """What an adapter can draw and produce. Selection compares these with
     what a spec + request actually need (:func:`requirements_for`)."""
 
-    coordinate_systems: SetOf(str)
-    mark_types: SetOf(str)
-    output_formats: SetOf(str)
-    annotation_types: SetOf(str) = frozenset({"text", "reference_line", "reference_band"})
+    coordinate_systems: frozenset[str]
+    mark_types: frozenset[str]
+    output_formats: frozenset[str]
+    annotation_types: frozenset[str] = frozenset({"text", "reference_line", "reference_band"})
     three_d: bool = False
     animation: bool = False
     interactive: bool = False
     vector_export: bool = False
     #: Most data points the adapter draws without downsampling; ``None`` = no limit.
-    max_points: Optional[Real] = None
+    max_points: Optional[int] = None
     #: Most histogram bins one histogram may ask for; ``None`` = no limit.
     #: Drawing time grows with the bin count, not the data, so an
     #: agent-supplied ``bins`` is bounded here.
-    max_bins: Optional[Real] = None
+    max_bins: Optional[int] = None
     #: Mark types the adapter cannot draw in a given coordinate system even
     #: though it supports both separately.
-    unsupported: MapOf(str, SetOf(str)) = field(default_factory=dict)
+    unsupported: Mapping[str, frozenset[str]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {

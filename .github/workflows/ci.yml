@@ -44,3 +44,24 @@ jobs:
               assert os.environ["GITHUB_WORKSPACE"] not in mod.__file__, mod.__file__
               print("ok", name, mod.__file__)
           PY
+
+  # The suite with the lowest pydantic pyproject.toml allows, so the floor
+  # stays true. One Python version: this checks pydantic's API, not Python's.
+  min-pydantic:
+    runs-on: ubuntu-latest
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Install with the minimum pydantic
+        run: |
+          min=$(sed -n 's/^ *"pydantic>=\([0-9.]*\),.*/\1/p' pyproject.toml)
+          test -n "$min"
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" "pydantic==$min"
+          python -c "import pydantic, sys; assert pydantic.VERSION == sys.argv[1], pydantic.VERSION" "$min"
+      - name: Pytest
+        run: python -m pytest

@@ -28,20 +28,20 @@ from __future__ import annotations
 from dataclasses import field
 from typing import Any, Optional
 
-from ..spec._common import STRICT_CONFIG, ListOf, MapOf, Real, SpecModel, canonical_json, model
+from ..spec._common import SpecModel, canonical_json, model
 
 #: Version of the manifest format itself (not of the spec).
 MANIFEST_SCHEMA_VERSION = "1.0"
 
 
-@model(config=STRICT_CONFIG)
+@model
 class FileEntry(SpecModel):
     """A stored file of the artifact (name is relative to the artifact)."""
 
     name: str
     media_type: str
     sha256: str
-    size_bytes: Real
+    size_bytes: int
 
     def to_dict(self) -> dict[str, Any]:
         return {"name": self.name, "media_type": self.media_type, "sha256": self.sha256,
@@ -53,7 +53,7 @@ class FileEntry(SpecModel):
                    size_bytes=d["size_bytes"])
 
 
-@model(config=STRICT_CONFIG)
+@model
 class RenderVariant(SpecModel):
     """One rendered output of the figure."""
 
@@ -61,8 +61,8 @@ class RenderVariant(SpecModel):
     file: FileEntry
     adapter_name: str
     adapter_version: str
-    request: MapOf(str, Any) = field(default_factory=dict)
-    warnings: ListOf(MapOf(str, str)) = field(default_factory=list)
+    request: dict[str, Any] = field(default_factory=dict)
+    warnings: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def media_type(self) -> str:
@@ -89,15 +89,15 @@ class RenderVariant(SpecModel):
                    warnings=[dict(w) for w in d.get("warnings", [])])
 
 
-@model(config=STRICT_CONFIG)
+@model
 class DatasetRecord(SpecModel):
     """Provenance of one dataset of the spec."""
 
     type: str  # "snapshot" | "ref"
     content_hash: Optional[str]  # None for a reference no layer drew (never resolved)
-    provenance: MapOf(str, Any) = field(default_factory=dict)
-    columns: MapOf(str, MapOf(str, Any)) = field(default_factory=dict)
-    ref: Optional[MapOf(str, Any)] = None
+    provenance: dict[str, Any] = field(default_factory=dict)
+    columns: dict[str, dict[str, Any]] = field(default_factory=dict)
+    ref: Optional[dict[str, Any]] = None
     resolved: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -118,23 +118,23 @@ class DatasetRecord(SpecModel):
                    resolved=bool(d.get("resolved", False)))
 
 
-@model(config=STRICT_CONFIG)
+@model
 class VisualizationArtifact(SpecModel):
     artifact_id: str
     spec_hash: str
     spec_schema_version: str
     spec_file: FileEntry
-    datasets: MapOf(str, DatasetRecord)
-    variants: ListOf(RenderVariant)
-    library_versions: MapOf(str, str)
+    datasets: dict[str, DatasetRecord]
+    variants: list[RenderVariant]
+    library_versions: dict[str, str]
     created_at: str
     spec_id: Optional[str] = None
     title: Optional[str] = None
-    spec_metadata: MapOf(str, Any) = field(default_factory=dict)
+    spec_metadata: dict[str, Any] = field(default_factory=dict)
     resolved_spec_file: Optional[FileEntry] = None
     #: ``{"name", "version", "sha256", "file": FileEntry dict}``; ``None`` in
     #: manifests written before themes were recorded.
-    theme: Optional[MapOf(str, Any)] = None
+    theme: Optional[dict[str, Any]] = None
     schema_version: str = MANIFEST_SCHEMA_VERSION
 
     def variant(self, fmt: str) -> RenderVariant:

@@ -12,7 +12,7 @@ license = { file = "LICENSE" }
 dependencies = [
     "matplotlib",
     "numpy",
-    "pydantic>=2,<3",
+    "pydantic>=2.1.0,<3",
     "sympy",
 ]
 

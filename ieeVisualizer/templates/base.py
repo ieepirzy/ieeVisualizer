@@ -63,9 +63,7 @@ from __future__ import annotations
 import copy
 import math
 from collections.abc import Mapping
-from typing import Annotated, Any, Optional
-
-from pydantic import AfterValidator, BeforeValidator
+from typing import Any, Optional
 
 from ..spec import (
     DatasetRef,
@@ -76,8 +74,8 @@ from ..spec import (
     ValidationIssue,
     validate,
 )
-from ..spec._common import STRICT_CONFIG, SpecModel, TupleOf, _to_tuple, model, ptr, suggest
-from ..spec.data import DTYPES, dataset_from_dict, dataset_to_dict
+from ..spec._common import SpecModel, model, ptr, suggest
+from ..spec.data import dataset_from_dict, dataset_to_dict
 
 #: Parameter types and the JSON-Schema-ish type an agent should send.
 PARAM_TYPES = {
@@ -107,30 +105,7 @@ class TemplateRegistryError(SpecError):
     registration, malformed version)."""
 
 
-def _one_of(choices: Any, what: str) -> Any:
-    def check(v: Any) -> Any:
-        if v not in choices:
-            raise ValueError(f"unknown {what} {v!r}; use one of {', '.join(choices)}.")
-        return v
-
-    return AfterValidator(check)
-
-
-def _dtypes(v: tuple[str, ...]) -> tuple[str, ...]:
-    bad = [d for d in v if d not in DTYPES]
-    if bad or not v:
-        raise ValueError(f"dtypes must be a non-empty tuple of {', '.join(DTYPES)}; got {v!r}.")
-    return v
-
-
-#: Field types of the descriptors: a template that declares an unknown
-#: parameter type, dtype or unit policy fails when its class is defined.
-_ParamType = Annotated[str, _one_of(PARAM_TYPES, "parameter type")]
-_UnitPolicy = Annotated[str, _one_of(UNIT_POLICIES, "unit policy")]
-_Dtypes = Annotated[tuple[str, ...], BeforeValidator(_to_tuple), AfterValidator(_dtypes)]
-
-
-@model(frozen=True, config=STRICT_CONFIG)
+@model(frozen=True)
 class Parameter(SpecModel):
     """One template parameter.
 
@@ -141,15 +116,11 @@ class Parameter(SpecModel):
     """
 
     name: str
-    type: _ParamType
+    type: str
     description: str
     default: Any = None
     required: bool = False
-    allowed: Optional[TupleOf(Any)] = None
-
-    def __post_init__(self) -> None:
-        if self.required and self.default is not None:
-            raise ValueError(f"parameter {self.name!r} is required, so it cannot have a default.")
+    allowed: Optional[tuple[Any, ...]] = None
 
     def describe(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -165,7 +136,7 @@ class Parameter(SpecModel):
         return out
 
 
-@model(frozen=True, config=STRICT_CONFIG)
+@model(frozen=True)
 class ColumnRequirement(SpecModel):
     """A column (or list of columns) the template reads from the input data.
 
@@ -178,9 +149,9 @@ class ColumnRequirement(SpecModel):
 
     role: str
     parameter: str
-    dtypes: _Dtypes
+    dtypes: tuple[str, ...]
     description: str
-    unit: _UnitPolicy = "recommended"
+    unit: str = "recommended"
     drawn: bool = True  # all-null is an error for a column that is drawn
 
     def describe(self) -> dict[str, Any]:

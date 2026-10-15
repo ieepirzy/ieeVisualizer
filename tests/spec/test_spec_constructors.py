@@ -1,9 +1,10 @@
 """Python construction of every model class behaves as it did before the
-pydantic migration, when the classes were stdlib dataclasses: positional
-arguments fill the ``__init__`` fields in ``dataclasses.fields`` order (a
-mark's ``type`` is not an ``__init__`` field), bad calls raise the stdlib
-``TypeError``, ``inspect.signature`` shows the ``__init__`` parameters, and
-the descriptor classes take the containers callers used to pass."""
+pydantic migration, when the classes were stdlib dataclasses (it is the
+stdlib-generated ``__init__``): positional arguments fill the ``__init__``
+fields in ``dataclasses.fields`` order (a mark's ``type`` is not an
+``__init__`` field), bad calls raise the stdlib ``TypeError``, and
+``inspect.signature`` shows the ``__init__`` parameters. See also
+``test_spec_model_parity.py``."""
 
 from __future__ import annotations
 
@@ -30,7 +31,6 @@ from ieeVisualizer.spec import (
     FigureSpec,
     LineMark,
     ReferenceLine,
-    SpecParseError,
     ValidationIssue,
 )
 from ieeVisualizer.spec._common import SpecModel
@@ -202,8 +202,10 @@ def test_an_argument_error_wins_over_a_value_error():
 
 
 def test_signature_lists_the_init_parameters():
-    assert str(inspect.signature(LineMark)) == \
-        "(data=None, encoding=<factory>, role='observed', name=None, style=<factory>)"
+    assert str(inspect.signature(LineMark)) == (
+        "(data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, "
+        "role: 'str' = 'observed', name: 'str | None' = None, "
+        "style: 'dict[str, Any]' = <factory>) -> None")
     for cls in _all_model_classes():
         assert list(inspect.signature(cls).parameters) == _init_names(cls), cls.__name__
 
@@ -229,30 +231,3 @@ def test_render_request_reports_problems_in_the_old_order():
         RenderRequest(units="cm", width=-1)
     with pytest.raises(ValueError, match="width must be a positive finite number"):
         RenderRequest(width=-1, dpi=0)
-
-
-def test_descriptors_take_the_containers_callers_used_to_pass():
-    assert Parameter("p", "string", "d", allowed=["a", "b"]).allowed == ("a", "b")
-    assert ColumnRequirement("r", "p", ["float", "int"], "d").dtypes == ("float", "int")
-    caps = Capabilities({"cartesian2d"}, ["line"], ("png",), unsupported={"polar": {"bar"}})
-    assert caps.mark_types == frozenset({"line"}) and caps.unsupported == {
-        "polar": frozenset({"bar"})}
-    res = RenderResult(bytearray(b"ab"), "png", "image/png", "a", "1",
-                       (RenderWarning("c", "m"),))
-    assert res.content == b"ab" and type(res.content) is bytes
-    assert res.warnings == [RenderWarning("c", "m")]
-    assert RenderResult(memoryview(b"ab"), "png", "image/png", "a", "1").size_bytes == 2
-    assert FileEntry("f", "t", "s", 10.0).size_bytes == 10.0
-    assert Capabilities(set(), set(), set(), max_points=1e6).max_points == 1e6
-
-
-@pytest.mark.parametrize("call, path", [
-    (lambda: Parameter("p", "string", "d", allowed="ab"), "/allowed"),
-    (lambda: ColumnRequirement("r", "p", "float", "d"), "/dtypes"),
-    (lambda: FileEntry("f", "t", "s", True), "/size_bytes"),
-    (lambda: RenderResult("text", "png", "image/png", "a", "1"), "/content"),
-])
-def test_wrong_types_are_still_refused(call, path):
-    with pytest.raises(SpecParseError) as e:
-        call()
-    assert e.value.issues[0].path == path and e.value.issues[0].code == "invalid_type"

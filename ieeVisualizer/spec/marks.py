@@ -27,7 +27,7 @@ renderer evaluates, the spec itself never evaluates it) or sampled (``data`` +
 from __future__ import annotations
 
 from dataclasses import field, fields
-from typing import Any, Optional
+from typing import Any
 
 from ._common import (
     SpecParseError,
@@ -91,7 +91,7 @@ class Mark(SpecModel):
 
     type: Str("type")
     data: OptStr("data") = None
-    encoding: wire(_parse_encoding, dict[str, Encoding]) = field(default_factory=dict)
+    encoding: wire(_parse_encoding, "dict[str, Encoding]") = field(default_factory=dict)
     role: Str("role") = "observed"
     name: OptStr("name") = None
     style: JsonObject("style") = field(default_factory=dict)
@@ -150,7 +150,7 @@ class HistogramMark(Mark):
 
     type: Str("type") = field(default="histogram", init=False)
     bins: OptInt("bins") = None
-    bin_edges: wire(_parse_bin_edges, Optional[list[float]]) = None
+    bin_edges: wire(_parse_bin_edges, "list[float] | None") = None
     density: Bool("density") = False
 
 
@@ -197,10 +197,10 @@ class FunctionMark(Mark):
 
     type: Str("type") = field(default="function", init=False)
     expression: OptStr("expression") = None
-    variables: wire(_parse_variables, list[str]) = field(default_factory=lambda: ["x"])
-    domain: wire(_parse_domain, dict[str, list[float]]) = field(default_factory=dict)
+    variables: wire(_parse_variables, "list[str]") = field(default_factory=lambda: ["x"])
+    domain: wire(_parse_domain, "dict[str, list[float]]") = field(default_factory=dict)
     samples: Int("samples") = 200
-    parameters: wire(_parse_parameters, dict[str, float]) = field(default_factory=dict)
+    parameters: wire(_parse_parameters, "dict[str, float]") = field(default_factory=dict)
 
 
 def _canon_float_list(v: Any, path: str = "", what: str = "value") -> Any:

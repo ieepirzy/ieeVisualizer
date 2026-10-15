@@ -2,9 +2,9 @@
 
 Pinned here:
 
-* pydantic errors become the library's structured issues: a
-  ``SpecParseError`` with one RFC-6901 pointer from the document root and the
-  library's issue code, never a raw ``pydantic.ValidationError``;
+* parse errors are the library's structured issues: a ``SpecParseError``
+  with one RFC-6901 pointer from the document root and the library's issue
+  code, never a raw ``pydantic.ValidationError``;
 * the first problem is reported in the parser's field order, per object;
 * parsing is strict (no coercion), Python construction is permissive;
 * constructors raise the original exception (or ``TypeError`` for bad
@@ -17,7 +17,6 @@ import dataclasses
 
 import pydantic
 import pytest
-from pydantic.dataclasses import is_pydantic_dataclass
 
 from ieeVisualizer.artifacts.manifest import (
     DatasetRecord,
@@ -44,7 +43,7 @@ from ieeVisualizer.spec import (
     from_dict,
     json_schema,
 )
-from ieeVisualizer.spec._model import issue_from_error, parse_model, wire_keys
+from ieeVisualizer.spec._model import build, parse_model, wire_keys
 from ieeVisualizer.templates.base import ColumnRequirement, Parameter
 
 SPEC_CLASSES = [Axis, Column, ColumnSchema, DatasetRef, DataSnapshot, Encoding, FigureSpec,
@@ -76,7 +75,8 @@ def parse_issue(d):
 
 def test_every_model_class_is_a_pydantic_dataclass():
     for cls in SPEC_CLASSES + DESCRIPTOR_CLASSES:
-        assert is_pydantic_dataclass(cls), cls
+        # pydantic.dataclasses.is_pydantic_dataclass is not in every supported version
+        assert dataclasses.is_dataclass(cls) and hasattr(cls, "__pydantic_validator__"), cls
 
 
 def test_the_unbroken_document_parses():
@@ -190,22 +190,13 @@ def test_parse_model_points_relative_to_the_object():
     assert [(i.path, i.code) for i in e.value.issues] == [("/limits", "invalid_limits")]
 
 
-def test_issue_from_error_composes_location_and_relative_pointer():
-    inner = SpecParseError([ValidationIssue("/1", "non_finite_number", "nan")])
-    err = {"type": "value_error", "loc": ("layers", 0, "bin_edges"), "msg": "x",
-           "ctx": {"error": inner}}
-    assert issue_from_error(err) == ValidationIssue("/layers/0/bin_edges/1",
-                                                    "non_finite_number", "nan")
-
-
-def test_issue_from_error_maps_post_init_errors_and_pydantic_types():
-    err = {"type": "value_error", "loc": (), "msg": "x", "ctx": {"error": ValueError("bad")}}
-    assert issue_from_error(err, Column) == ValidationIssue("/values", "invalid_values", "bad")
-    err = {"type": "string_type", "loc": ("a/b",), "msg": "Input should be a valid string",
-           "input": 5}
-    issue = issue_from_error(err, Encoding)
-    assert (issue.path, issue.code) == ("/a~1b", "invalid_type")
-    assert issue.message == "a/b must be a string, got number 5."
+def test_build_reraises_post_init_errors():
+    with pytest.raises(SpecParseError) as e:  # Column declares __post_init_issue__
+        build(Column, {"values": [1, "a"]})
+    assert [(i.path, i.code) for i in e.value.issues] == [("/values", "invalid_values")]
+    with pytest.raises(ValueError) as e:  # Axis does not: the original exception
+        build(Axis, {"scale": "time", "limits": [0, float("inf")]})
+    assert type(e.value) is ValueError and "axis limits" in str(e.value)
 
 
 # --- construction: permissive, original exceptions, never pydantic errors ----
@@ -247,32 +238,25 @@ def test_dataclass_protocols_still_work():
 
 
 @pytest.mark.parametrize(
-    "build, path",
+    "make, value",
     [
-        (lambda: RenderRequest(theme=5), "/theme"),
-        (lambda: RenderWarning(1, "m"), "/code"),
-        (lambda: FileEntry("f", "image/png", "sha256:x", "12"), "/size_bytes"),
-        (lambda: Parameter("p", "string", "d", allowed="ab"), "/allowed"),
-        (lambda: ColumnRequirement("r", "p", 5, "d"), "/dtypes"),
-        (lambda: ValidationIssue("", "c", "m", "fatal"), "/severity"),
+        (lambda: RenderRequest(theme=5), 5),
+        (lambda: RenderWarning(1, "m"), 1),
+        (lambda: FileEntry("f", "image/png", "sha256:x", "12"), "12"),
+        (lambda: Parameter("p", "string", "d", allowed="ab"), "ab"),
+        (lambda: ColumnRequirement("r", "p", 5, "d"), 5),
+        (lambda: ValidationIssue("", "c", "m", "fatal"), "fatal"),
     ],
 )
-def test_descriptor_type_errors_are_structured(build, path):
-    with pytest.raises(SpecParseError) as e:
-        build()
-    assert [(i.path, i.code) for i in e.value.issues][:1] == [(path, "invalid_type")]
+def test_descriptors_store_what_they_are_given(make, value):
+    obj = make()  # as the stdlib dataclasses did: no check, no conversion
+    assert value in [getattr(obj, f.name) for f in dataclasses.fields(obj)]
 
 
-def test_descriptor_values_keep_their_messages_and_python_types():
+def test_descriptor_post_init_checks_keep_their_messages_and_python_types():
     with pytest.raises(ValueError, match="positive finite number, got '5'"):
         RenderRequest(width="5")
     assert type(RenderRequest(width=11).width) is int  # not coerced to 11.0
-    with pytest.raises(ValueError, match="unknown parameter type 'strng'"):
-        Parameter("p", "strng", "d")
-    with pytest.raises(ValueError, match="cannot have a default"):
-        Parameter("p", "string", "d", required=True, default="x")
-    with pytest.raises(ValueError, match="dtypes must be"):
-        ColumnRequirement("r", "p", ("money",), "d")
 
 
 # --- the model classes and the hand-written JSON schema agree -----------------

@@ -1,0 +1,167 @@
+{
+ "ieeVisualizer.artifacts.manifest.DatasetRecord": {
+  "doc": "Provenance of one dataset of the spec.",
+  "init": "(self, type: 'str', content_hash: 'str | None', provenance: 'dict[str, Any]' = <factory>, columns: 'dict[str, dict[str, Any]]' = <factory>, ref: 'dict[str, Any] | None' = None, resolved: 'bool' = False) -> None",
+  "signature": "(type: 'str', content_hash: 'str | None', provenance: 'dict[str, Any]' = <factory>, columns: 'dict[str, dict[str, Any]]' = <factory>, ref: 'dict[str, Any] | None' = None, resolved: 'bool' = False) -> None"
+ },
+ "ieeVisualizer.artifacts.manifest.FileEntry": {
+  "doc": "A stored file of the artifact (name is relative to the artifact).",
+  "init": "(self, name: 'str', media_type: 'str', sha256: 'str', size_bytes: 'int') -> None",
+  "signature": "(name: 'str', media_type: 'str', sha256: 'str', size_bytes: 'int') -> None"
+ },
+ "ieeVisualizer.artifacts.manifest.RenderVariant": {
+  "doc": "One rendered output of the figure.",
+  "init": "(self, format: 'str', file: 'FileEntry', adapter_name: 'str', adapter_version: 'str', request: 'dict[str, Any]' = <factory>, warnings: 'list[dict[str, str]]' = <factory>) -> None",
+  "signature": "(format: 'str', file: 'FileEntry', adapter_name: 'str', adapter_version: 'str', request: 'dict[str, Any]' = <factory>, warnings: 'list[dict[str, str]]' = <factory>) -> None"
+ },
+ "ieeVisualizer.artifacts.manifest.VisualizationArtifact": {
+  "doc": "VisualizationArtifact(artifact_id: 'str', spec_hash: 'str', spec_schema_version: 'str', spec_file: 'FileEntry', datasets: 'dict[str, DatasetRecord]', variants: 'list[RenderVariant]', library_versions: 'dict[str, str]', created_at: 'str', spec_id: 'str | None' = None, title: 'str | None' = None, spec_metadata: 'dict[str, Any]' = <factory>, resolved_spec_file: 'FileEntry | None' = None, theme: 'dict[str, Any] | None' = None, schema_version: 'str' = '1.0')",
+  "init": "(self, artifact_id: 'str', spec_hash: 'str', spec_schema_version: 'str', spec_file: 'FileEntry', datasets: 'dict[str, DatasetRecord]', variants: 'list[RenderVariant]', library_versions: 'dict[str, str]', created_at: 'str', spec_id: 'str | None' = None, title: 'str | None' = None, spec_metadata: 'dict[str, Any]' = <factory>, resolved_spec_file: 'FileEntry | None' = None, theme: 'dict[str, Any] | None' = None, schema_version: 'str' = '1.0') -> None",
+  "signature": "(artifact_id: 'str', spec_hash: 'str', spec_schema_version: 'str', spec_file: 'FileEntry', datasets: 'dict[str, DatasetRecord]', variants: 'list[RenderVariant]', library_versions: 'dict[str, str]', created_at: 'str', spec_id: 'str | None' = None, title: 'str | None' = None, spec_metadata: 'dict[str, Any]' = <factory>, resolved_spec_file: 'FileEntry | None' = None, theme: 'dict[str, Any] | None' = None, schema_version: 'str' = '1.0') -> None"
+ },
+ "ieeVisualizer.render.base.Capabilities": {
+  "doc": "What an adapter can draw and produce. Selection compares these with\nwhat a spec + request actually need (:func:`requirements_for`).",
+  "init": "(self, coordinate_systems: 'frozenset[str]', mark_types: 'frozenset[str]', output_formats: 'frozenset[str]', annotation_types: 'frozenset[str]' = frozenset({'reference_line', 'text', 'reference_band'}), three_d: 'bool' = False, animation: 'bool' = False, interactive: 'bool' = False, vector_export: 'bool' = False, max_points: 'int | None' = None, max_bins: 'int | None' = None, unsupported: 'Mapping[str, frozenset[str]]' = <factory>) -> None",
+  "signature": "(coordinate_systems: 'frozenset[str]', mark_types: 'frozenset[str]', output_formats: 'frozenset[str]', annotation_types: 'frozenset[str]' = frozenset({'reference_line', 'text', 'reference_band'}), three_d: 'bool' = False, animation: 'bool' = False, interactive: 'bool' = False, vector_export: 'bool' = False, max_points: 'int | None' = None, max_bins: 'int | None' = None, unsupported: 'Mapping[str, frozenset[str]]' = <factory>) -> None"
+ },
+ "ieeVisualizer.render.base.RenderRequest": {
+  "doc": "What output to produce.\n\n``width``/``height`` are in ``units`` (``\"in\"`` or ``\"px\"``); ``dpi``\nconverts between the two and sets raster resolution. ``theme`` overrides\nthe spec's theme name. ``adapter`` pins a renderer by name; otherwise one\nis selected by capability.\n",
+  "init": "(self, format: 'str' = 'png', width: 'float' = 6.4, height: 'float' = 4.8, units: 'str' = 'in', dpi: 'float' = 100.0, theme: 'str | None' = None, adapter: 'str | None' = None) -> None",
+  "signature": "(format: 'str' = 'png', width: 'float' = 6.4, height: 'float' = 4.8, units: 'str' = 'in', dpi: 'float' = 100.0, theme: 'str | None' = None, adapter: 'str | None' = None) -> None"
+ },
+ "ieeVisualizer.render.base.RenderResult": {
+  "doc": "Bytes of one rendered output plus how they were made.",
+  "init": "(self, content: 'bytes', format: 'str', media_type: 'str', adapter_name: 'str', adapter_version: 'str', warnings: 'list[RenderWarning]' = <factory>, request: 'RenderRequest | None' = None, theme: 'dict[str, str] | None' = None) -> None",
+  "signature": "(content: 'bytes', format: 'str', media_type: 'str', adapter_name: 'str', adapter_version: 'str', warnings: 'list[RenderWarning]' = <factory>, request: 'RenderRequest | None' = None, theme: 'dict[str, str] | None' = None) -> None"
+ },
+ "ieeVisualizer.render.base.RenderWarning": {
+  "doc": "A fidelity warning attached to a render.\n\n``code`` is a stable identifier, ``message`` a sentence naming what was\nlost or approximated, ``path`` a JSON pointer into the spec (\"\" when the\nwarning is about the request or the figure as a whole).\n",
+  "init": "(self, code: 'str', message: 'str', path: 'str' = '') -> None",
+  "signature": "(code: 'str', message: 'str', path: 'str' = '') -> None"
+ },
+ "ieeVisualizer.spec._common.ValidationIssue": {
+  "doc": "One structured finding about a spec.\n\n``path`` is an RFC-6901 JSON pointer into the *serialized* spec (the same\npointer an agent would pass to :func:`apply_patch` to fix it), ``code`` is\na stable machine-readable identifier, ``message`` is a readable sentence\nthat names the fix, and ``severity`` is ``\"error\"``, ``\"warning\"`` or\n``\"info\"``. Only errors make a spec unrenderable.\n",
+  "init": "(self, path: 'str', code: 'str', message: 'str', severity: 'str' = 'error') -> None",
+  "signature": "(path: 'str', code: 'str', message: 'str', severity: 'str' = 'error') -> None"
+ },
+ "ieeVisualizer.spec.data.Column": {
+  "doc": "One inline column. ``values`` is normalised on construction.",
+  "init": "(self, values: 'list[Any]', dtype: 'str | None' = None, unit: 'str | None' = None, description: 'str | None' = None, denominator: 'str | None' = None, aggregation: 'str | None' = None) -> None",
+  "signature": "(values: 'list[Any]', dtype: 'str | None' = None, unit: 'str | None' = None, description: 'str | None' = None, denominator: 'str | None' = None, aggregation: 'str | None' = None) -> None"
+ },
+ "ieeVisualizer.spec.data.ColumnSchema": {
+  "doc": "Column description without values (used by :class:`DatasetRef`).",
+  "init": "(self, dtype: 'str | None' = None, unit: 'str | None' = None, description: 'str | None' = None, denominator: 'str | None' = None, aggregation: 'str | None' = None) -> None",
+  "signature": "(dtype: 'str | None' = None, unit: 'str | None' = None, description: 'str | None' = None, denominator: 'str | None' = None, aggregation: 'str | None' = None) -> None"
+ },
+ "ieeVisualizer.spec.data.DataSnapshot": {
+  "doc": "Inline columnar data with per-column units and dataset provenance.",
+  "init": "(self, columns: 'dict[str, Column]' = <factory>, provenance: 'Provenance' = <factory>) -> None",
+  "signature": "(columns: 'dict[str, Column]' = <factory>, provenance: 'Provenance' = <factory>) -> None"
+ },
+ "ieeVisualizer.spec.data.DatasetRef": {
+  "doc": "Reference to data held elsewhere. ``kind`` is free text; recommended\nvalues are ``query``, ``artifact``, ``file``, ``table``, ``run``.",
+  "init": "(self, kind: 'str', id: 'str', query: 'str | None' = None, version: 'str | None' = None, retrieved_at: 'str | None' = None, columns: 'dict[str, ColumnSchema] | None' = None) -> None",
+  "signature": "(kind: 'str', id: 'str', query: 'str | None' = None, version: 'str | None' = None, retrieved_at: 'str | None' = None, columns: 'dict[str, ColumnSchema] | None' = None) -> None"
+ },
+ "ieeVisualizer.spec.data.Provenance": {
+  "doc": "Where a snapshot came from. All fields optional; ``extra`` is free-form\nJSON for host-specific facts (e.g. permission scope applied upstream).",
+  "init": "(self, source: 'str | None' = None, query: 'str | None' = None, retrieved_at: 'str | None' = None, source_version: 'str | None' = None, timezone: 'str | None' = None, run_id: 'str | None' = None, notes: 'str | None' = None, extra: 'dict[str, Any]' = <factory>) -> None",
+  "signature": "(source: 'str | None' = None, query: 'str | None' = None, retrieved_at: 'str | None' = None, source_version: 'str | None' = None, timezone: 'str | None' = None, run_id: 'str | None' = None, notes: 'str | None' = None, extra: 'dict[str, Any]' = <factory>) -> None"
+ },
+ "ieeVisualizer.spec.figure.Annotation": {
+  "doc": "Base annotation; use a subclass.",
+  "init": "(self, type: 'str', label: 'str | None' = None, style: 'dict[str, Any]' = <factory>) -> None",
+  "signature": "(type: 'str', label: 'str | None' = None, style: 'dict[str, Any]' = <factory>) -> None"
+ },
+ "ieeVisualizer.spec.figure.Axis": {
+  "doc": "One positional axis. ``scale=None`` lets the renderer infer it from\nthe data (category for strings, time for datetimes, else linear).\n``limits`` is ``[min, max]``; either end may be ``None`` (auto). Time axes\nuse ISO-8601 strings as limits; on a ``scale=\"time\"`` axis they are stored\nin the canonical datetime form (see :mod:`ieeVisualizer.spec.data`).",
+  "init": "(self, label: 'str | None' = None, unit: 'str | None' = None, scale: 'str | None' = None, limits: 'list[Scalar | None] | None' = None) -> None",
+  "signature": "(label: 'str | None' = None, unit: 'str | None' = None, scale: 'str | None' = None, limits: 'list[Scalar | None] | None' = None) -> None"
+ },
+ "ieeVisualizer.spec.figure.FigureSpec": {
+  "doc": "A complete, renderer-independent figure description.\n\n``datasets`` maps a name to a :class:`DataSnapshot` or :class:`DatasetRef`;\neach layer's ``data`` refers to one of those names. ``axes`` is keyed by\n``\"x\"``, ``\"y\"`` (and ``\"z\"`` in ``cartesian3d``). ``metadata`` is\nfree-form JSON (template name/version, report run id, ...).\n",
+  "init": "(self, title: 'str | None' = None, layers: 'list[Mark]' = <factory>, datasets: 'dict[str, Dataset]' = <factory>, axes: 'dict[str, Axis]' = <factory>, coordinate_system: 'str' = 'cartesian2d', legend: 'Legend' = <factory>, annotations: 'list[Annotation]' = <factory>, caption: 'str | None' = None, theme: 'str | None' = None, id: 'str | None' = None, metadata: 'dict[str, Any]' = <factory>, schema_version: 'str' = '1.0') -> None",
+  "signature": "(title: 'str | None' = None, layers: 'list[Mark]' = <factory>, datasets: 'dict[str, Dataset]' = <factory>, axes: 'dict[str, Axis]' = <factory>, coordinate_system: 'str' = 'cartesian2d', legend: 'Legend' = <factory>, annotations: 'list[Annotation]' = <factory>, caption: 'str | None' = None, theme: 'str | None' = None, id: 'str | None' = None, metadata: 'dict[str, Any]' = <factory>, schema_version: 'str' = '1.0') -> None"
+ },
+ "ieeVisualizer.spec.figure.Legend": {
+  "doc": "Legend(show: 'bool' = True, position: 'str' = 'auto', title: 'str | None' = None)",
+  "init": "(self, show: 'bool' = True, position: 'str' = 'auto', title: 'str | None' = None) -> None",
+  "signature": "(show: 'bool' = True, position: 'str' = 'auto', title: 'str | None' = None) -> None"
+ },
+ "ieeVisualizer.spec.figure.ReferenceBand": {
+  "doc": "A shaded span ``[start, end]`` on ``axis``. For marking a known\ninterval (e.g. a holiday period), not for inventing uncertainty.",
+  "init": "(self, label: 'str | None' = None, style: 'dict[str, Any]' = <factory>, axis: 'str' = 'x', start: 'Scalar | None' = None, end: 'Scalar | None' = None) -> None",
+  "signature": "(label: 'str | None' = None, style: 'dict[str, Any]' = <factory>, axis: 'str' = 'x', start: 'Scalar | None' = None, end: 'Scalar | None' = None) -> None"
+ },
+ "ieeVisualizer.spec.figure.ReferenceLine": {
+  "doc": "A line across the plot at ``value`` on ``axis`` (``\"x\"`` or ``\"y\"``).",
+  "init": "(self, label: 'str | None' = None, style: 'dict[str, Any]' = <factory>, axis: 'str' = 'y', value: 'Scalar | None' = None) -> None",
+  "signature": "(label: 'str | None' = None, style: 'dict[str, Any]' = <factory>, axis: 'str' = 'y', value: 'Scalar | None' = None) -> None"
+ },
+ "ieeVisualizer.spec.figure.TextAnnotation": {
+  "doc": "``text`` placed at data coordinates (``x``, ``y``[, ``z``]).",
+  "init": "(self, label: 'str | None' = None, style: 'dict[str, Any]' = <factory>, text: 'str' = '', x: 'Scalar | None' = None, y: 'Scalar | None' = None, z: 'Scalar | None' = None) -> None",
+  "signature": "(label: 'str | None' = None, style: 'dict[str, Any]' = <factory>, text: 'str' = '', x: 'Scalar | None' = None, y: 'Scalar | None' = None, z: 'Scalar | None' = None) -> None"
+ },
+ "ieeVisualizer.spec.marks.AreaMark": {
+  "doc": "Filled area between ``y`` and zero.",
+  "init": "(self, data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>) -> None",
+  "signature": "(data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>) -> None"
+ },
+ "ieeVisualizer.spec.marks.BarMark": {
+  "doc": "Channels map literally to axes: a horizontal bar chart puts the\ncategories on ``y`` and the values on ``x``.",
+  "init": "(self, data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>, orientation: 'str' = 'vertical') -> None",
+  "signature": "(data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>, orientation: 'str' = 'vertical') -> None"
+ },
+ "ieeVisualizer.spec.marks.Encoding": {
+  "doc": "Maps one channel to one column. ``title`` overrides the column name in\nlegends/colorbars.",
+  "init": "(self, field: 'str', title: 'str | None' = None) -> None",
+  "signature": "(field: 'str', title: 'str | None' = None) -> None"
+ },
+ "ieeVisualizer.spec.marks.FunctionMark": {
+  "doc": "Symbolic ``expression`` over ``variables`` on ``domain``, or a sampled\nreference curve via ``data`` + ``encoding``.",
+  "init": "(self, data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>, expression: 'str | None' = None, variables: 'list[str]' = <factory>, domain: 'dict[str, list[float]]' = <factory>, samples: 'int' = 200, parameters: 'dict[str, float]' = <factory>) -> None",
+  "signature": "(data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>, expression: 'str | None' = None, variables: 'list[str]' = <factory>, domain: 'dict[str, list[float]]' = <factory>, samples: 'int' = 200, parameters: 'dict[str, float]' = <factory>) -> None"
+ },
+ "ieeVisualizer.spec.marks.HeatmapMark": {
+  "doc": "Long-format grid: one row per cell with ``x``, ``y`` and the cell value\non ``color``.",
+  "init": "(self, data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>) -> None",
+  "signature": "(data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>) -> None"
+ },
+ "ieeVisualizer.spec.marks.HistogramMark": {
+  "doc": "Bins the raw values of ``x``; the y axis is a count (or density).",
+  "init": "(self, data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>, bins: 'int | None' = None, bin_edges: 'list[float] | None' = None, density: 'bool' = False) -> None",
+  "signature": "(data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>, bins: 'int | None' = None, bin_edges: 'list[float] | None' = None, density: 'bool' = False) -> None"
+ },
+ "ieeVisualizer.spec.marks.LineMark": {
+  "doc": "LineMark(data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>)",
+  "init": "(self, data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>) -> None",
+  "signature": "(data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>) -> None"
+ },
+ "ieeVisualizer.spec.marks.Mark": {
+  "doc": "Base mark. Use a concrete subclass; constructing ``Mark`` directly with\nan unrecognised ``type`` is allowed so :func:`validate` can report it.",
+  "init": "(self, type: 'str', data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>) -> None",
+  "signature": "(type: 'str', data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>) -> None"
+ },
+ "ieeVisualizer.spec.marks.QuiverMark": {
+  "doc": "Arrows at (``x``, ``y``[, ``z``]) with components (``u``, ``v``[, ``w``]).",
+  "init": "(self, data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>, scale: 'float | None' = None, normalize: 'bool' = False) -> None",
+  "signature": "(data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>, scale: 'float | None' = None, normalize: 'bool' = False) -> None"
+ },
+ "ieeVisualizer.spec.marks.ScatterMark": {
+  "doc": "ScatterMark(data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>)",
+  "init": "(self, data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>) -> None",
+  "signature": "(data: 'str | None' = None, encoding: 'dict[str, Encoding]' = <factory>, role: 'str' = 'observed', name: 'str | None' = None, style: 'dict[str, Any]' = <factory>) -> None"
+ },
+ "ieeVisualizer.templates.base.ColumnRequirement": {
+  "doc": "A column (or list of columns) the template reads from the input data.\n\nThe column *name* is not fixed: ``parameter`` names the template parameter\nwhose value is the column name (or list of names, for ``column_list``\nparameters). ``dtypes`` lists the accepted spec dtypes. ``unit``:\n``\"recommended\"`` (a missing unit is reported as a warning unless the\ntemplate has another source for it) or ``\"not_applicable\"``.\n",
+  "init": "(self, role: 'str', parameter: 'str', dtypes: 'tuple[str, ...]', description: 'str', unit: 'str' = 'recommended', drawn: 'bool' = True) -> None",
+  "signature": "(role: 'str', parameter: 'str', dtypes: 'tuple[str, ...]', description: 'str', unit: 'str' = 'recommended', drawn: 'bool' = True) -> None"
+ },
+ "ieeVisualizer.templates.base.Parameter": {
+  "doc": "One template parameter.\n\n``type`` is a key of :data:`PARAM_TYPES`. ``default`` is used when the\ncaller omits the parameter (``None`` means \"unset\"); a parameter with\n``required=True`` has no default. ``allowed`` restricts the value to a\nfixed set.\n",
+  "init": "(self, name: 'str', type: 'str', description: 'str', default: 'Any' = None, required: 'bool' = False, allowed: 'tuple[Any, ...] | None' = None) -> None",
+  "signature": "(name: 'str', type: 'str', description: 'str', default: 'Any' = None, required: 'bool' = False, allowed: 'tuple[Any, ...] | None' = None) -> None"
+ }
+}

@@ -48,7 +48,7 @@ import math
 import re
 from collections.abc import Mapping
 from dataclasses import field
-from typing import Any, Optional, Union
+from typing import Any, Union
 
 from ._common import (
     beyond_float64,
@@ -329,7 +329,7 @@ class Column(SpecModel):
     #: A value normalize_values refuses is reported at /values, as invalid_values.
     __post_init_issue__ = ("invalid_values", "/values")
 
-    values: wire(_parse_values, list[Any])
+    values: wire(_parse_values, "list[Any]")
     dtype: OptStr("dtype") = None
     unit: OptStr("unit") = None
     description: OptStr("description") = None
@@ -370,7 +370,7 @@ class DataSnapshot(SpecModel):
 
     __wire__ = WireShape("a snapshot dataset", required=("columns",), drop=("type",))
 
-    columns: wire(_parse_columns, dict[str, Column]) = field(default_factory=dict)
+    columns: wire(_parse_columns, "dict[str, Column]") = field(default_factory=dict)
     provenance: Nested(Provenance) = field(default_factory=Provenance)
 
     @classmethod
@@ -425,7 +425,7 @@ class DatasetRef(SpecModel):
     query: OptStr("query") = None
     version: OptStr("version") = None
     retrieved_at: OptStr("retrieved_at") = None
-    columns: wire(_parse_schemas, Optional[dict[str, ColumnSchema]]) = None
+    columns: wire(_parse_schemas, "dict[str, ColumnSchema] | None") = None
 
 
 Dataset = Union[DataSnapshot, DatasetRef]
