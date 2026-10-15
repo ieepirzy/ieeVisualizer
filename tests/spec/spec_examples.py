@@ -60,7 +60,7 @@ def timeseries_spec() -> FigureSpec:
         annotations=[ReferenceLine(axis="y", value=1300, label="Target"),
                      ReferenceBand(axis="x", start="2026-09-28", end="2026-10-05",
                                    label="Holiday")],
-        theme="muutto365",
+        theme="corporate",
         metadata={"template": "timeseries", "template_version": "1"},
     )
 

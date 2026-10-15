@@ -202,7 +202,7 @@ class OrgChartTemplate(_NetworkTemplate):
                 ("ops", "ceo", "Operations", "Operations", 4),
                 ("sales", "ceo", "Sales", "Sales", 6),
                 ("fin", "ceo", "Finance", "Management", 3),
-                ("move", "ops", "Moving crews", "Operations", 38),
+                ("field", "ops", "Field teams", "Operations", 38),
                 ("fleet", "ops", "Fleet", "Operations", 7),
                 ("b2b", "sales", "Business sales", "Sales", 5),
                 ("b2c", "sales", "Consumer sales", "Sales", None),

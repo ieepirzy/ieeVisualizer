@@ -1,9 +1,9 @@
 """NetworkSpec: a semantic graph (nodes, edges, measured quantities) plus a
 separate layout hint, with strict parsing, canonical JSON and a hash.
 
-Plain dataclasses following the ``ieeVisualizer.spec`` conventions, so they
-can move to pydantic with the rest of the models. Importing this module never
-imports numpy or matplotlib.
+Plain dataclasses following the ``ieeVisualizer.spec`` conventions (the
+models stay stdlib dataclasses; see docs/ROADMAP.md). Importing this module
+never imports numpy or matplotlib.
 
 The graph is the claim; the layout is only a hint. Nothing in ``nodes`` or
 ``edges`` depends on the layout, so the same graph can be drawn node-link,

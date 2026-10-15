@@ -1,0 +1,139 @@
+{
+  "background": "#ffffff",
+  "description": "Neutral, accessible light theme for email and print.",
+  "diverging": [
+    "#0077bb",
+    "#d0d0d0",
+    "#cc3311"
+  ],
+  "foreground": "#1a1a1a",
+  "grid": "#dcdcdc",
+  "grid_alpha": 1.0,
+  "grid_below": true,
+  "grid_show": true,
+  "grid_width": 0.6,
+  "line_width": 1.8,
+  "locale": {
+    "currency_decimals": 2,
+    "currency_position": "suffix",
+    "currency_sep": " ",
+    "currency_symbol": "€",
+    "date_formats": [
+      "%Y",
+      "%m/%Y",
+      "%d.%m.",
+      "%H.%M",
+      "%H.%M",
+      "%S,%f"
+    ],
+    "date_offset_formats": [
+      "",
+      "%Y",
+      "%m/%Y",
+      "%d.%m.%Y",
+      "%d.%m.%Y",
+      "%d.%m.%Y %H.%M"
+    ],
+    "date_zero_formats": [
+      "",
+      "%Y",
+      "%m/%Y",
+      "%d.%m.",
+      "%H.%M",
+      "%H.%M"
+    ],
+    "decimal": ",",
+    "group": " ",
+    "group_min_digits": 4,
+    "max_decimals": 2,
+    "minus": "−",
+    "percent_sep": " ",
+    "tag": "fi-FI"
+  },
+  "muted": "#616161",
+  "name": "report-light",
+  "palette": [
+    "#0077bb",
+    "#117733",
+    "#aa3377",
+    "#332288"
+  ],
+  "pending": [],
+  "provenance": {
+    "background": "white",
+    "diverging": "palette blue / light neutral grey / Tol vibrant red",
+    "fonts": "DejaVu Sans ships with matplotlib, so a render is byte-identical on every machine; a host may list other families, the first installed one is used.",
+    "foreground": "near-black neutral (17.4:1)",
+    "grid": "light neutral grey (1.4:1)",
+    "locale": "fi-FI",
+    "muted": "neutral grey (6.2:1)",
+    "palette": [
+      "Tol vibrant blue #0077bb",
+      "Tol muted green #117733",
+      "Tol bright purple #aa3377",
+      "Tol muted indigo #332288"
+    ],
+    "semantic": "palette green (positive), Tol vibrant red (negative), signal as attention",
+    "sequential": "matplotlib cividis sampled on [0, 0.8] (high end visible on white)",
+    "signal": "dark amber, 5.0:1 on white; reserved, never a series colour",
+    "source": "designed for ieeVisualizer; series colours from Paul Tol, 'Colour Schemes' (SRON/EPS/TN/09-002, 2021)"
+  },
+  "roles": {
+    "forecast_fill_alpha": 0.75,
+    "forecast_hatch": "///",
+    "forecast_line_alpha": null,
+    "forecast_linestyle": "dashed",
+    "reference_alpha": 0.8,
+    "reference_color": "#616161",
+    "reference_fill_alpha": 0.7,
+    "reference_linewidth": 1.2
+  },
+  "semantic": {
+    "attention": "#a65e00",
+    "negative": "#cc3311",
+    "positive": "#117733"
+  },
+  "sequential": [
+    "#00224e",
+    "#083370",
+    "#35456c",
+    "#4f576c",
+    "#666970",
+    "#7d7c78",
+    "#948e77",
+    "#aea371",
+    "#c8b866"
+  ],
+  "signal": "#a65e00",
+  "spines": [
+    "left",
+    "bottom"
+  ],
+  "targets": {
+    "email": {
+      "description": "1200 x 750 px; shown about 600 px wide in mail",
+      "dpi": 200.0,
+      "height": 3.75,
+      "width": 6.0
+    },
+    "slide": {
+      "description": "1920 x 1080 px (16:9)",
+      "dpi": 240.0,
+      "height": 4.5,
+      "width": 8.0
+    }
+  },
+  "title": "Report (light)",
+  "typography": {
+    "caption": 8.0,
+    "family": [
+      "DejaVu Sans"
+    ],
+    "label": null,
+    "legend": null,
+    "size": null,
+    "tick": null,
+    "title": null
+  },
+  "version": "1.0.0"
+}

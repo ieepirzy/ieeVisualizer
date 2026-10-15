@@ -166,7 +166,7 @@ class FunnelTemplate(ComponentTemplate):
 
     def example(self) -> dict[str, Any]:
         snap = DataSnapshot.from_columns(
-            {"stage": ["Visited site", "Started quote", "Submitted quote", "Booked move"],
+            {"stage": ["Visited site", "Started quote", "Submitted quote", "Placed order"],
              "sessions": [12480, 2315, 1162, 287]},
             units={"sessions": "sessions"})
         snap.columns["sessions"].description = "Reached the stage"
@@ -179,7 +179,7 @@ class FunnelTemplate(ComponentTemplate):
             "params": {
                 "stage_column": "stage",
                 "count_column": "sessions",
-                "title": "Booking funnel, last 14 days",
+                "title": "Order funnel, last 14 days",
                 "caption": "Illustrative data. Each stage counts sessions that reached it.",
             },
         }

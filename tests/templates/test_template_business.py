@@ -117,7 +117,7 @@ def test_bar_several_measures_are_side_by_side():
                                units={"rev": "EUR", "prev": "USD"}),
      {"value_columns": ["rev"], "previous_column": "prev"}, ("/data/columns/rev",
                                                              "mixed_units")),
-    (channels(), {"value_columns": ["rev"], "theme": "muutto365-dark"},
+    (channels(), {"value_columns": ["rev"], "theme": "corporate-dark"},
      ("/params/theme", "invalid_parameter")),
     (channels(), {"value_columns": ["rev"], "sort": "up"}, ("/params/sort",
                                                             "invalid_parameter")),
@@ -196,8 +196,8 @@ def test_funnel_errors(data, expected):
 
 def test_funnel_text_uses_the_theme_locale():
     spec = FUNNEL.build(funnel_data([12480, 2315]), count_column="n",
-                        theme="muutto365-report-light")
-    assert spec.theme == "muutto365-report-light"
+                        theme="report-light")
+    assert spec.theme == "report-light"
     assert spec.annotations[0].text == f"18,5{S}% of previous"
     assert f"(2{S}315 of 12{S}480)" in spec.caption
     assert spec.metadata["template"]["label_locale"] == "fi-FI"
@@ -208,7 +208,7 @@ def test_funnel_text_uses_the_theme_locale():
 
 def test_funnel_tiny_rate_is_not_shown_as_zero():
     spec = FUNNEL.build(funnel_data([250000, 40]), count_column="n",
-                        theme="muutto365-report-light")
+                        theme="report-light")
     assert spec.annotations[0].text == f"<{S}0,1{S}% of previous"
     assert f"<{S}0,1{S}% (40 of 250{S}000)" in spec.caption
     assert "0,0" not in spec.caption
@@ -218,7 +218,7 @@ def test_funnel_tiny_rate_is_not_shown_as_zero():
 
 def test_funnel_ties_round_half_up_and_metadata_keeps_the_exact_rate():
     spec = FUNNEL.build(funnel_data([400, 73]), count_column="n",
-                        theme="muutto365-report-light")
+                        theme="report-light")
     assert spec.annotations[0].text == f"18,3{S}% of previous"
     assert spec.metadata["template"]["derived"]["steps"][0]["rate_percent"] == 18.25
     assert spec.datasets["stages"].columns["step_conversion"].values[0] == 18.25
