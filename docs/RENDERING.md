@@ -164,6 +164,12 @@ A custom writer with only `write` gets one call per file, manifest last.
 
 - No downsampling: more than `max_points` (1,000,000) points is refused, not
   thinned.
+- Drawing time grows with sizes an agent can choose, so they are bounded:
+  a histogram may have at most `max_bins` (10,000) bins (`bins` or
+  `bin_edges`; a capability, so more is a `CapabilityError` before anything
+  is drawn) and a category axis at most 5,000 distinct values
+  (`too_many_categories`). Above 50 categories only every n-th tick label is
+  drawn (`category_labels_thinned` warning); the bars are all drawn.
 - Reference lines/bands are not drawn in 3D (warning); log scales in 3D are
   refused.
 - Forecast heatmaps, quivers and surfaces are distinguished only by

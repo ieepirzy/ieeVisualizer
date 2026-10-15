@@ -376,3 +376,88 @@ def test_explicit_color_beats_color_of_with_a_warning():
     assert all(ln.get_color() == "black" for ln in built.layer_artists[1])
     assert any(w.code == "style_key_ignored" and w.path == "/layers/1/style/color_of"
                for w in built.warnings)
+
+
+# ----------------------------------------------------------------- size limits
+
+_SIZE_CHILD = """
+import json, sys, time
+sys.path.insert(0, "tests/render")
+from render_examples import one_layer
+from ieeVisualizer.render import RenderError, RenderRequest, render
+from ieeVisualizer.spec import BarMark, HistogramMark
+kind, n = sys.argv[1], int(sys.argv[2])
+if kind == "bins":
+    spec = one_layer(HistogramMark(encoding={"x": "a"}, bins=n), {"a": [0.1, 0.5, 0.9]})
+elif kind == "edges":
+    spec = one_layer(HistogramMark(encoding={"x": "a"},
+                                   bin_edges=[k / n for k in range(n + 1)]),
+                     {"a": [0.1, 0.5, 0.9]})
+else:
+    spec = one_layer(BarMark(encoding={"x": "k", "y": "v"}),
+                     {"k": [f"c{k}" for k in range(n)], "v": [1.0] * n})
+t = time.perf_counter()
+try:
+    render(spec, RenderRequest(format="svg"))
+    out = {"issues": []}
+except RenderError as e:
+    out = {"issues": [[i.path, i.code] for i in e.issues], "type": type(e).__name__,
+           "message": str(e)}
+out["seconds"] = time.perf_counter() - t
+print(json.dumps(out))
+"""
+
+
+def _render_in_child(kind: str, n: int) -> dict:
+    import json
+    import os
+    import subprocess
+    import sys
+
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    proc = subprocess.run([sys.executable, "-c", _SIZE_CHILD, kind, str(n)],
+                          capture_output=True, text=True, timeout=60, cwd=root,
+                          env=dict(os.environ, PYTHONPATH=root))
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.parametrize("kind,n", [("bins", 10_001), ("bins", 200_000),
+                                    ("bins", 20_000_000), ("edges", 10_001)])
+def test_histogram_bin_count_is_capped_by_capability(kind, n):
+    out = _render_in_child(kind, n)
+    assert out["type"] == "CapabilityError", out
+    assert f"{n} histogram bins (max 10000)" in out["message"]
+    assert out["seconds"] < 5.0, out
+
+
+def test_bins_are_part_of_the_requirements():
+    from ieeVisualizer.spec import HistogramMark
+
+    spec = one_layer(HistogramMark(encoding={"x": "a"}, bins=64), {"a": [0.1, 0.5]})
+    reqs = requirements_for(spec, RenderRequest(format="svg"))
+    assert reqs.bins == 64 and "64 histogram bins" in reqs.describe()
+    assert requirements_for(function_spec(), RenderRequest()).bins == 0
+    assert MatplotlibAdapter().capabilities.to_dict()["max_bins"] == 10_000
+
+
+def test_too_many_categories_is_a_structured_error_fast():
+    out = _render_in_child("cats", 5_001)
+    assert out["issues"] == [["/axes/x", "too_many_categories"]], out
+    assert out["seconds"] < 5.0, out
+
+
+def test_many_category_labels_are_thinned_with_a_warning():
+    n = 120
+    spec = one_layer(BarMark(encoding={"x": "k", "y": "v"}),
+                     {"k": [f"c{k}" for k in range(n)], "v": [1.0] * n})
+    built = build_figure(spec)
+    ticks = built.axes.get_xticks()
+    labels = [t.get_text() for t in built.axes.get_xticklabels()]
+    assert len(ticks) <= 50 and labels[:2] == ["c0", "c3"]
+    assert [w.path for w in built.warnings if w.code == "category_labels_thinned"] == ["/axes/x"]
+    few = one_layer(BarMark(encoding={"x": "k", "y": "v"}),
+                    {"k": [f"c{k}" for k in range(50)], "v": [1.0] * 50})
+    built = build_figure(few)
+    assert len(built.axes.get_xticks()) == 50
+    assert not [w for w in built.warnings if w.code == "category_labels_thinned"]

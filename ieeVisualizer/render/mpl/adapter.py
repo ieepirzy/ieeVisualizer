@@ -48,6 +48,7 @@ CAPABILITIES = Capabilities(
     interactive=False,
     vector_export=True,
     max_points=1_000_000,
+    max_bins=10_000,
 )
 
 

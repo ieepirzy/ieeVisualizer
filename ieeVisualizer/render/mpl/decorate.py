@@ -23,6 +23,8 @@ LEGEND_LOC = {
     "lower-right": "lower right",
 }
 CAPTION_FONTSIZE = 8.0
+#: Most category tick labels drawn on one axis; above it labels are thinned.
+MAX_CATEGORY_LABELS = 50
 
 
 def axis_label(spec: FigureSpec, info: AxisInfo) -> str | None:
@@ -71,8 +73,14 @@ def apply_axes(ctx: DrawContext) -> None:
             obj.set_major_formatter(mdates.ConciseDateFormatter(locator, tz=info.tz))
         elif info.kind == "category":
             names = list(info.categories)
-            getattr(ax, f"set_{key}ticks")(range(len(names)))
-            getattr(ax, f"set_{key}ticklabels")(names)
+            step = -(-len(names) // MAX_CATEGORY_LABELS)  # ceil
+            if step > 1:
+                ctx.warn("category_labels_thinned",
+                         f"axis {key} has {len(names)} categories; one label in every {step} is "
+                         f"shown so they stay readable (at most {MAX_CATEGORY_LABELS}).",
+                         f"/axes/{key}")
+            getattr(ax, f"set_{key}ticks")(range(0, len(names), step))
+            getattr(ax, f"set_{key}ticklabels")(names[::step])
         if axis is not None and axis.limits is not None:
             _limits(ctx, key, info, axis.limits)
     if spec.title:

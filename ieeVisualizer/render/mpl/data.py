@@ -15,7 +15,10 @@ Axis kinds are decided per axis from every column bound to it:
 * ``numeric`` otherwise.
 
 Mixing kinds on one axis (e.g. strings and numbers without
-``scale: "category"``) is refused rather than guessed.
+``scale: "category"``) is refused rather than guessed. A category axis with
+more than :data:`MAX_CATEGORIES` distinct values is refused
+(``too_many_categories``): drawing time grows with it and the labels could
+not be read anyway.
 """
 
 from __future__ import annotations
@@ -32,6 +35,8 @@ from ...spec._common import ptr
 from ..base import RenderError, RenderWarning, issue
 
 AXES = ("x", "y", "z")
+#: Most distinct values one category axis may have.
+MAX_CATEGORIES = 5_000
 #: Units that mark a polar angle column as degrees (otherwise radians).
 DEGREE_UNITS = frozenset({"deg", "degree", "degrees", "°"})
 _FRACTION = re.compile(r"(\.\d{6})\d+")
@@ -179,9 +184,11 @@ def infer_axes(spec: FigureSpec, warnings: list[RenderWarning]) -> dict[str, Axi
     infos = {k: AxisInfo(key=k) for k in keys}
     kinds: dict[str, dict[str, str]] = {k: {} for k in keys}  # axis -> {path: kind}
     aware: dict[str, list[tuple[str, Any]]] = {k: [] for k in keys}
+    bound_cols: dict[str, list[Column]] = {k: [] for k in keys}
 
     for i, axis, enc, col, data in _bound(spec):
         info = infos[axis]
+        bound_cols[axis].append(col)
         p = f"/layers/{i}/encoding/{axis}"
         if col.dtype in ("str", "bool"):
             k = "category"
@@ -226,6 +233,14 @@ def infer_axes(spec: FigureSpec, warnings: list[RenderWarning]) -> dict[str, Axi
             infos[axis].kind = distinct.pop()
         if infos[axis].kind == "time":
             infos[axis].tz = _display_tz(axis, aware[axis], warnings)
+        if infos[axis].kind == "category":
+            n = len({category_key(v) for c in bound_cols[axis] for v in c.values
+                     if v is not None})
+            if n > MAX_CATEGORIES:
+                raise RenderError([issue(f"/axes/{axis}", "too_many_categories",
+                                         f"axis {axis} has {n} distinct categories; at most "
+                                         f"{MAX_CATEGORIES} can be drawn. Aggregate or filter "
+                                         "upstream, or use a numeric/time axis.")])
     if spec.coordinate_system == "polar":
         unit = (spec.axes["x"].unit if "x" in spec.axes else None) or infos["x"].unit
         infos["x"].degrees = unit in DEGREE_UNITS

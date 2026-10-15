@@ -158,6 +158,10 @@ class Capabilities:
     vector_export: bool = False
     #: Most data points the adapter draws without downsampling; ``None`` = no limit.
     max_points: int | None = None
+    #: Most histogram bins one histogram may ask for; ``None`` = no limit.
+    #: Drawing time grows with the bin count, not the data, so an
+    #: agent-supplied ``bins`` is bounded here.
+    max_bins: int | None = None
     #: Mark types the adapter cannot draw in a given coordinate system even
     #: though it supports both separately.
     unsupported: Mapping[str, frozenset[str]] = field(default_factory=dict)
@@ -173,6 +177,7 @@ class Capabilities:
             "interactive": self.interactive,
             "vector_export": self.vector_export,
             "max_points": self.max_points,
+            "max_bins": self.max_bins,
             "unsupported": {k: sorted(v) for k, v in sorted(self.unsupported.items())},
         }
 
