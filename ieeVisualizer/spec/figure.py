@@ -2,24 +2,34 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
-from typing import Any, Union
+from dataclasses import field, fields
+from typing import Any, Optional, Union
 
 from ._common import (
     SCHEMA_VERSION,
     SUPPORTED_SCHEMA_VERSIONS,
     SpecParseError,
     canon_float,
-    check_keys,
-    copy_json,
-    expect_bool,
     expect_dict,
     expect_list,
-    expect_str,
     fail,
     non_finite_error,
-    ptr_join,
+    ptr,
     suggest,
+)
+from ._model import (
+    Bool,
+    JsonObject,
+    Nested,
+    OptStr,
+    SpecModel,
+    Str,
+    WireShape,
+    model,
+    parse_array,
+    parse_model,
+    parse_object,
+    wire,
 )
 from .data import (
     Dataset,
@@ -41,18 +51,48 @@ LEGEND_POSITIONS = (
 Scalar = Union[float, int, str]
 
 
-@dataclass
-class Axis:
+def _scalar(v: Any, path: str, what: str) -> Scalar | None:
+    if v is None or isinstance(v, str):
+        return v
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        try:
+            return canon_float(v, path, what)
+        except SpecParseError:
+            raise  # number_out_of_range
+        except ValueError:
+            raise non_finite_error(path, what, v) from None
+    raise fail(path, "invalid_type", f"{what} must be a number, an ISO-8601 string or null.")
+
+
+def Coordinate(what: str) -> Any:  # noqa: N802 - a type factory, used in annotations
+    """A number (stored as a canonical float), an ISO-8601 string or null."""
+    return wire(lambda v: _scalar(v, "", what), Optional[Scalar])
+
+
+def _parse_limits(v: Any) -> list[Scalar | None] | None:
+    if v is None:
+        return None
+    lim = expect_list(v, "", "limits")
+    if len(lim) != 2:
+        raise fail("", "invalid_limits",
+                   "limits must be [min, max]; use null for an automatic end.")
+    return [_scalar(x, ptr(i), "a limit") for i, x in enumerate(lim)]
+
+
+@model
+class Axis(SpecModel):
     """One positional axis. ``scale=None`` lets the renderer infer it from
     the data (category for strings, time for datetimes, else linear).
     ``limits`` is ``[min, max]``; either end may be ``None`` (auto). Time axes
     use ISO-8601 strings as limits; on a ``scale="time"`` axis they are stored
     in the canonical datetime form (see :mod:`ieeVisualizer.spec.data`)."""
 
-    label: str | None = None
-    unit: str | None = None
-    scale: str | None = None
-    limits: list[Scalar | None] | None = None
+    __wire__ = WireShape("an axis", order=("limits", "label", "unit", "scale"))
+
+    label: OptStr("label") = None
+    unit: OptStr("unit") = None
+    scale: OptStr("scale") = None
+    limits: wire(_parse_limits, Optional[list[Optional[Scalar]]]) = None
 
     def __post_init__(self) -> None:
         try:
@@ -134,20 +174,24 @@ def _bound_dtypes(spec: Any, axis: str) -> set[Any]:
     return out
 
 
-@dataclass
-class Legend:
-    show: bool = True
-    position: str = "auto"
-    title: str | None = None
+@model
+class Legend(SpecModel):
+    __wire__ = WireShape("legend")
+
+    show: Bool("show") = True
+    position: Str("position") = "auto"
+    title: OptStr("title") = None
 
 
-@dataclass
-class Annotation:
+@model
+class Annotation(SpecModel):
     """Base annotation; use a subclass."""
 
-    type: str
-    label: str | None = None
-    style: dict[str, Any] = field(default_factory=dict)
+    __wire__ = WireShape("a {name} annotation", drop=("type",))
+
+    type: Str("type")
+    label: OptStr("label") = None
+    style: JsonObject("style") = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name in _COORD_FIELDS:
@@ -165,35 +209,35 @@ class Annotation:
 _COORD_FIELDS = ("x", "y", "z", "value", "start", "end")
 
 
-@dataclass
+@model
 class TextAnnotation(Annotation):
     """``text`` placed at data coordinates (``x``, ``y``[, ``z``])."""
 
-    type: str = field(default="text", init=False)
-    text: str = ""
-    x: Scalar | None = None
-    y: Scalar | None = None
-    z: Scalar | None = None
+    type: Str("type") = field(default="text", init=False)
+    text: Str("text") = ""
+    x: Coordinate("x") = None
+    y: Coordinate("y") = None
+    z: Coordinate("z") = None
 
 
-@dataclass
+@model
 class ReferenceLine(Annotation):
     """A line across the plot at ``value`` on ``axis`` (``"x"`` or ``"y"``)."""
 
-    type: str = field(default="reference_line", init=False)
-    axis: str = "y"
-    value: Scalar | None = None
+    type: Str("type") = field(default="reference_line", init=False)
+    axis: Str("axis") = "y"
+    value: Coordinate("value") = None
 
 
-@dataclass
+@model
 class ReferenceBand(Annotation):
     """A shaded span ``[start, end]`` on ``axis``. For marking a known
     interval (e.g. a holiday period), not for inventing uncertainty."""
 
-    type: str = field(default="reference_band", init=False)
-    axis: str = "x"
-    start: Scalar | None = None
-    end: Scalar | None = None
+    type: Str("type") = field(default="reference_band", init=False)
+    axis: Str("axis") = "x"
+    start: Coordinate("start") = None
+    end: Coordinate("end") = None
 
 
 ANNOTATION_TYPES: dict[str, type[Annotation]] = {
@@ -203,8 +247,48 @@ ANNOTATION_TYPES: dict[str, type[Annotation]] = {
 }
 
 
-@dataclass
-class FigureSpec:
+def _check_schema_version(d: dict[str, Any]) -> None:
+    if "schema_version" not in d:
+        raise fail("/schema_version", "missing_schema_version",
+                   f"a serialized FigureSpec must carry schema_version; add "
+                   f"\"schema_version\": \"{SCHEMA_VERSION}\".")
+    ver = d["schema_version"]
+    if ver not in SUPPORTED_SCHEMA_VERSIONS:
+        raise fail("/schema_version", "unsupported_schema_version",
+                   f"schema_version {ver!r} is not supported by this library (supports "
+                   f"{', '.join(SUPPORTED_SCHEMA_VERSIONS)}). Upgrade ieeVisualizer to read newer "
+                   "specs, or migrate the spec; it is not reinterpreted silently.")
+
+
+def _parse_datasets(v: Any) -> dict[str, Dataset]:
+    return parse_object(v, "datasets", lambda name, ds: dataset_from_dict(ds, ""))
+
+
+def _parse_layers(v: Any) -> list[Mark]:
+    return parse_array(v, "layers", lambda m: mark_from_dict(m, ""))
+
+
+def _parse_axes(v: Any) -> dict[str, Axis]:
+    return parse_object(v, "axes", lambda name, a: parse_model(Axis, a, name))
+
+
+def _parse_annotation(d: Any) -> Annotation:
+    d = expect_dict(d, "", "an annotation")
+    atype = d.get("type")
+    cls = ANNOTATION_TYPES.get(atype) if isinstance(atype, str) else None
+    if cls is None:
+        raise fail("/type", "unknown_annotation_type",
+                   f"unknown annotation type {atype!r}.{suggest(str(atype), ANNOTATION_TYPES)} "
+                   f"Supported: {', '.join(ANNOTATION_TYPES)}.")
+    return parse_model(cls, d, atype)
+
+
+def _parse_annotations(v: Any) -> list[Annotation]:
+    return parse_array(v, "annotations", _parse_annotation)
+
+
+@model
+class FigureSpec(SpecModel):
     """A complete, renderer-independent figure description.
 
     ``datasets`` maps a name to a :class:`DataSnapshot` or :class:`DatasetRef`;
@@ -213,18 +297,22 @@ class FigureSpec:
     free-form JSON (template name/version, report run id, ...).
     """
 
-    title: str | None = None
-    layers: list[Mark] = field(default_factory=list)
-    datasets: dict[str, Dataset] = field(default_factory=dict)
-    axes: dict[str, Axis] = field(default_factory=dict)
-    coordinate_system: str = "cartesian2d"
-    legend: Legend = field(default_factory=Legend)
-    annotations: list[Annotation] = field(default_factory=list)
-    caption: str | None = None
-    theme: str | None = None
-    id: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-    schema_version: str = SCHEMA_VERSION
+    __wire__ = WireShape("a FigureSpec", pre=_check_schema_version, order=(
+        "schema_version", "id", "title", "caption", "theme", "coordinate_system", "datasets",
+        "layers", "axes", "legend", "annotations", "metadata"))
+
+    title: OptStr("title") = None
+    layers: wire(_parse_layers, list[Mark]) = field(default_factory=list)
+    datasets: wire(_parse_datasets, dict[str, Dataset]) = field(default_factory=dict)
+    axes: wire(_parse_axes, dict[str, Axis]) = field(default_factory=dict)
+    coordinate_system: Str("coordinate_system") = "cartesian2d"
+    legend: Nested(Legend) = field(default_factory=Legend)
+    annotations: wire(_parse_annotations, list[Annotation]) = field(default_factory=list)
+    caption: OptStr("caption") = None
+    theme: OptStr("theme") = None
+    id: OptStr("id") = None
+    metadata: JsonObject("metadata") = field(default_factory=dict)
+    schema_version: Str("schema_version") = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         # Date/time strings on time axes get their one stored form (the same
@@ -334,111 +422,5 @@ def figure_to_dict(spec: FigureSpec) -> dict[str, Any]:
     return out
 
 
-_FIG_KEYS = (
-    "schema_version", "id", "title", "caption", "coordinate_system", "axes", "datasets",
-    "layers", "legend", "annotations", "theme", "metadata",
-)
-
-
-def _scalar(v: Any, path: str, what: str) -> Scalar | None:
-    if v is None or isinstance(v, str):
-        return v
-    if isinstance(v, (int, float)) and not isinstance(v, bool):
-        try:
-            return canon_float(v, path, what)
-        except SpecParseError:
-            raise  # number_out_of_range
-        except ValueError:
-            raise non_finite_error(path, what, v) from None
-    raise fail(path, "invalid_type", f"{what} must be a number, an ISO-8601 string or null.")
-
-
-def _axis_from_dict(d: Any, path: str) -> Axis:
-    d = expect_dict(d, path, "an axis")
-    check_keys(d, path, "an axis", ("label", "unit", "scale", "limits"))
-    limits = None
-    if d.get("limits") is not None:
-        lim = expect_list(d["limits"], ptr_join(path, "limits"), "limits")
-        if len(lim) != 2:
-            raise fail(ptr_join(path, "limits"), "invalid_limits",
-                       "limits must be [min, max]; use null for an automatic end.")
-        limits = [_scalar(x, ptr_join(path, "limits", i), "a limit") for i, x in enumerate(lim)]
-    return Axis(
-        label=expect_str(d.get("label"), ptr_join(path, "label"), "label", True),
-        unit=expect_str(d.get("unit"), ptr_join(path, "unit"), "unit", True),
-        scale=expect_str(d.get("scale"), ptr_join(path, "scale"), "scale", True),
-        limits=limits,
-    )
-
-
-def _annotation_from_dict(d: Any, path: str) -> Annotation:
-    d = expect_dict(d, path, "an annotation")
-    atype = d.get("type")
-    cls = ANNOTATION_TYPES.get(atype) if isinstance(atype, str) else None
-    if cls is None:
-        raise fail(ptr_join(path, "type"), "unknown_annotation_type",
-                   f"unknown annotation type {atype!r}.{suggest(str(atype), ANNOTATION_TYPES)} "
-                   f"Supported: {', '.join(ANNOTATION_TYPES)}.")
-    names = [f.name for f in fields(cls)]
-    check_keys(d, path, f"a {atype} annotation", names)
-    kw: dict[str, Any] = {}
-    for k in names:
-        if k == "type" or k not in d:
-            continue
-        kp = ptr_join(path, k)
-        if k == "style":
-            kw[k] = copy_json(expect_dict(d[k], kp, "style"), kp, "style")
-        elif k in ("label", "text", "axis"):
-            kw[k] = expect_str(d[k], kp, k, optional=(k == "label"))
-        else:
-            kw[k] = _scalar(d[k], kp, k)
-    return cls(**kw)
-
-
 def figure_from_dict(d: Any) -> FigureSpec:
-    d = expect_dict(d, "", "a FigureSpec")
-    if "schema_version" not in d:
-        raise fail("/schema_version", "missing_schema_version",
-                   f"a serialized FigureSpec must carry schema_version; add "
-                   f"\"schema_version\": \"{SCHEMA_VERSION}\".")
-    ver = d["schema_version"]
-    if ver not in SUPPORTED_SCHEMA_VERSIONS:
-        raise fail("/schema_version", "unsupported_schema_version",
-                   f"schema_version {ver!r} is not supported by this library (supports "
-                   f"{', '.join(SUPPORTED_SCHEMA_VERSIONS)}). Upgrade ieeVisualizer to read newer "
-                   "specs, or migrate the spec; it is not reinterpreted silently.")
-    check_keys(d, "", "a FigureSpec", _FIG_KEYS)
-
-    kw: dict[str, Any] = {"schema_version": ver}
-    for k in ("id", "title", "caption", "theme"):
-        kw[k] = expect_str(d.get(k), "/" + k, k, optional=True)
-    if "coordinate_system" in d:
-        kw["coordinate_system"] = expect_str(d["coordinate_system"], "/coordinate_system",
-                                             "coordinate_system")
-    kw["datasets"] = {
-        name: dataset_from_dict(ds, ptr_join("/datasets", name))
-        for name, ds in expect_dict(d.get("datasets", {}), "/datasets", "datasets").items()
-    }
-    kw["layers"] = [
-        mark_from_dict(m, f"/layers/{i}")
-        for i, m in enumerate(expect_list(d.get("layers", []), "/layers", "layers"))
-    ]
-    kw["axes"] = {
-        name: _axis_from_dict(a, ptr_join("/axes", name))
-        for name, a in expect_dict(d.get("axes", {}), "/axes", "axes").items()
-    }
-    if "legend" in d:
-        ld = expect_dict(d["legend"], "/legend", "legend")
-        check_keys(ld, "/legend", "legend", ("show", "position", "title"))
-        kw["legend"] = Legend(
-            show=expect_bool(ld.get("show", True), "/legend/show", "show"),
-            position=expect_str(ld.get("position", "auto"), "/legend/position", "position"),
-            title=expect_str(ld.get("title"), "/legend/title", "title", optional=True),
-        )
-    kw["annotations"] = [
-        _annotation_from_dict(a, f"/annotations/{i}")
-        for i, a in enumerate(expect_list(d.get("annotations", []), "/annotations", "annotations"))
-    ]
-    kw["metadata"] = copy_json(
-        expect_dict(d.get("metadata", {}), "/metadata", "metadata"), "/metadata", "metadata")
-    return FigureSpec(**kw)
+    return parse_model(FigureSpec, d)

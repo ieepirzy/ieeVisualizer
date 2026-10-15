@@ -158,6 +158,10 @@
    "spec_hash": "sha256:78a216b413c351847000e6c1545722836189c4b1e68a19282171fd0983768a56",
    "to_json": "sha256:78a216b413c351847000e6c1545722836189c4b1e68a19282171fd0983768a56"
   },
+  "gallery:template-vector_field_2d [versions blanked]": {
+   "indent2": "sha256:efbbd3e37b8492795e93ed774f8358df90cf9e3bf12f347d923b90d25cbba91d",
+   "to_json": "sha256:1decc461fd97f8c127336ec6d7ade78f4a0567f2d508cd1d7a5283f998893686"
+  },
   "render_examples:area_spec": {
    "content_hashes": {
     "d": "sha256:f4530f7f21f2b9124fd3b2cd019c13c0507122ac239f3154dd0fffaaddbecf2d"

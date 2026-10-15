@@ -22,17 +22,17 @@ A manifest pins a figure for later comparison and audit:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import field
+from typing import Any, Optional
 
-from ..spec._common import canonical_json
+from ..spec._common import STRICT_CONFIG, SpecModel, canonical_json, model
 
 #: Version of the manifest format itself (not of the spec).
 MANIFEST_SCHEMA_VERSION = "1.0"
 
 
-@dataclass
-class FileEntry:
+@model(config=STRICT_CONFIG)
+class FileEntry(SpecModel):
     """A stored file of the artifact (name is relative to the artifact)."""
 
     name: str
@@ -50,8 +50,8 @@ class FileEntry:
                    size_bytes=d["size_bytes"])
 
 
-@dataclass
-class RenderVariant:
+@model(config=STRICT_CONFIG)
+class RenderVariant(SpecModel):
     """One rendered output of the figure."""
 
     format: str
@@ -86,15 +86,15 @@ class RenderVariant:
                    warnings=[dict(w) for w in d.get("warnings", [])])
 
 
-@dataclass
-class DatasetRecord:
+@model(config=STRICT_CONFIG)
+class DatasetRecord(SpecModel):
     """Provenance of one dataset of the spec."""
 
     type: str  # "snapshot" | "ref"
-    content_hash: str | None  # None for a reference no layer drew (never resolved)
+    content_hash: Optional[str]  # None for a reference no layer drew (never resolved)
     provenance: dict[str, Any] = field(default_factory=dict)
     columns: dict[str, dict[str, Any]] = field(default_factory=dict)
-    ref: dict[str, Any] | None = None
+    ref: Optional[dict[str, Any]] = None
     resolved: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -115,8 +115,8 @@ class DatasetRecord:
                    resolved=bool(d.get("resolved", False)))
 
 
-@dataclass
-class VisualizationArtifact:
+@model(config=STRICT_CONFIG)
+class VisualizationArtifact(SpecModel):
     artifact_id: str
     spec_hash: str
     spec_schema_version: str
@@ -125,10 +125,10 @@ class VisualizationArtifact:
     variants: list[RenderVariant]
     library_versions: dict[str, str]
     created_at: str
-    spec_id: str | None = None
-    title: str | None = None
+    spec_id: Optional[str] = None
+    title: Optional[str] = None
     spec_metadata: dict[str, Any] = field(default_factory=dict)
-    resolved_spec_file: FileEntry | None = None
+    resolved_spec_file: Optional[FileEntry] = None
     schema_version: str = MANIFEST_SCHEMA_VERSION
 
     def variant(self, fmt: str) -> RenderVariant:

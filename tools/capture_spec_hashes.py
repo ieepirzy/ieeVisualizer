@@ -87,9 +87,11 @@ def pytest_unconfigure(config: Any) -> None:
 
 
 def compare(before: dict[str, list[str]], after: dict[str, list[str]]) -> list[str]:
+    """Differences for every test of the ``before`` run (tests added since
+    have no before-state and are not compared)."""
     diffs = []
-    for test in sorted(set(before) | set(after)):
-        old, new = set(before.get(test, ())), set(after.get(test, ()))
+    for test in sorted(before):
+        old, new = set(before[test]), set(after.get(test, ()))
         if old != new:
             diffs.append(f"{test}: only before {sorted(old - new)}, only after "
                          f"{sorted(new - old)}")
@@ -100,8 +102,9 @@ if __name__ == "__main__":
     a, b = (json.load(open(p, encoding="utf-8")) for p in sys.argv[1:3])
     diffs = compare(a, b)
     n_hashes = len({h for v in a.values() for h in v})
-    print(f"compared {len(a)} tests ({n_hashes} distinct spec hashes before, "
-          f"{len({h for v in b.values() for h in v})} after): {len(diffs)} difference(s)")
+    n_after = len({h for k, v in b.items() if k in a for h in v})
+    print(f"compared {len(a)} tests ({n_hashes} distinct spec hashes before, {n_after} after; "
+          f"{len(set(b) - set(a))} new test(s) not compared): {len(diffs)} difference(s)")
     for d in diffs:
         print("  " + d)
     raise SystemExit(1 if diffs else 0)

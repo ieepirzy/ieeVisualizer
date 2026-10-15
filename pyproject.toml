@@ -12,6 +12,7 @@ license = { file = "LICENSE" }
 dependencies = [
     "matplotlib",
     "numpy",
+    "pydantic>=2,<3",
     "sympy",
 ]
 
@@ -37,3 +38,8 @@ target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.pyupgrade]
+# pydantic evaluates field annotations at runtime, and Python 3.9 cannot
+# evaluate ``X | None``: keep ``Optional[X]`` in annotations.
+keep-runtime-typing = true

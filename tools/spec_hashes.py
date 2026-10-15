@@ -135,8 +135,27 @@ def collect() -> dict[str, Any]:
     specs = {}
     for name, build in _builders().items():
         spec = build()
-        specs[name + _env_suffix(spec)] = _record(spec)
+        suffix = _env_suffix(spec)
+        specs[name + suffix] = _record(spec)
+        if suffix:  # also comparable across environments, versions blanked out
+            specs[name + " [versions blanked]"] = _blanked_record(spec)
     return {"specs": specs, "descriptors": _descriptors()}
+
+
+def _blanked_record(spec: Any) -> dict[str, Any]:
+    from ieeVisualizer.spec import to_dict
+    from ieeVisualizer.spec._common import canonical_json
+
+    def blank(v: Any) -> Any:
+        if isinstance(v, dict):
+            return {k: ("<version>" if k.endswith("_version") and k != "schema_version"
+                        else blank(x)) for k, x in v.items()}
+        if isinstance(v, list):
+            return [blank(x) for x in v]
+        return v
+
+    d = blank(to_dict(spec))
+    return {"to_json": _sha(canonical_json(d)), "indent2": _sha(canonical_json(d, indent=2))}
 
 
 def _other_env(key: str) -> bool:
@@ -149,8 +168,8 @@ def compare(baseline: dict[str, Any], current: dict[str, Any]) -> list[str]:
     for section in ("specs", "descriptors"):
         old, new = baseline.get(section, {}), current.get(section, {})
         for key in sorted(set(old) | set(new)):
-            if _other_env(key):
-                continue
+            if _other_env(key) or (_ENV and key.endswith(_ENV) and key not in old):
+                continue  # recorded per environment; this one has no baseline entry
             if key not in new:
                 diffs.append(f"{section}/{key}: missing now")
             elif key not in old:

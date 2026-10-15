@@ -26,24 +26,38 @@ renderer evaluates, the spec itself never evaluates it) or sampled (``data`` +
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
-from typing import Any
+from dataclasses import field, fields
+from typing import Any, Optional
 
 from ._common import (
     SpecParseError,
     canon_float,
     canon_int,
-    check_keys,
-    copy_json,
-    expect_bool,
     expect_dict,
-    expect_int,
     expect_list,
     expect_number,
     expect_str,
     fail,
+    ptr,
     ptr_join,
     suggest,
+)
+from ._model import (
+    Bool,
+    Int,
+    JsonObject,
+    OptInt,
+    OptNumber,
+    OptStr,
+    SpecModel,
+    Str,
+    WireShape,
+    at,
+    model,
+    parse_array,
+    parse_model,
+    parse_object,
+    wire,
 )
 
 CHANNELS = ("x", "y", "z", "u", "v", "w", "color", "size", "series")
@@ -51,26 +65,36 @@ ROLES = ("observed", "forecast", "reference")
 ORIENTATIONS = ("vertical", "horizontal")
 
 
-@dataclass
-class Encoding:
+@model
+class Encoding(SpecModel):
     """Maps one channel to one column. ``title`` overrides the column name in
     legends/colorbars."""
 
-    field: str
-    title: str | None = None
+    __wire__ = WireShape("encoding {name!r}", required=("field",))
+
+    field: Str("field")
+    title: OptStr("title") = None
 
 
-@dataclass
-class Mark:
+def _parse_encoding(v: Any) -> dict[str, Encoding]:
+    # Shorthand {"y": "col"} is normalised to {"field": "col"}.
+    return parse_object(v, "encoding", lambda ch, e: Encoding(field=e) if isinstance(e, str)
+                        else parse_model(Encoding, e, ch))
+
+
+@model
+class Mark(SpecModel):
     """Base mark. Use a concrete subclass; constructing ``Mark`` directly with
     an unrecognised ``type`` is allowed so :func:`validate` can report it."""
 
-    type: str
-    data: str | None = None
-    encoding: dict[str, Encoding] = field(default_factory=dict)
-    role: str = "observed"
-    name: str | None = None
-    style: dict[str, Any] = field(default_factory=dict)
+    __wire__ = WireShape("a {name} mark", drop=("type",))
+
+    type: Str("type")
+    data: OptStr("data") = None
+    encoding: wire(_parse_encoding, dict[str, Encoding]) = field(default_factory=dict)
+    role: Str("role") = "observed"
+    name: OptStr("name") = None
+    style: JsonObject("style") = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # Ergonomics: encoding={"y": "revenue"} is accepted from Python.
@@ -88,70 +112,95 @@ class Mark:
                     raise ValueError(f"{self.type} mark {name}: {e}") from None
 
 
-@dataclass
+@model
 class LineMark(Mark):
-    type: str = field(default="line", init=False)
+    type: Str("type") = field(default="line", init=False)
 
 
-@dataclass
+@model
 class ScatterMark(Mark):
-    type: str = field(default="scatter", init=False)
+    type: Str("type") = field(default="scatter", init=False)
 
 
-@dataclass
+@model
 class AreaMark(Mark):
     """Filled area between ``y`` and zero."""
 
-    type: str = field(default="area", init=False)
+    type: Str("type") = field(default="area", init=False)
 
 
-@dataclass
+@model
 class BarMark(Mark):
     """Channels map literally to axes: a horizontal bar chart puts the
     categories on ``y`` and the values on ``x``."""
 
-    type: str = field(default="bar", init=False)
-    orientation: str = "vertical"
+    type: Str("type") = field(default="bar", init=False)
+    orientation: Str("orientation") = "vertical"
 
 
-@dataclass
+def _parse_bin_edges(v: Any) -> list[float] | None:
+    if v is None:
+        return None
+    return parse_array(v, "bin_edges", lambda x: expect_number(x, "", "bin edge"))
+
+
+@model
 class HistogramMark(Mark):
     """Bins the raw values of ``x``; the y axis is a count (or density)."""
 
-    type: str = field(default="histogram", init=False)
-    bins: int | None = None
-    bin_edges: list[float] | None = None
-    density: bool = False
+    type: Str("type") = field(default="histogram", init=False)
+    bins: OptInt("bins") = None
+    bin_edges: wire(_parse_bin_edges, Optional[list[float]]) = None
+    density: Bool("density") = False
 
 
-@dataclass
+@model
 class HeatmapMark(Mark):
     """Long-format grid: one row per cell with ``x``, ``y`` and the cell value
     on ``color``."""
 
-    type: str = field(default="heatmap", init=False)
+    type: Str("type") = field(default="heatmap", init=False)
 
 
-@dataclass
+@model
 class QuiverMark(Mark):
     """Arrows at (``x``, ``y``[, ``z``]) with components (``u``, ``v``[, ``w``])."""
 
-    type: str = field(default="quiver", init=False)
-    scale: float | None = None
-    normalize: bool = False
+    type: Str("type") = field(default="quiver", init=False)
+    scale: OptNumber("scale") = None
+    normalize: Bool("normalize") = False
 
 
-@dataclass
+def _parse_variables(v: Any) -> list[str]:
+    return parse_array(v, "variables", lambda x: expect_str(x, "", "variable"))
+
+
+def _parse_range(var: str, rng: Any) -> list[float]:
+    rng = expect_list(rng, "", f"domain of {var!r}")
+    if len(rng) != 2:
+        raise fail("", "invalid_domain", f"domain of {var!r} must be [min, max].")
+    return [expect_number(x, ptr(i), "domain bound") for i, x in enumerate(rng)]
+
+
+def _parse_domain(v: Any) -> dict[str, list[float]]:
+    return parse_object(v, "domain", _parse_range)
+
+
+def _parse_parameters(v: Any) -> dict[str, float]:
+    return parse_object(v, "parameters", lambda k, x: expect_number(x, "", "parameter"))
+
+
+@model
 class FunctionMark(Mark):
     """Symbolic ``expression`` over ``variables`` on ``domain``, or a sampled
     reference curve via ``data`` + ``encoding``."""
 
-    type: str = field(default="function", init=False)
-    expression: str | None = None
-    variables: list[str] = field(default_factory=lambda: ["x"])
-    domain: dict[str, list[float]] = field(default_factory=dict)
-    samples: int = 200
-    parameters: dict[str, float] = field(default_factory=dict)
+    type: Str("type") = field(default="function", init=False)
+    expression: OptStr("expression") = None
+    variables: wire(_parse_variables, list[str]) = field(default_factory=lambda: ["x"])
+    domain: wire(_parse_domain, dict[str, list[float]]) = field(default_factory=dict)
+    samples: Int("samples") = 200
+    parameters: wire(_parse_parameters, dict[str, float]) = field(default_factory=dict)
 
 
 def _canon_float_list(v: Any, path: str = "", what: str = "value") -> Any:
@@ -232,13 +281,6 @@ COORDINATE_SYSTEMS: dict[str, frozenset[str]] = {
     "polar": frozenset({"line", "scatter", "area", "bar", "function"}),
 }
 
-_BASE_KEYS = ("type", "data", "encoding", "role", "name", "style")
-
-
-def _p(path: str, key: str) -> str:
-    return ptr_join(path, key)
-
-
 def mark_to_dict(m: Mark) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for f in fields(m):
@@ -263,93 +305,21 @@ def mark_to_dict(m: Mark) -> dict[str, Any]:
 
 
 def mark_from_dict(d: Any, path: str) -> Mark:
-    d = expect_dict(d, path, "a layer")
+    """Parse a serialized layer; errors carry pointers under ``path``."""
+    return at(path, _parse_mark, d)
+
+
+def _parse_mark(d: Any) -> Mark:
+    d = expect_dict(d, "", "a layer")
     if "type" not in d:
-        raise fail(ptr_join(path, "type"), "missing_field",
+        raise fail("/type", "missing_field",
                    f"a layer needs a 'type'; one of {', '.join(MARK_TYPES)}.")
-    mtype = expect_str(d["type"], ptr_join(path, "type"), "type")
+    mtype = expect_str(d["type"], "/type", "type")
     cls = MARK_TYPES.get(mtype)
     if cls is None:
         raise fail(
-            ptr_join(path, "type"), "unknown_mark_type",
+            "/type", "unknown_mark_type",
             f"unknown mark type {mtype!r}.{suggest(mtype, MARK_TYPES)} "
             f"Supported: {', '.join(MARK_TYPES)}.",
         )
-    allowed = [f.name for f in fields(cls)]
-    check_keys(d, path, f"a {mtype} mark", allowed)
-
-    kw: dict[str, Any] = {}
-    if "data" in d:
-        kw["data"] = expect_str(d["data"], ptr_join(path, "data"), "data", optional=True)
-    enc_in = expect_dict(d.get("encoding", {}), ptr_join(path, "encoding"), "encoding")
-    enc: dict[str, Encoding] = {}
-    for ch, e in enc_in.items():
-        ep = ptr_join(path, "encoding", ch)
-        if isinstance(e, str):  # shorthand {"y": "col"}; normalised to {"field": "col"}
-            enc[ch] = Encoding(field=e)
-            continue
-        e = expect_dict(e, ep, f"encoding {ch!r}")
-        check_keys(e, ep, f"encoding {ch!r}", ("field", "title"), ("field",))
-        enc[ch] = Encoding(
-            field=expect_str(e["field"], ptr_join(ep, "field"), "field"),
-            title=expect_str(e.get("title"), ptr_join(ep, "title"), "title", optional=True),
-        )
-    kw["encoding"] = enc
-    for key in ("role", "name"):
-        if key in d:
-            kw[key] = expect_str(d[key], ptr_join(path, key), key, optional=(key == "name"))
-    if "style" in d:
-        sp = ptr_join(path, "style")
-        kw["style"] = copy_json(expect_dict(d["style"], sp, "style"), sp, "style")
-
-    if cls is BarMark and "orientation" in d:
-        kw["orientation"] = expect_str(d["orientation"], _p(path, "orientation"), "orientation")
-    elif cls is HistogramMark:
-        if "bins" in d:
-            kw["bins"] = expect_int(d["bins"], _p(path, "bins"), "bins", optional=True)
-        if "bin_edges" in d and d["bin_edges"] is not None:
-            edges = expect_list(d["bin_edges"], _p(path, "bin_edges"), "bin_edges")
-            kw["bin_edges"] = [
-                expect_number(x, ptr_join(path, "bin_edges", i), "bin edge")
-                for i, x in enumerate(edges)
-            ]
-        if "density" in d:
-            kw["density"] = expect_bool(d["density"], _p(path, "density"), "density")
-    elif cls is QuiverMark:
-        if "scale" in d:
-            kw["scale"] = expect_number(d["scale"], _p(path, "scale"), "scale", optional=True)
-        if "normalize" in d:
-            kw["normalize"] = expect_bool(d["normalize"], _p(path, "normalize"), "normalize")
-    elif cls is FunctionMark:
-        _parse_function_fields(d, path, kw)
-    return cls(**kw)
-
-
-def _parse_function_fields(d: dict[str, Any], path: str, kw: dict[str, Any]) -> None:
-    if "expression" in d:
-        kw["expression"] = expect_str(d["expression"], _p(path, "expression"), "expression", True)
-    if "variables" in d:
-        vs = expect_list(d["variables"], _p(path, "variables"), "variables")
-        kw["variables"] = [
-            expect_str(v, ptr_join(path, "variables", i), "variable") for i, v in enumerate(vs)
-        ]
-    if "domain" in d:
-        dom = expect_dict(d["domain"], _p(path, "domain"), "domain")
-        out = {}
-        for var, rng in dom.items():
-            rp = ptr_join(path, "domain", var)
-            rng = expect_list(rng, rp, f"domain of {var!r}")
-            if len(rng) != 2:
-                raise fail(rp, "invalid_domain", f"domain of {var!r} must be [min, max].")
-            out[var] = [
-                expect_number(x, ptr_join(rp, i), "domain bound") for i, x in enumerate(rng)
-            ]
-        kw["domain"] = out
-    if "samples" in d:
-        kw["samples"] = expect_int(d["samples"], _p(path, "samples"), "samples")
-    if "parameters" in d:
-        params = expect_dict(d["parameters"], _p(path, "parameters"), "parameters")
-        kw["parameters"] = {
-            k: expect_number(v, ptr_join(path, "parameters", k), "parameter")
-            for k, v in params.items()
-        }
+    return parse_model(cls, d, mtype)

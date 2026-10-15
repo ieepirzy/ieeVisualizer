@@ -26,5 +26,5 @@ def test_every_enumerated_spec_matches_the_pre_migration_baseline():
     tool = _tool()
     baseline = json.loads((ROOT / "tests" / "spec_hash_baseline.json").read_text("utf-8"))
     current = tool.collect()
-    assert len(current["specs"]) >= 34 and len(current["descriptors"]) >= 7
+    assert len(current["specs"]) >= 35 and len(current["descriptors"]) >= 7
     assert tool.compare(baseline, current) == []

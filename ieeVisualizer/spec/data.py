@@ -47,21 +47,29 @@ import datetime as _dt
 import math
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
-from typing import Any, Union
+from dataclasses import field
+from typing import Any, Optional, Union
 
 from ._common import (
-    SpecParseError,
     beyond_float64,
-    check_keys,
-    copy_json,
     expect_dict,
     expect_list,
-    expect_str,
     fail,
     out_of_range_error,
-    ptr_join,
     sha256_of,
+)
+from ._model import (
+    JsonObject,
+    Nested,
+    OptStr,
+    SpecModel,
+    Str,
+    WireShape,
+    at,
+    model,
+    parse_model,
+    parse_object,
+    wire,
 )
 
 DTYPES = ("float", "int", "bool", "str", "datetime")
@@ -296,27 +304,37 @@ def _check_compatible(kinds: set, dtype: str | None) -> None:
         )
 
 
-@dataclass
-class ColumnSchema:
+@model
+class ColumnSchema(SpecModel):
     """Column description without values (used by :class:`DatasetRef`)."""
 
-    dtype: str | None = None
-    unit: str | None = None
-    description: str | None = None
-    denominator: str | None = None
-    aggregation: str | None = None
+    __wire__ = WireShape("column {name!r}", what_keys="column schema {name!r}")
+
+    dtype: OptStr("dtype") = None
+    unit: OptStr("unit") = None
+    description: OptStr("description") = None
+    denominator: OptStr("denominator") = None
+    aggregation: OptStr("aggregation") = None
 
 
-@dataclass
-class Column:
+def _parse_values(v: Any) -> list[Any]:
+    return expect_list(v, "", "values")
+
+
+@model
+class Column(SpecModel):
     """One inline column. ``values`` is normalised on construction."""
 
-    values: list[Any]
-    dtype: str | None = None
-    unit: str | None = None
-    description: str | None = None
-    denominator: str | None = None
-    aggregation: str | None = None
+    __wire__ = WireShape("column {name!r}", required=("values",))
+    #: A value normalize_values refuses is reported at /values, as invalid_values.
+    __post_init_issue__ = ("invalid_values", "/values")
+
+    values: wire(_parse_values, list[Any])
+    dtype: OptStr("dtype") = None
+    unit: OptStr("unit") = None
+    description: OptStr("description") = None
+    denominator: OptStr("denominator") = None
+    aggregation: OptStr("aggregation") = None
 
     def __post_init__(self) -> None:
         self.values, self.dtype = normalize_values(self.values, self.dtype)
@@ -325,27 +343,35 @@ class Column:
         return [v for v in self.values if v is not None]
 
 
-@dataclass
-class Provenance:
+@model
+class Provenance(SpecModel):
     """Where a snapshot came from. All fields optional; ``extra`` is free-form
     JSON for host-specific facts (e.g. permission scope applied upstream)."""
 
-    source: str | None = None
-    query: str | None = None
-    retrieved_at: str | None = None
-    source_version: str | None = None
-    timezone: str | None = None
-    run_id: str | None = None
-    notes: str | None = None
-    extra: dict[str, Any] = field(default_factory=dict)
+    __wire__ = WireShape("provenance")
+
+    source: OptStr("source") = None
+    query: OptStr("query") = None
+    retrieved_at: OptStr("retrieved_at") = None
+    source_version: OptStr("source_version") = None
+    timezone: OptStr("timezone") = None
+    run_id: OptStr("run_id") = None
+    notes: OptStr("notes") = None
+    extra: JsonObject("provenance.extra") = field(default_factory=dict)
 
 
-@dataclass
-class DataSnapshot:
+def _parse_columns(v: Any) -> dict[str, Column]:
+    return parse_object(v, "columns", lambda name, c: parse_model(Column, c, name))
+
+
+@model
+class DataSnapshot(SpecModel):
     """Inline columnar data with per-column units and dataset provenance."""
 
-    columns: dict[str, Column] = field(default_factory=dict)
-    provenance: Provenance = field(default_factory=Provenance)
+    __wire__ = WireShape("a snapshot dataset", required=("columns",), drop=("type",))
+
+    columns: wire(_parse_columns, dict[str, Column]) = field(default_factory=dict)
+    provenance: Nested(Provenance) = field(default_factory=Provenance)
 
     @classmethod
     def from_columns(
@@ -381,17 +407,25 @@ class DataSnapshot:
         return sha256_of({"columns": {n: _column_to_dict(c) for n, c in self.columns.items()}})
 
 
-@dataclass
-class DatasetRef:
+def _parse_schemas(v: Any) -> dict[str, ColumnSchema]:
+    # Present means an object: null is refused (omit the key for "not declared").
+    return parse_object(v, "columns", lambda name, c: parse_model(ColumnSchema, c, name))
+
+
+@model
+class DatasetRef(SpecModel):
     """Reference to data held elsewhere. ``kind`` is free text; recommended
     values are ``query``, ``artifact``, ``file``, ``table``, ``run``."""
 
-    kind: str
-    id: str
-    query: str | None = None
-    version: str | None = None
-    retrieved_at: str | None = None
-    columns: dict[str, ColumnSchema] | None = None
+    __wire__ = WireShape("a ref dataset", required=("kind", "id"), drop=("type",),
+                         order=("columns", "kind", "id", "query", "version", "retrieved_at"))
+
+    kind: Str("kind")
+    id: Str("id")
+    query: OptStr("query") = None
+    version: OptStr("version") = None
+    retrieved_at: OptStr("retrieved_at") = None
+    columns: wire(_parse_schemas, Optional[dict[str, ColumnSchema]]) = None
 
 
 Dataset = Union[DataSnapshot, DatasetRef]
@@ -454,68 +488,20 @@ def dataset_to_dict(ds: Dataset) -> dict[str, Any]:
     raise TypeError(f"not a dataset: {type(ds).__name__}")
 
 
-def _parse_schema_fields(d: dict[str, Any], path: str) -> dict[str, str | None]:
-    return {k: expect_str(d.get(k), ptr_join(path, k), k, optional=True) for k in _SCHEMA_FIELDS}
-
-
 def dataset_from_dict(d: Any, path: str) -> Dataset:
-    d = expect_dict(d, path, "a dataset")
+    """Parse a serialized dataset; errors carry pointers under ``path``."""
+    return at(path, _parse_dataset, d)
+
+
+def _parse_dataset(d: Any) -> Dataset:
+    d = expect_dict(d, "", "a dataset")
     kind = d.get("type")
     if kind == "snapshot":
-        check_keys(d, path, "a snapshot dataset", ("type", "columns", "provenance"), ("columns",))
-        cols_in = expect_dict(d["columns"], ptr_join(path, "columns"), "columns")
-        cols: dict[str, Column] = {}
-        for name, cd in cols_in.items():
-            cp = ptr_join(path, "columns", name)
-            cd = expect_dict(cd, cp, f"column {name!r}")
-            check_keys(cd, cp, f"column {name!r}", ("values",) + _SCHEMA_FIELDS, ("values",))
-            values = expect_list(cd["values"], ptr_join(cp, "values"), "values")
-            fields = _parse_schema_fields(cd, cp)
-            try:
-                cols[name] = Column(values=values, **fields)
-            except SpecParseError as e:  # number_out_of_range; path relative to the column
-                i = e.issues[0]
-                raise fail(cp + i.path, i.code, i.message) from None
-            except ValueError as e:
-                raise fail(ptr_join(cp, "values"), "invalid_values", str(e)) from None
-        prov = Provenance()
-        if "provenance" in d:
-            pp = ptr_join(path, "provenance")
-            pd = expect_dict(d["provenance"], pp, "provenance")
-            check_keys(pd, pp, "provenance", _PROV_FIELDS + ("extra",))
-            kw = {k: expect_str(pd.get(k), ptr_join(pp, k), k, optional=True) for k in _PROV_FIELDS}
-            ep = ptr_join(pp, "extra")
-            extra = copy_json(expect_dict(pd.get("extra", {}), ep, "provenance.extra"), ep,
-                              "provenance.extra")
-            prov = Provenance(extra=extra, **kw)
-        return DataSnapshot(columns=cols, provenance=prov)
+        return parse_model(DataSnapshot, d)
     if kind == "ref":
-        check_keys(
-            d, path, "a ref dataset",
-            ("type", "kind", "id", "query", "version", "retrieved_at", "columns"),
-            ("kind", "id"),
-        )
-        columns = None
-        if "columns" in d:
-            columns = {}
-            cin = expect_dict(d["columns"], ptr_join(path, "columns"), "columns")
-            for name, cd in cin.items():
-                cp = ptr_join(path, "columns", name)
-                cd = expect_dict(cd, cp, f"column {name!r}")
-                check_keys(cd, cp, f"column schema {name!r}", _SCHEMA_FIELDS)
-                columns[name] = ColumnSchema(**_parse_schema_fields(cd, cp))
-        return DatasetRef(
-            kind=expect_str(d["kind"], ptr_join(path, "kind"), "kind"),
-            id=expect_str(d["id"], ptr_join(path, "id"), "id"),
-            query=expect_str(d.get("query"), ptr_join(path, "query"), "query", optional=True),
-            version=expect_str(d.get("version"), ptr_join(path, "version"), "version", True),
-            retrieved_at=expect_str(
-                d.get("retrieved_at"), ptr_join(path, "retrieved_at"), "retrieved_at", True
-            ),
-            columns=columns,
-        )
+        return parse_model(DatasetRef, d)
     raise fail(
-        ptr_join(path, "type"),
+        "/type",
         "invalid_dataset_type",
         f"dataset type must be 'snapshot' (inline columns) or 'ref' (external reference), "
         f"got {kind!r}.",

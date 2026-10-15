@@ -12,8 +12,10 @@ import json
 import math
 import numbers
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import ConfigDict, ValidationError
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 #: The schema version written by this library. Bump on any change that alters
 #: the meaning of an existing serialized spec (historical report figures must
@@ -25,9 +27,63 @@ SUPPORTED_SCHEMA_VERSIONS: tuple[str, ...] = ("1.0",)
 
 SEVERITIES = ("error", "warning", "info")
 
+# --------------------------------------------------------------------------
+# Model classes are pydantic dataclasses (see ``_model`` and docs/MODELS.md).
+# --------------------------------------------------------------------------
 
-@dataclass(frozen=True)
-class ValidationIssue:
+#: Configuration of the spec model classes. ``strict`` is not set: their
+#: per-field parse validators (``_model``) are stricter than pydantic's strict
+#: mode (bools are not numbers, NaN/inf and float64 overflow are refused,
+#: numbers are canonicalised) and give the library's own issue codes, and
+#: Python construction stays permissive. Unknown keys are refused by
+#: ``_model.parse_model`` (with a did-you-mean) before pydantic's
+#: ``extra="forbid"`` would see them. ``defer_build`` keeps ``import
+#: ieeVisualizer.spec`` cheap: a class's validator is built on first use.
+SPEC_CONFIG = ConfigDict(
+    extra="forbid", arbitrary_types_allowed=True, revalidate_instances="never", defer_build=True,
+)
+
+#: Configuration of descriptor classes whose fields are checked on
+#: construction (issues, render requests, manifests, template descriptors):
+#: pydantic's strict mode, so nothing is coerced ("5" is not a number, 1 is
+#: not True).
+STRICT_CONFIG = ConfigDict(strict=True, extra="forbid", arbitrary_types_allowed=True,
+                           defer_build=True)
+
+
+class _ModelMeta(type):
+    """Translates a ``ValidationError`` raised while constructing an instance
+    (see ``_model.construction_error``): a raw pydantic error never escapes a
+    constructor. Hooked on the metaclass, not on ``__init__``, because pydantic
+    replaces ``__init__`` when it builds a deferred class."""
+
+    def __call__(cls, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return super().__call__(*args, **kwargs)
+        except ValidationError as e:
+            from ._model import construction_error
+
+            raise construction_error(e, cls) from None
+
+
+class SpecModel(metaclass=_ModelMeta):
+    """Base class of every model class (decorate subclasses with :func:`model`)."""
+
+
+def model(cls: Any = None, *, frozen: bool = False, config: ConfigDict = SPEC_CONFIG) -> Any:
+    """``pydantic.dataclasses.dataclass`` with the library's configuration, for
+    a :class:`SpecModel` subclass."""
+
+    def wrap(cls: Any) -> Any:
+        if not issubclass(cls, SpecModel):
+            raise TypeError(f"{cls.__name__} must subclass SpecModel.")
+        return pydantic_dataclass(cls, config=config, frozen=frozen)
+
+    return wrap if cls is None else wrap(cls)
+
+
+@model(frozen=True, config=STRICT_CONFIG)
+class ValidationIssue(SpecModel):
     """One structured finding about a spec.
 
     ``path`` is an RFC-6901 JSON pointer into the *serialized* spec (the same
@@ -40,7 +96,7 @@ class ValidationIssue:
     path: str
     code: str
     message: str
-    severity: str = "error"
+    severity: Literal["error", "warning", "info"] = "error"
 
     def to_dict(self) -> dict[str, str]:
         return {
