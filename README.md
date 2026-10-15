@@ -114,6 +114,16 @@ artifact = export(spec, ["png", "svg"], LocalDirectoryWriter("out"))
 print(artifact.artifact_id, artifact.variant("png").sha256)  # out/<artifact_id>/manifest.json
 ```
 
+## Animations
+
+An `AnimationSpec` is a FigureSpec plus a timeline: a parameter sweep (a
+function-mark or template parameter) or a frame column (e.g. one frame per
+week). It renders to GIF (and MP4 when ffmpeg is installed) with every frame
+drawn by the static renderer, and exports with a poster PNG and a manifest.
+An optional Manim adapter (`pip install -e ".[manim]"`) covers a narrow
+subset. See [docs/ANIMATION.md](docs/ANIMATION.md) and
+`python examples/animations.py`.
+
 ## Development priorities
 
 1. Make the existing Python/Matplotlib functions installable, tested and functional.
