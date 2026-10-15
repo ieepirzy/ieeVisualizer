@@ -488,7 +488,7 @@ def render_network(spec: NetworkSpec, request: RenderRequest | None = None) -> R
         built.figure.savefig(buf, format=request.format, dpi=request.dpi, metadata=meta)
         if request.profile is not None:
             built.warnings += audit(built.figure, request.render_profile,
-                                    request.display_width)
+                                    request.display_width, built.axes)
     return RenderResult(content=buf.getvalue(), format=request.format,
                         media_type=MEDIA_TYPES[request.format], adapter_name=ADAPTER_NAME,
                         adapter_version=ADAPTER_VERSION, warnings=built.warnings,

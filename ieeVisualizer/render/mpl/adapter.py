@@ -176,6 +176,7 @@ class MatplotlibAdapter:
                 recording_canvas(built.figure).draw()
             _audit(built, request)
         _backend_warnings(caught, built.warnings)
+        _collapsed(built.warnings, request)
         built.warnings[:] = _dedupe(built.warnings)  # same list: draw-time warnings land here
         return built
 
@@ -203,6 +204,7 @@ class MatplotlibAdapter:
                                  metadata=_metadata(request.format))
             _audit(built, request)
         _backend_warnings(caught, built.warnings)
+        _collapsed(built.warnings, request)
         return RenderResult(
             content=buf.getvalue(),
             format=request.format,
@@ -289,11 +291,22 @@ class MatplotlibAdapter:
 
 def _audit(built: BuiltFigure, request: RenderRequest) -> None:
     """Profile renders: append the legibility audit of the figure as drawn."""
+    from .legibility import annotations_outside, audit
+
+    built.warnings.extend(annotations_outside(built))
     profile = request.render_profile
     if profile is not None:
-        from .legibility import audit
+        built.warnings.extend(audit(built.figure, profile, request.display_width, built.axes))
 
-        built.warnings.extend(audit(built.figure, profile, request.display_width))
+
+def _collapsed(warnings: list[RenderWarning], request: RenderRequest) -> None:
+    """Profile renders: matplotlib giving up on the layout is a gating
+    ``layout_collapsed`` warning, not only a backend message."""
+    if request.profile is not None and any(
+            w.code == "backend_warning" and "layout not applied" in w.message for w in warnings):
+        warnings.append(RenderWarning(
+            "layout_collapsed", "the figure's text left no room for the plot at this size, so "
+            "matplotlib could not lay it out; shorten the text or use a larger figure.", ""))
 
 
 def _label_locale(spec: FigureSpec, theme: Any, warnings: list[RenderWarning]) -> None:

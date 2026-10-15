@@ -115,21 +115,31 @@ renders without a profile are unchanged, byte for byte.
   existing `value_labels_omitted` warning instead);
 - the title and axis labels are wrapped to the figure, a title centred over
   the axes is re-wrapped if it still runs off the image, and text
-  annotations that would run past the right edge wrap at their place;
+  annotations that would run past the right edge wrap at their place, but
+  only into a column at least 8 em wide (a narrower one would stack the
+  words and squeeze the plot; the text is then left whole and reported as
+  clipped);
 - tick labels that touch: numeric and date axes get fewer ticks; a category
   x axis turns its labels upright. Category labels are never thinned for a
-  profile; if they still touch, `too_many_categories_for_profile` says how
-  many and what to do;
+  profile (the >50-category thinning of other renders is off); if they still
+  touch, `too_many_categories_for_profile` says how many and what to do;
 - the **audit** records every line of text drawn into the saved PNG and adds
   `legibility_text_too_small`, `legibility_text_overlap` and
-  `legibility_text_clipped` warnings.
+  `legibility_text_clipped`; a plot squeezed below 25 % of the image either
+  way is `legibility_plot_collapsed`, matplotlib giving up on the layout is
+  `layout_collapsed`, and a legend not wholly inside the image is
+  `legend_not_visible`;
+- every render (profile or not) reports a text annotation anchored outside
+  the axes' limits, which matplotlib silently does not draw
+  (`annotation_outside_view`).
 
 **Narrow profiles** (`email-phone`) also: an `"auto"` legend that leaves the
 axes goes below them, never to the right; a date axis label is left-aligned
 clear of the date offset (`2026-Oct`); in views, grids and horizontal stacks
 drop columns until each slot is at least 150 px (KPI tiles stack), figures
 are at least the profile's aspect (0.8) tall, KPI values shrink no further
-than 12 px before switching to the existing compact notation, and a
+than 12 px before switching to the existing compact notation (reported as
+`kpi_value_compacted`, with the exact value), and a
 left-to-right flow that would be scaled below the minimum is laid out top to
 bottom (the layout is only a hint); if still too small,
 `flow_text_too_small`.
@@ -139,6 +149,22 @@ and with a profile says so (`table_cells_truncated`). The email shows a
 table that does not fit the phone width as one card per row with every cell
 whole, and writes "One card per row: the N columns do not fit side by side
 on a 320 px wide screen" above it. There is no horizontal scrolling.
+
+## The send gate
+
+`check_legible(result)` (a `RenderResult` or an `EmailRender`) raises
+`LegibilityError` for any warning in `GATING_CODES`: the legibility codes
+above, and every code meaning the output shows less than the data holds or
+could not be laid out - `value_labels_omitted`, `value_label_outside_axes`,
+`no_data_unplaceable`, `category_labels_thinned`, `table_cells_truncated`,
+`flow_text_too_small`, `kpi_value_compacted`, `labels_abbreviated` /
+`labels_skipped` / `matrix_labels_omitted` (networks),
+`annotation_outside_view`, `annotation_skipped`, `layout_collapsed`,
+`email_clipped_by_gmail`, `email_not_phone_safe`. A pipeline that must not
+send an illegible or incomplete report calls it on every output. The tests
+check the property it protects: for every figure template, each word a
+desktop render draws outside the tick labels is on the phone render, or the
+phone render fails the gate.
 
 ## Email HTML
 
@@ -150,32 +176,63 @@ KPI tiles and table cards as fluid `inline-block` boxes; each flow followed
 by its text version (shown, since `<details>` is not dependable in mail).
 Delivery (MIME assembly) stays out of scope.
 
+- Every text container has `overflow-wrap:anywhere; word-break:break-word`
+  and layout tables `table-layout:fixed`, so a URL or id longer than the
+  screen wraps instead of widening the email.
+- Image names are Content-IDs, `figure-<n>.<12 hex of the view hash>.png@ieevisualizer`:
+  unique per view, the same for the same view. A figure's `alt` carries its
+  numbers (per layer: values, range, unit) for clients that block images.
+- Lines break at spaces outside quoted attributes so none exceeds 900
+  characters (SMTP's limit is 998); `lang` must be a language tag.
+- A slot narrower than 120 px on the phone (deep nesting) is refused with a
+  `too_narrow` issue and its pointer; a flow image larger than the view PNG
+  limits (`MAX_PNG_SIDE_PX`, `MAX_PNG_PIXELS`) is refused (`view_too_large`)
+  before anything is rasterised.
+- `email_dark_figure` when a figure's theme has a dark background (the email
+  declares a light scheme); `email_not_phone_safe` on an `email-tablet`
+  render.
+
+**Browser layout tests** (`tests/view/test_email_browser.py`) load the email
+in headless Chromium (Playwright) at 320, 360, 430 and 768 px and assert: no
+horizontal overflow, no two text boxes overlapping, no computed font below
+13 px, images inside the screen, KPI tiles one per row up to 430 px and two
+across at 768 px; also for a view with 140-character URLs in every text
+field. CI installs Chromium and sets `IEEV_REQUIRE_BROWSER=1`, so they run
+there; locally they skip with the reason when no browser is available.
+
 ## Measured in this slice
 
 `examples/mobile_gallery.py` renders every template and gallery view at both
-email profiles and writes `legibility.json`. Clean at both: timeseries,
-vector field, bar comparison (but see value labels below), the briefing
-email and both views as tablet PNG. Reported, not yet fixed (follow-ups below): funnel at phone width
-(the rate column overlaps the first value label), the network templates
-(their own 7.5 pt labels, no adaptations yet), the pipeline flow at phone
-width (77 % scale even top to bottom), the briefing table cut in the phone
-PNG, bar comparison value labels left out on a phone.
+email profiles and writes, per file, every warning the gate refuses
+(`legibility.json`). Pass the gate at both: timeseries, vector field, the
+briefing email and both views as tablet PNG. Refused, with the reason
+(follow-ups below): bar comparison on a phone (value labels left out),
+funnel on a phone (rate column over the first value label), the network
+templates (their own 7.5 pt labels), the pipeline flow on a phone (77 %
+scale even top to bottom), the briefing table cut in the phone PNG.
 
 ## Follow-ups
+
+These are layout improvements; the gate already refuses each case.
 
 1. Network renderer: font floors for its explicit sizes, label placement at
    phone width.
 2. Funnel template: put the stage-to-stage rate in the stage label or a
    measured column instead of a fixed data-coordinate position.
-3. Profile-aware figure height (rows x minimum line height for horizontal
-   bars), so value labels fit on phones.
+3. Profile-aware figure height: rows x minimum line height for horizontal
+   bars (so value labels fit on phones), and room for a legend of many or
+   long series names instead of `legend_not_visible`.
 4. View PNG: card layout for tables that do not fit (the email already has
    it); 12 px instead of 24 px view padding on narrow profiles.
 5. Flows: narrower node boxes (wrap labels at the slot width) on phones.
-6. Ghost tables (`<!--[if mso]>`) so Outlook for Windows shows tiles side by
+6. Annotations that cannot wrap at the right edge: move them left of their
+   anchor instead of reporting them clipped.
+7. Ghost tables (`<!--[if mso]>`) so Outlook for Windows shows tiles side by
    side on desktop; MIME assembly helper; real-client screenshots (Litmus /
    Email on Acid) before relying on the email layout in production.
-7. Vector (SVG/PDF) audits draw the figure once more instead of measuring
+8. A text summary visible under each figure (not only `alt`), for clients
+   that block images and do not show `alt`.
+9. Vector (SVG/PDF) audits draw the figure once more instead of measuring
    the saved draw; an exact audit needs a hook in those backends.
 
 ## Sources (accessed 2026-10-15)

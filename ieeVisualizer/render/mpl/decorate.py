@@ -155,7 +155,9 @@ def apply_axes(ctx: DrawContext) -> None:
             set_time_axis(ctx, key, info)
         elif info.kind == "category":
             names = list(info.categories)
-            step = -(-len(names) // MAX_CATEGORY_LABELS)  # ceil
+            # A profile render never thins labels: they are drawn and, if they
+            # collide, reported (legibility.fit_ticks), so a phone shows no less.
+            step = 1 if ctx.min_pt else -(-len(names) // MAX_CATEGORY_LABELS)  # ceil
             if step > 1:
                 ctx.warn("category_labels_thinned",
                          f"axis {key} has {len(names)} categories; one label in every {step} is "

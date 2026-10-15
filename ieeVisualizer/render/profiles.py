@@ -21,9 +21,23 @@ from typing import Any
 from ..spec import ValidationIssue
 from .base import RenderError, RenderRequest
 
-#: Warning codes of the legibility audit (see :func:`check_legible`).
+#: Warning codes of the legibility audit.
 LEGIBILITY_CODES = ("legibility_text_too_small", "legibility_text_overlap",
-                    "legibility_text_clipped", "too_many_categories_for_profile")
+                    "legibility_text_clipped", "legibility_plot_collapsed",
+                    "legend_not_visible", "too_many_categories_for_profile")
+#: Warning codes meaning the output shows less than the data or spec holds
+#: (left out, cut, abbreviated, rounded to fewer digits) or could not be laid
+#: out. A phone render may show less than a desktop one only with one of
+#: these on its result, so :func:`check_legible` refuses it.
+CONTENT_LOSS_CODES = ("flow_text_too_small", "table_cells_truncated",
+                      "value_labels_omitted", "value_label_outside_axes",
+                      "no_data_unplaceable", "category_labels_thinned", "labels_abbreviated",
+                      "labels_skipped", "matrix_labels_omitted", "kpi_value_compacted",
+                      "annotation_outside_view", "annotation_skipped", "layout_collapsed",
+                      "email_clipped_by_gmail", "email_not_phone_safe")
+#: Everything :func:`check_legible` refuses: the gate a pipeline that must not
+#: send an illegible or incomplete report applies to every result.
+GATING_CODES = LEGIBILITY_CODES + CONTENT_LOSS_CODES
 
 
 @dataclass(frozen=True)
@@ -107,9 +121,11 @@ def list_profiles() -> list[RenderProfile]:
 
 
 def check_legible(result: Any) -> None:
-    """Raise :class:`~ieeVisualizer.render.LegibilityError` if ``result``
-    (a ``RenderResult``) carries any legibility warning."""
-    bad = [w for w in result.warnings if w.code in LEGIBILITY_CODES]
+    """The send gate: raise :class:`LegibilityError` if ``result`` (anything
+    with ``.warnings``: a ``RenderResult``, an ``EmailRender``) carries a
+    warning in :data:`GATING_CODES` - text that is unreadable, or content
+    that was left out, cut or rounded to fit."""
+    bad = [w for w in result.warnings if w.code in GATING_CODES]
     if bad:
         raise LegibilityError([ValidationIssue(w.path, w.code, w.message) for w in bad])
 

@@ -13,6 +13,9 @@ jobs:
         python-version: ["3.9", "3.12"]
     env:
       MPLBACKEND: Agg
+      # tests/view/test_email_browser.py lays the email HTML out in headless
+      # Chromium; here it must run, so a missing browser fails instead of skipping.
+      IEEV_REQUIRE_BROWSER: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,6 +25,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
+      - name: Install Chromium for the email layout tests
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
       - name: Ruff
         run: ruff check .
       - name: Pytest

@@ -36,6 +36,10 @@ OVERLAP_TOLERANCE_PX = 1.0
 #: Tick labels closer than this fraction of their font size count as touching.
 TICK_GAP_EM = 0.3
 _MAX_EXAMPLES = 3
+#: Annotations are wrapped only into columns at least this many ems wide.
+MIN_WRAP_EM = 8.0
+#: A plot area smaller than this share of the figure (either way) has collapsed.
+MIN_PLOT_SHARE = 0.25
 
 
 def points(size: Any) -> float:
@@ -144,7 +148,9 @@ def wrap_annotations(ctx: Any, texts: list[Any]) -> None:
     right = 0.98 * fig.bbox.width
     for t, box in boxes:
         room_pt = (right - box.x0) * 72.0 / fig.dpi
-        if box.x1 > right and room_pt > 3 * t.get_fontsize():
+        # a column narrower than MIN_WRAP_EM would stack the words one per line and
+        # squeeze the plot; such a text is left as it is and the audit reports it
+        if box.x1 > right and room_pt >= MIN_WRAP_EM * t.get_fontsize():
             t.set_text(wrap(t.get_text(), t.get_fontsize(), room_pt))
 
 
@@ -201,12 +207,13 @@ def fit_ticks(ctx: Any) -> None:
                     ctx.ax.tick_params(axis="x", labelrotation=90)
                     rotated = True
                     continue
+                fix = ("use horizontal bars, show fewer categories or a wider profile"
+                       if key == "x" else "show fewer categories or make the figure taller")
                 ctx.warn("too_many_categories_for_profile",
-                         f"the {len(labels)} category labels of axis {key} do not fit side "
-                         f"by side at the {ctx.profile.name} profile's minimum text size "
-                         f"({ctx.profile.min_text_px:g} CSS px); none was left out, so they "
-                         "touch. Show fewer categories, use horizontal bars, or a wider "
-                         "profile.", f"/axes/{key}")
+                         f"the {len(labels)} category labels of axis {key} do not fit at the "
+                         f"{ctx.profile.name} profile's minimum text size "
+                         f"({ctx.profile.min_text_px:g} CSS px); all are drawn, so they "
+                         f"touch: {fix}.", f"/axes/{key}")
                 break
             if not _fewer_ticks(ctx, key, info, axis, len(labels)):
                 break
@@ -317,8 +324,10 @@ def _q(line: DrawnLine) -> str:
     return repr(s if len(s) <= 40 else s[:39] + "…")
 
 
-def audit(fig: Any, profile: Any, display_width: float | None) -> list[RenderWarning]:
-    """Legibility warnings for ``fig`` shown ``display_width`` CSS px wide."""
+def audit(fig: Any, profile: Any, display_width: float | None, ax: Any = None
+          ) -> list[RenderWarning]:
+    """Legibility warnings for ``fig`` shown ``display_width`` CSS px wide
+    (``ax``: the plot whose area and legend are checked)."""
     lines = drawn_lines(fig)
     shown_w = display_width or profile.css_width
     css_per_pt = shown_w / (fig.get_size_inches()[0] * 72.0)
@@ -340,6 +349,7 @@ def audit(fig: Any, profile: Any, display_width: float | None) -> list[RenderWar
             "legibility_text_clipped",
             f"{len(clipped)} line(s) of text run past the image edge and are cut off: "
             + ", ".join(_q(ln) for ln in clipped[:_MAX_EXAMPLES]) + ".", ""))
+    out += _plot_and_legend(fig, ax)
     pairs = [(a, b) for i, a in enumerate(lines) for b in lines[i + 1:]
              if min(a.x1, b.x1) - max(a.x0, b.x0) > tol and min(a.y1, b.y1) - max(a.y0, b.y0) > tol]
     if pairs:
@@ -347,4 +357,52 @@ def audit(fig: Any, profile: Any, display_width: float | None) -> list[RenderWar
             "legibility_text_overlap",
             f"{len(pairs)} pair(s) of text lines overlap when drawn: "
             + "; ".join(f"{_q(a)} and {_q(b)}" for a, b in pairs[:_MAX_EXAMPLES]) + ".", ""))
+    return out
+
+
+def _plot_and_legend(fig: Any, ax: Any) -> list[RenderWarning]:
+    if ax is None:
+        return []
+    out = []
+    W, H = fig.bbox.width, fig.bbox.height
+    box = ax.get_window_extent()
+    if box.width < MIN_PLOT_SHARE * W or box.height < MIN_PLOT_SHARE * H:
+        out.append(RenderWarning(
+            "legibility_plot_collapsed",
+            f"the plot area is {box.width / W:.0%} x {box.height / H:.0%} of the image: the "
+            "text around it (labels, legend, annotations, caption) leaves no room for the "
+            "data. Shorten the text, make the figure taller or use a wider profile.", ""))
+    legend = ax.get_legend()
+    if legend is not None and legend.get_visible():
+        lb = legend.get_window_extent()
+        tol = OVERLAP_TOLERANCE_PX
+        if lb.x0 < -tol or lb.y0 < -tol or lb.x1 > W + tol or lb.y1 > H + tol:
+            out.append(RenderWarning(
+                "legend_not_visible",
+                f"the legend ({len(legend.get_texts())} entries) does not fit in the image "
+                "and is partly or wholly cut off, so series cannot be told apart. Use fewer "
+                "or shorter series names, a taller figure or a wider profile.", "/legend"))
+    return out
+
+
+def annotations_outside(built: Any) -> list[RenderWarning]:
+    """Text annotations matplotlib does not draw because their anchor lies
+    outside the plot (``annotation_outside_view``), instead of losing them
+    silently."""
+    from matplotlib.text import Annotation
+
+    ax = built.axes
+    if getattr(ax, "name", "") != "rectilinear":
+        return []
+    box = ax.get_window_extent()
+    out = []
+    for a in built.annotation_artists:
+        if not isinstance(a, Annotation) or a.xycoords != "data" or not a.get_text():
+            continue
+        x, y = ax.transData.transform(a.xy)
+        if not (box.x0 - 0.5 <= x <= box.x1 + 0.5 and box.y0 - 0.5 <= y <= box.y1 + 0.5):
+            out.append(RenderWarning(
+                "annotation_outside_view",
+                f"annotation {a.get_text()!r} is anchored outside the axes' limits and is not "
+                "drawn; widen the limits or move the annotation.", ""))
     return out

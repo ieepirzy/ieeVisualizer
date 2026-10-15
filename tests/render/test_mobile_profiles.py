@@ -11,6 +11,7 @@ Sizes are converted to the reading device: an image ``W`` px wide shown
 from __future__ import annotations
 
 import struct
+from pathlib import Path
 
 import pytest
 from matplotlib.text import Text
@@ -18,6 +19,7 @@ from matplotlib.text import Text
 from ieeVisualizer import templates
 from ieeVisualizer.network import NetworkSpec, render_network
 from ieeVisualizer.render import (
+    GATING_CODES,
     LegibilityError,
     RenderRequest,
     check_legible,
@@ -68,6 +70,9 @@ def measure(monkeypatch, spec, request, css=None):
         result = render(spec, request)
     monkeypatch.undo()
     assert len(saved) == 1
+    ticks = {id(lab) for ax in saved[0].axes for axis in (ax.xaxis, ax.yaxis)
+             for tick in axis.get_major_ticks() + axis.get_minor_ticks()
+             for lab in (tick.label1, tick.label2)}
     renderer = calls[-1][1]  # the save is the last draw: its renderer made the PNG
     width_px, height_px = png_size(result.content)
     css = css or request.display_width or get_profile(request.profile).css_width
@@ -82,7 +87,7 @@ def measure(monkeypatch, spec, request, css=None):
         upright = abs(t.get_rotation() % 180 - 90) < 1
         line_px = (box.width if upright else box.height) / n
         texts.append({
-            "text": t.get_text(), "box": box,
+            "text": t.get_text(), "box": box, "tick": id(t) in ticks,
             "em_css": renderer.points_to_pixels(t.get_fontsize()) * css_per_px,
             "line_css": line_px * css_per_px,
             "line_device_px": line_px * css_per_px * PHONE_DPR,
@@ -131,7 +136,10 @@ def test_template_examples_are_legible(monkeypatch, name, profile):
     # 3.10+), so every line is at least 0.9 x the 12 px minimum x 3 device px
     assert min(t["line_device_px"] for t in texts) >= 0.9 * prof.min_text_px * PHONE_DPR
     assert not [w for w in result.warnings if w.code.startswith("legibility_")]
-    check_legible(result)
+    # the one known gap (follow-up: profile-aware figure height): the phone has
+    # no room for bar value labels, so they are left out and the gate refuses it
+    expected = {"value_labels_omitted"} if (name, profile) == ("bar_comparison", PHONE) else set()
+    assert {w.code for w in result.warnings if w.code in GATING_CODES} == expected
 
 
 def test_without_a_profile_the_same_image_is_too_small_on_a_phone(monkeypatch):
@@ -147,19 +155,23 @@ def test_without_a_profile_the_same_image_is_too_small_on_a_phone(monkeypatch):
     assert not [w for w in result.warnings if w.code.startswith("legibility_")]
 
 
-def test_funnel_on_a_phone_is_reported_not_hidden(monkeypatch):
-    """The funnel's rate column collides with the first value label at phone
-    width; the audit says so and the independent measurement agrees."""
-    request = get_profile(PHONE).figure_request("png")
-    result, texts, size = measure(monkeypatch, example("funnel"), request)
-    found = problems(texts, size, 12.0)
-    assert found["small"] == [] and found["clipped"] == []
-    assert found["overlaps"]
-    codes = {w.code for w in result.warnings}
-    assert "legibility_text_overlap" in codes
-    with pytest.raises(LegibilityError) as exc:
+def gate_refuses(result) -> bool:
+    try:
         check_legible(result)
-    assert exc.value.issues[0].code == "legibility_text_overlap"
+    except LegibilityError:
+        return True
+    return False
+
+
+@pytest.mark.parametrize("name", ["funnel", "timeseries", "bar_comparison", "vector_field_2d"])
+def test_phone_renders_are_legible_or_refused(monkeypatch, name):
+    """Whatever the figure, a phone render the independent measurement finds
+    illegible never passes the send gate."""
+    request = get_profile(PHONE).figure_request("png")
+    result, texts, size = measure(monkeypatch, example(name), request)
+    found = problems(texts, size, 12.0)
+    if any(found.values()):
+        assert gate_refuses(result), found
 
 
 def test_network_text_below_minimum_is_reported(monkeypatch):
@@ -249,9 +261,25 @@ def test_line_boxes_match_matplotlib_extents():
         assert box.y0 - 3 <= line.y0 <= line.y1 <= box.y1 + 3
 
 
-def test_no_profile_renders_keep_their_bytes():
-    spec = example("timeseries")
-    a = render(spec, RenderRequest(format="svg"))
-    b = render(spec, RenderRequest(format="svg"))
-    assert a.content == b.content
-    assert not [w for w in a.warnings if w.code.startswith("legibility_")]
+def test_no_profile_renders_keep_mains_bytes():
+    """Renders without a profile are byte-identical to main's (hashes recorded
+    from a ``git archive`` of main by ``tests/render/data/record_main_hashes.py``,
+    per matplotlib version: other versions draw other bytes anyway)."""
+    import hashlib
+    import importlib.util
+    import json
+
+    import matplotlib
+
+    data = Path(__file__).parent / "data"
+    loader = importlib.util.spec_from_file_location("record_main_hashes",
+                                                    data / "record_main_hashes.py")
+    module = importlib.util.module_from_spec(loader)
+    loader.loader.exec_module(module)
+    recorded = json.loads((data / "main_render_hashes.json").read_text())
+    expected = recorded.get(matplotlib.__version__)
+    if expected is None:
+        pytest.skip(f"no hashes recorded for matplotlib {matplotlib.__version__} "
+                    f"(have {', '.join(sorted(recorded))})")
+    got = {name: hashlib.sha256(make()).hexdigest() for name, make in module.CASES.items()}
+    assert got == expected

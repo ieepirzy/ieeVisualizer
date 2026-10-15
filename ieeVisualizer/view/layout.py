@@ -329,6 +329,18 @@ def _fit_number_text(variants, which: int, sizes: tuple[float, ...], w: float, b
     return wrap_text(variants[-1][0][which], size, math.inf, bold=bold), size
 
 
+def _compacted(ctx: Ctx, exact: str, lines: list[str], n: Kpi, path: str) -> None:
+    """Profile renders: a KPI number rounded to fewer digits to fit its tile
+    is a ``kpi_value_compacted`` warning (the send gate refuses it)."""
+    if ctx.min_text and "".join(lines).replace(" ", "") != exact.replace(" ", ""):
+        from ..render import RenderWarning
+
+        ctx.warnings.append(RenderWarning(
+            "kpi_value_compacted", f"KPI {n.label!r} is shown as '{' '.join(lines)}' instead "
+            f"of '{exact}': the exact number does not fit its tile at the minimum text size.",
+            path))
+
+
 def _kpi(n: Kpi, path, x, y, w, ctx):
     """Every line stays inside the tile: the value shrinks from 30 to 14 px
     and then wraps between words. A number is never split across lines: if
@@ -346,6 +358,7 @@ def _kpi(n: Kpi, path, x, y, w, ctx):
     else:
         small = tuple(s for s in KPI_SMALL_SIZES if s >= ctx.min_text)
         lines, size = _fit_number_text(variants, 0, KPI_VALUE_SIZES, iw, True, True, small)
+        _compacted(ctx, variants[0][0][0], lines, n, path)
         lh = size * 1.25
         for i, line in enumerate(lines):
             items.append(Label(ix, cy + 32 + i * lh, line, size, bold=True))
@@ -354,6 +367,7 @@ def _kpi(n: Kpi, path, x, y, w, ctx):
     if cmp:
         small = tuple(s for s in KPI_SMALL_SIZES if s >= ctx.min_text)
         lines, size = _fit_number_text(variants, 1, (12,), iw, False, False, small)
+        _compacted(ctx, cmp, lines, n, path)
         for line in lines:
             items.append(Label(ix, cy + 13, line, size, INK))
             cy += size + 5

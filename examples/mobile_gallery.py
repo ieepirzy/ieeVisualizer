@@ -9,7 +9,7 @@ it writes ``view-<name>--<profile>.png`` and the email version,
 ``view-<name>.email.html`` plus the images it references
 (``view-<name>.email-<image>.png``; open the HTML in a browser and narrow
 the window to 360 px to see the phone layout). ``legibility.json`` lists
-every legibility and layout warning per file: the renders are not filtered,
+every warning the send gate (``check_legible``) refuses, per file: the renders are not filtered,
 so an entry there is something a reader would see.
 """
 
@@ -20,20 +20,17 @@ from pathlib import Path
 
 from ieeVisualizer import templates
 from ieeVisualizer.network import NetworkSpec, render_network
-from ieeVisualizer.render import LEGIBILITY_CODES, get_profile, render
+from ieeVisualizer.render import GATING_CODES, get_profile, render
 from ieeVisualizer.view import render_email, render_view
 from ieeVisualizer.view.examples import reporting_pipeline, weekly_briefing
 
 OUT = Path(__file__).parent / "out" / "mobile"
 PROFILES = ("email-phone", "email-tablet")
 VIEWS = {"reporting-pipeline": reporting_pipeline, "weekly-briefing": weekly_briefing}
-#: Warning codes reported in legibility.json (besides LEGIBILITY_CODES).
-LAYOUT_CODES = ("value_labels_omitted", "table_cells_truncated", "flow_text_too_small",
-                "email_clipped_by_gmail")
 
 
 def _report(warnings) -> list[dict]:
-    return [w.to_dict() for w in warnings if w.code in LEGIBILITY_CODES + LAYOUT_CODES]
+    return [w.to_dict() for w in warnings if w.code in GATING_CODES]
 
 
 def main(out: Path | None = None) -> dict[str, list[dict]]:

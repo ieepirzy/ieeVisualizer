@@ -24,6 +24,7 @@ inline SVG or ``data:`` image, so this output differs from ``render_view(...,
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -35,6 +36,7 @@ from .draw import Group, Rect, esc, to_png
 from .flow import flow_outline
 from .html import markdown_html
 from .layout import (
+    FLOW_MIN_FONT,
     KPI_SMALL_SIZES,
     KPI_VALUE_SIZES,
     TEXT_STYLES,
@@ -44,9 +46,15 @@ from .layout import (
     table_cells,
     text_width,
 )
+from .limits import MAX_PNG_PIXELS, MAX_PNG_SIDE_PX
 from .model import Card, FigureComponent, Flow, Grid, Kpi, Node, Note, Stack, Table, Text, ViewSpec
 from .text import NO_DATA, NULL_CELL
-from .validate import errors
+from .validate import errors, view_hash
+
+#: A language tag (BCP 47 shape: letters, then ``-`` subtags); no spaces or CR/LF.
+_LANG = re.compile(r"[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8}){0,6}")
+#: SMTP lines may not exceed 998 characters; HTML is broken at spaces before that.
+MAX_LINE = 900
 
 #: Content column (CSS px) on a wide screen, and the gutters around it.
 COLUMN = 576
@@ -60,7 +68,15 @@ GMAIL_CLIP_BYTES = 102 * 1024
 #: with DejaVu metrics gets this much extra room.
 FONT_SLACK = 1.1
 INK, MUTED, LINE, PANEL = "#1f2328", "#57606a", "#d0d7de", "#f6f8fa"
-FONT = "font-family:'DejaVu Sans',Verdana,Arial,sans-serif;"
+#: Every text container also breaks words longer than its box (URLs, ids),
+#: which would otherwise widen the whole email past a phone's screen.
+FONT = ("font-family:'DejaVu Sans',Verdana,Arial,sans-serif;overflow-wrap:anywhere;"
+        "word-break:break-word;")
+#: Presentation tables keep the width they are given, whatever they hold.
+TABLE = ('role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+         'style="width:100%;table-layout:fixed;')
+#: Smallest slot (CSS px) a component may get on the narrowest screen.
+MIN_EMAIL_SLOT = 120.0
 
 
 @dataclass
@@ -80,6 +96,7 @@ class _Email:
         self.images: dict[str, bytes] = {}
         self.warnings: list[RenderWarning] = []
         self.min = profile.min_html_text_px
+        self.token = view_hash(view).split(":")[-1][:12]  # same view, same names
 
     def px(self, size: float) -> float:
         return max(size, self.min)
@@ -87,14 +104,20 @@ class _Email:
     def node(self, n: Node, path: str, lo: float, hi: float) -> str:
         """``n`` in a slot ``lo`` CSS px wide on the narrowest screen and
         ``hi`` px on the widest."""
+        if lo < MIN_EMAIL_SLOT:  # nesting ate the width: refuse, never draw into a sliver
+            from ..spec import ValidationIssue
+
+            raise SpecValidationError([ValidationIssue(path, "too_narrow", (
+                f"on a {self.p.css_width:g} px wide screen ({self.p.name}) this component gets "
+                f"{max(lo, 0):.0f} px; the minimum is {MIN_EMAIL_SLOT:g} px. Nest fewer cards "
+                "or columns."))])
         if isinstance(n, Card):
             body = "".join(self.block(self.node(c, ptr_join(path, "children", i), lo - 26,
                                                 hi - 26))
                            for i, c in enumerate(n.children))
             title = (f'<div style="{FONT}font-size:{self.px(16):g}px;font-weight:bold;'
                      f'color:{INK};margin:0 0 10px 0">{esc(n.title)}</div>' if n.title else "")
-            return (f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
-                    f'border="0" style="border:1px solid {LINE};border-radius:8px">'
+            return (f'<table {TABLE}border:1px solid {LINE};border-radius:8px">'
                     f'<tr><td style="padding:12px">{title}{body}</td></tr></table>')
         if isinstance(n, (Stack, Grid)):
             return self.columns(n, path, lo, hi)
@@ -107,8 +130,7 @@ class _Email:
             if n.type == "footnote":
                 return (f'<div style="border-top:1px solid {LINE};padding-top:6px">'
                         f'{self.prose(n.text, self.px(12), MUTED)}</div>')
-            return (f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
-                    f'border="0"><tr><td style="background:#fff8c5;border-left:4px solid '
+            return (f'<table {TABLE}"><tr><td style="background:#fff8c5;border-left:4px solid '
                     f'#bf8700;padding:10px 12px">'
                     f'{self.prose("**Caveat:** " + n.text, self.px(13), INK)}</td></tr></table>')
         if isinstance(n, Kpi):
@@ -118,7 +140,7 @@ class _Email:
         return self.flow(n, path, lo)
 
     def block(self, inner: str) -> str:
-        return f'<div style="margin:0 0 16px 0">{inner}</div>'
+        return f'<div style="margin:0 0 16px 0">{inner}</div>\n'
 
     def prose(self, text: str, size: float, color: str, bold: bool = False) -> str:
         weight = "font-weight:bold;" if bold else ""
@@ -140,10 +162,11 @@ class _Email:
             f'<div style="display:inline-block;vertical-align:top;width:100%;'
             f'max-width:{tile:g}px"><div style="padding:0 {GUTTER}px 16px 0;font-size:16px;'
             f'line-height:1.45">'
-            f'{self.node(c, p, inner_lo, inner_hi)}</div></div>' for c, p in kids)
+            f'{self.node(c, p, inner_lo, inner_hi)}</div></div>\n' for c, p in kids)
         return f'<div style="font-size:0;line-height:0">{boxes}</div>'
 
     def image(self, name: str, content: bytes, width: float, alt: str) -> str:
+        name = name.replace(".png", f".{self.token}.png@ieevisualizer")  # Content-ID form
         self.images[name] = content
         return (f'<img src="{esc(self.src(name))}" width="{int(width)}" alt="{esc(alt)}" '
                 f'style="display:block;width:100%;max-width:{int(width)}px;height:auto;'
@@ -157,7 +180,14 @@ class _Email:
         result = render(spec, req, resolver=self.resolver)
         self.warnings += [RenderWarning(w.code, w.message, pointer + w.path)
                           for w in result.warnings]
-        alt = spec.title or "Figure"
+        theme = result.theme or {}
+        if _dark(theme.get("name")):
+            self.warnings.append(RenderWarning(
+                "email_dark_figure",
+                f"the figure is drawn with the dark theme {theme.get('name')!r} in an email that "
+                "declares a light colour scheme; it shows as a dark block on a light page. Use "
+                "a light theme for email.", pointer + "/theme"))
+        alt = ". ".join(x for x in (spec.title or "Figure", figure_summary(spec)) if x)
         return self.image(f"figure-{len(self.images)}.png", result.content, hi, alt)
 
     def kpi(self, n: Kpi, lo: float) -> str:
@@ -170,29 +200,40 @@ class _Email:
         else:
             sizes = tuple(s for s in KPI_VALUE_SIZES if s >= self.min)
             lines, size = _fit_number_text(variants, 0, sizes, iw, True, True, small)
+            self.compacted(variants, 0, lines, n)
             value = (f'<div style="{FONT}font-size:{size:g}px;font-weight:bold;color:{INK};'
                      f'margin:4px 0;line-height:1.25">{"<br>".join(map(esc, lines))}</div>')
         parts = [f'<div style="{FONT}font-size:{self.px(13):g}px;color:{MUTED}">'
                  f'{esc(n.label)}</div>', value]
         if variants[0][0][1]:
             lines, size = _fit_number_text(variants, 1, (self.px(12),), iw, False, False, small)
+            self.compacted(variants, 1, lines, n)
             parts.append(f'<div style="{FONT}font-size:{size:g}px;color:{INK}">'
                          f'{"<br>".join(map(esc, lines))}</div>')
         if n.source:
             parts.append(f'<div style="{FONT}font-size:{self.px(12):g}px;color:{MUTED}">'
                          f'Source: {esc(n.source)}</div>')
-        return (f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
-                f'border="0" style="background:{PANEL};border:1px solid {LINE};'
+        return (f'<table {TABLE}background:{PANEL};border:1px solid {LINE};'
                 f'border-radius:8px"><tr><td style="padding:12px 14px">{"".join(parts)}'
                 "</td></tr></table>")
+
+    def compacted(self, variants: list, which: int, lines: list[str], n: Kpi) -> None:
+        """A KPI number rounded to fewer digits to fit is a warning, never silent."""
+        exact = variants[0][0][which]
+        if "".join(lines).replace(" ", "") != exact.replace(" ", ""):
+            self.warnings.append(RenderWarning(
+                "kpi_value_compacted",
+                f"KPI {n.label!r} is shown as '{' '.join(lines)}' instead of '{exact}': the "
+                "exact number does not fit its tile at the minimum text size.", ""))
 
     def table(self, n: Table, path: str, lo: float) -> str:
         ds = self.view.datasets[n.data]
         names, heads, rows, total = table_cells(n, ds, path)
         size = self.px(13)
         num = [ds.columns[c].dtype in ("int", "float") for c in names]
-        want = sum(max([text_width(h[:200], size, True)] + [text_width(r[i][:200], size)
-                                                              for r in rows]) + 16
+        # headers wrap at spaces, so a column needs only its longest header word
+        want = sum(max([text_width(w[:200], size, True) for w in h.split(" ")]
+                       + [text_width(r[i][:200], size) for r in rows]) + 16
                    for i, h in enumerate(heads)) * FONT_SLACK
         cell = f"{FONT}font-size:{size:g}px;padding:4px 8px;"
         cap = (f'<div style="{FONT}font-size:{self.px(15):g}px;font-weight:bold;color:{INK};'
@@ -206,7 +247,7 @@ class _Email:
                 f'<tr style="background:{PANEL if k % 2 else "#ffffff"}">' + "".join(
                     f'<td align="{"right" if num[i] else "left"}" style="{cell}color:'
                     f'{MUTED if s == NULL_CELL else INK}">{esc(s)}</td>'
-                    for i, s in enumerate(r)) + "</tr>" for k, r in enumerate(rows))
+                    for i, s in enumerate(r)) + "</tr>\n" for k, r in enumerate(rows))
             parts.append(f'<table role="presentation" width="100%" cellpadding="0" '
                          f'cellspacing="0" border="0" style="border-collapse:collapse">'
                          f"<tr>{th}</tr>{trs}</table>")
@@ -224,7 +265,7 @@ class _Email:
                 cards.append(f'<div style="display:inline-block;vertical-align:top;width:100%;'
                              f'max-width:{COLUMN // 2}px"><div style="border:1px solid {LINE};'
                              f'border-radius:6px;padding:8px 10px;margin:0 8px 8px 0;'
-                             f'line-height:1.45">{fields}</div></div>')
+                             f'line-height:1.45">{fields}</div></div>\n')
             parts.append(f'<div style="font-size:0;line-height:0">{"".join(cards)}</div>')
         if len(rows) < total:
             parts.append(f'<div style="{FONT}font-size:{self.min:g}px;color:{MUTED}">'
@@ -234,6 +275,20 @@ class _Email:
     def flow(self, f: Flow, path: str, lo: float) -> str:
         f2, items, gw, gh, order, s = fit_flow(f, lo, self.p.min_text_px, path, self.warnings)
         w, h = max(gw * s, 1.0), max(gh * s, 1.0)
+        if FLOW_MIN_FONT * s < self.p.min_text_px - 1e-9:
+            self.warnings.append(RenderWarning(
+                "legibility_text_too_small",
+                f"the flow's smallest labels are {FLOW_MIN_FONT * s:.1f} CSS px on a "
+                f"{lo:.0f} px wide screen (minimum {self.p.min_text_px:g}).", path))
+        px_w, px_h = round(w * self.p.scale), round(h * self.p.scale)
+        if max(px_w, px_h) > MAX_PNG_SIDE_PX or px_w * px_h > MAX_PNG_PIXELS:
+            from ..render import RenderError
+            from ..spec import ValidationIssue
+
+            raise RenderError([ValidationIssue(path, "view_too_large", (
+                f"the flow's image would be {px_w} x {px_h} px; the limits are "
+                f"{MAX_PNG_SIDE_PX} px a side and {MAX_PNG_PIXELS / 1e6:g} megapixels. Split "
+                "the flow or use a grid layout."))])
         png = to_png([Rect(0, 0, w, h, fill="#ffffff"), Group(items, scale=s)], w, h,
                      self.p.scale, lambda e, pw, ph: None)
         title = (f'<div style="{FONT}font-size:{self.px(15):g}px;font-weight:bold;color:{INK};'
@@ -244,7 +299,8 @@ class _Email:
         text = (f'<div style="{FONT}font-size:{self.px(13):g}px;color:{INK};margin-top:8px">'
                 f"<strong>Text version</strong>{desc}"
                 f'<ol style="margin:4px 0 0 0;padding-left:22px">{lis}</ol></div>')
-        img = self.image(f"flow-{len(self.images)}.png", png, w, f.title or "Flow diagram")
+        img = self.image(f"flow-{len(self.images)}.png", png, w,
+                         (f.title or "Flow diagram") + " (text version below)")
         return title + img + text
 
 
@@ -256,6 +312,13 @@ def render_email(view: ViewSpec, profile: str = "email-phone", *,
     maps an image name to its ``src`` (default ``cid:<name>``)."""
     prof = get_profile(profile)
     errs = errors(view)
+    lang = view.metadata.get("lang", "en")
+    if not (isinstance(lang, str) and _LANG.fullmatch(lang)):
+        from ..spec import ValidationIssue
+
+        errs.append(ValidationIssue("/metadata/lang", "invalid_value",
+                                    f"lang must be a language tag such as 'en' or 'fi-FI', got "
+                                    f"{lang!r}."))
     if errs:
         raise SpecValidationError(errs)
     e = _Email(view, prof, resolver, image_src or (lambda name: f"cid:{name}"))
@@ -263,7 +326,6 @@ def render_email(view: ViewSpec, profile: str = "email-phone", *,
     body = e.node(view.root, "/root", lo, COLUMN)
     title = (f'<h1 style="{FONT}font-size:24px;line-height:1.25;color:{INK};margin:0 0 16px 0">'
              f"{esc(view.title)}</h1>" if view.title else "")
-    lang = view.metadata.get("lang") if isinstance(view.metadata.get("lang"), str) else "en"
     html = (
         f'<!DOCTYPE html>\n<html lang="{esc(lang)}">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
@@ -277,7 +339,14 @@ def render_email(view: ViewSpec, profile: str = "email-phone", *,
         f'style="padding:16px {GUTTER}px">\n'
         f'<table role="presentation" width="{COLUMN}" cellpadding="0" cellspacing="0" '
         f'border="0" style="width:100%;max-width:{COLUMN}px"><tr><td align="left">'
-        f"{title}{body}</td></tr></table>\n</td></tr></table>\n</body>\n</html>\n")
+        f"{title}\n{body}</td></tr></table>\n</td></tr></table>\n</body>\n</html>\n")
+    html = "\n".join(_short_lines(line) for line in html.split("\n"))
+    if not prof.narrow:
+        e.warnings.append(RenderWarning(
+            "email_not_phone_safe",
+            f"laid out for {prof.css_width:g} px ({prof.name}): read on a phone (about 320 px) "
+            f"its figure text shrinks to {12 * 320 / prof.css_width:.1f} px. Use email-phone "
+            "for email anyone may read on a phone.", ""))
     size = len(html.encode("utf-8"))
     if size > GMAIL_CLIP_BYTES:
         e.warnings.append(RenderWarning(
@@ -286,3 +355,65 @@ def render_email(view: ViewSpec, profile: str = "email-phone", *,
             f"{GMAIL_CLIP_BYTES // 1024} KB behind 'View entire message'. Split the view or "
             "show fewer table rows.", ""))
     return EmailRender(html=html, images=e.images, warnings=e.warnings, profile=prof.name)
+
+
+def _short_lines(line: str) -> str:
+    """``line`` broken into lines of at most :data:`MAX_LINE` characters at
+    spaces where a line break means the same: in text, or between a tag's
+    attributes - never inside a quoted attribute value (a break inside
+    ``style="font-family:'DejaVu Sans'"`` would invalidate the style). A
+    longer run with no such space stays, for the transfer encoding to fold."""
+    if len(line) <= MAX_LINE:
+        return line
+    breaks, in_tag, quote = [], False, ""
+    for k, ch in enumerate(line):
+        if quote:
+            quote = "" if ch == quote else quote
+        elif in_tag and ch in "\"'":
+            quote = ch
+        elif ch == "<":
+            in_tag = True
+        elif ch == ">":
+            in_tag = False
+        elif ch == " ":
+            breaks.append(k)
+    out, start = [], 0
+    for a, b in zip(breaks, breaks[1:] + [len(line)]):
+        if b - start > MAX_LINE and a > start:
+            out.append(line[start:a])
+            start = a + 1
+    return "\n".join(out + [line[start:]])
+
+
+def _dark(theme_name: str | None) -> bool:
+    from ..themes import resolve_for_render
+    from ..themes.color import relative_luminance
+
+    theme, _ = resolve_for_render(theme_name)
+    return theme.background is not None and relative_luminance(theme.background) < 0.2
+
+
+def figure_summary(spec: Any, limit: int = 400) -> str:
+    """A text alternative carrying the figure's numbers (for an email whose
+    images are blocked): per layer, its name, how many values and their range
+    with the unit. Inline data only; ``""`` when there is none."""
+    from .text import format_number
+
+    parts = []
+    for m in spec.layers:
+        snap = spec.datasets.get(m.data) if isinstance(m.data, str) else None
+        enc = getattr(m, "encoding", {}) or {}
+        ch = "x" if getattr(m, "orientation", None) == "horizontal" else "y"
+        cols = getattr(snap, "columns", None)  # a DatasetRef has none until resolved
+        col = cols.get(enc[ch].field) if cols is not None and ch in enc else None
+        if col is None or col.dtype not in ("int", "float"):
+            continue
+        vals = [v for v in col.values if v is not None]
+        if not vals:
+            continue
+        unit = f" {col.unit}" if col.unit else ""
+        name = m.name or enc[ch].title or enc[ch].field
+        parts.append(f"{name}: {len(vals)} values from {format_number(min(vals))} to "
+                     f"{format_number(max(vals))}{unit}")
+    text = "; ".join(parts)
+    return text if len(text) <= limit else text[:limit - 1] + "…"
