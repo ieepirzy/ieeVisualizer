@@ -3,7 +3,10 @@
 Style keys understood (``ieeVisualizer.spec.marks`` lists them as the
 renderer-neutral vocabulary): ``color``, ``colormap``, ``linewidth``,
 ``linestyle``, ``marker``, ``opacity``; bars also ``value_labels``,
-``bar_width`` and ``bar_offset``. A ``colormap`` of ``"sequential"`` or
+``bar_width`` and ``bar_offset``; a continuous colour scale (heatmap, scatter
+or quiver coloured by a number) also ``color_range: [lo, hi]``, which fixes
+the values mapped to the ends of the colormap (an animation uses it to keep
+one colour scale across frames). A ``colormap`` of ``"sequential"`` or
 ``"diverging"`` names the theme's map. Any other key, a key the mark cannot
 use, or a value matplotlib would reject becomes a :class:`RenderWarning`
 and is ignored; nothing is dropped silently.
@@ -35,6 +38,7 @@ Roles:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -43,18 +47,18 @@ from ...themes.theme import DEFAULT_FORECAST_LINE_ALPHA
 from ..base import RenderWarning
 
 KNOWN_STYLE_KEYS = ("color", "colormap", "linewidth", "linestyle", "marker", "opacity",
-                    "value_labels", "bar_width", "bar_offset", "color_of")
+                    "value_labels", "bar_width", "bar_offset", "color_of", "color_range")
 #: Which style keys each mark type can honour.
 APPLICABLE = {
     "line": {"color", "linewidth", "linestyle", "marker", "opacity", "color_of"},
     "function": {"color", "linewidth", "linestyle", "marker", "opacity", "colormap", "color_of"},
-    "scatter": {"color", "colormap", "marker", "opacity", "color_of"},
+    "scatter": {"color", "colormap", "marker", "opacity", "color_of", "color_range"},
     "area": {"color", "linewidth", "linestyle", "opacity", "color_of"},
     "bar": {"color", "linewidth", "opacity", "value_labels", "bar_width", "bar_offset",
             "color_of"},
     "histogram": {"color", "linewidth", "opacity", "color_of"},
-    "heatmap": {"colormap", "opacity"},
-    "quiver": {"color", "colormap", "opacity"},
+    "heatmap": {"colormap", "opacity", "color_range"},
+    "quiver": {"color", "colormap", "opacity", "color_range"},
 }
 ANNOTATION_KEYS = {"color", "linewidth", "linestyle", "opacity"}
 
@@ -236,6 +240,9 @@ def parse_style(
             ok = _num(value) and 0 < value <= 1
         elif key == "bar_offset":
             ok = _num(value) and -0.5 <= value <= 0.5
+        elif key == "color_range":
+            ok = isinstance(value, (list, tuple)) and len(value) == 2 \
+                and all(_num(v) and math.isfinite(v) for v in value) and value[0] < value[1]
         if not ok:
             warnings.append(RenderWarning(
                 "invalid_style_value", f"style {key}={value!r} is not a valid value; it was "
