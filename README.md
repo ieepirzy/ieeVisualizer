@@ -121,7 +121,8 @@ function-mark or template parameter) or a frame column (e.g. one frame per
 week). It renders to GIF (and MP4 when ffmpeg is installed) with every frame
 drawn by the static renderer, and exports with a poster PNG and a manifest.
 An optional Manim adapter (`pip install -e ".[manim]"`) covers a narrow
-subset. See [docs/ANIMATION.md](docs/ANIMATION.md) and
+subset and is used only when requested (`AnimationRequest(adapter="manim")`).
+See [docs/ANIMATION.md](docs/ANIMATION.md) and
 `python examples/animations.py`.
 
 ## Development priorities

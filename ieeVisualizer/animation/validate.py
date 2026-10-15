@@ -16,17 +16,18 @@ Codes (besides every FigureSpec code, prefixed with ``/figure``):
 
 from __future__ import annotations
 
+import math
+
 from ..spec import DatasetRef, DataSnapshot, FunctionMark, QuiverMark, ValidationIssue, validate
 from ..spec._common import is_number, suggest
 from .frames import count_states, frame_keys, sweep_values, template_params
+from .limits import frame_limit_issues, frame_total, poster_issues, sweep_state_count
 from .spec import (
     ANIMATION_SCHEMA_VERSION,
     AXIS_LIMIT_MODES,
     DISPLAYS,
     EASINGS,
-    MAX_DURATION_S,
     MAX_FPS,
-    MAX_FRAMES,
     AnimationSpec,
     FrameColumn,
     MarkTarget,
@@ -42,6 +43,11 @@ def _int(v) -> bool:
 class _Issues(list):
     def add(self, path, code, message, severity="error"):
         self.append(ValidationIssue(path, code, message, severity))
+
+    @property
+    def errors(self) -> bool:
+        """Any error so far (warnings never stop the later checks)."""
+        return any(i.severity == "error" for i in self)
 
 
 def validate_animation(anim: AnimationSpec) -> list[ValidationIssue]:
@@ -68,7 +74,7 @@ def validate_animation(anim: AnimationSpec) -> list[ValidationIssue]:
     if anim.figure is not None:
         for i in validate(anim.figure):
             out.add("/figure" + i.path, i.code, i.message, i.severity)
-    if out and any(i.severity == "error" for i in out):
+    if out.errors:
         return list(out)
 
     if isinstance(tl, ParameterSweep):
@@ -90,21 +96,16 @@ def validate_animation(anim: AnimationSpec) -> list[ValidationIssue]:
                         "no 'scale' is set, so arrow lengths are rescaled in every frame and "
                         "changes in magnitude are not visible; set 'scale' to compare frames.",
                         "warning")
-    if isinstance(snapshot, _Deferred):  # frame count known only after resolution
-        return list(out)
-    n = anim.hold_start + anim.hold_end + count_states(anim, snapshot)
-    if n > MAX_FRAMES:
-        out.add("/timeline", "too_many_frames",
-                f"the animation has {n} frames; at most {MAX_FRAMES} are rendered. Shorten the "
-                "duration, lower fps or use fewer values.")
-    if n / anim.fps > MAX_DURATION_S:
-        out.add("/timeline", "duration_too_long",
-                f"the animation lasts {n / anim.fps:.1f} s; at most {MAX_DURATION_S:g} s.")
-    if isinstance(anim.poster, str):
-        if anim.poster not in ("first", "last"):
-            out.add("/poster", "invalid_poster", "poster is 'first', 'last' or a frame index.")
-    elif not _int(anim.poster) or not 0 <= anim.poster < n:
-        out.add("/poster", "invalid_poster", f"poster frame must be in 0..{n - 1}.")
+    if isinstance(snapshot, _Deferred):
+        # The state count is known only after resolution (check_frame_count
+        # then); the holds plus one state are a lower bound checked now.
+        out.extend(i for i in frame_limit_issues(anim, 1, lower_bound=True)
+                   if i.code != "invalid_poster")
+        out.extend(poster_issues(anim, None))
+    elif isinstance(tl, FrameColumn):
+        out.extend(frame_limit_issues(anim, count_states(anim, snapshot)))
+    else:  # a sweep's limits were checked in _check_sweep, before any value was built
+        out.extend(poster_issues(anim, frame_total(anim, sweep_state_count(tl, anim.fps))))
     return list(out)
 
 
@@ -122,9 +123,18 @@ def _check_sweep(anim: AnimationSpec, tl: ParameterSweep, out: _Issues) -> bool:
     elif any(v is None for v in ranged):
         out.add(p, "sweep_source_missing",
                 "a sweep needs 'values', or all of 'start', 'end' and 'duration' (seconds).")
-    elif tl.duration <= 0:
-        out.add(p + "/duration", "invalid_value", "duration must be positive (seconds).")
-    if out:
+    elif not is_number(tl.duration) or not math.isfinite(tl.duration * anim.fps) \
+            or tl.duration <= 0:
+        out.add(p + "/duration", "invalid_value",
+                "duration must be a positive, finite number of seconds.")
+    if out.errors:
+        return False
+    # Frame guards from the count alone, before any sweep value is built
+    # (the template check below evaluates the template at every value).
+    limits = [i for i in frame_limit_issues(anim, sweep_state_count(tl, anim.fps))
+              if i.code != "invalid_poster"]
+    if limits:
+        out.extend(limits)
         return False
     if isinstance(tl.target, MarkTarget):
         return _check_mark_target(anim, tl, out)
@@ -174,10 +184,8 @@ def _check_template_target(anim: AnimationSpec, tl: ParameterSweep, out: _Issues
                 f"{tl.parameter!r} is not a sweepable parameter of {t.name!r}: use a 'number' "
                 "parameter, or 'name.key' of a 'number_map' parameter (e.g. 'constants.k').")
         return False
-    for v in {sweep_values(tl, anim.fps)[0], sweep_values(tl, anim.fps)[-1]}:
-        for i in tpl.check(t.data, **template_params(t, tl.parameter, v)):
-            out.add(p + i.path, i.code, f"at {tl.parameter} = {v:g}: {i.message}", i.severity)
-    if out and any(i.severity == "error" for i in out):
+    _check_every_value(tpl, t, tl, sweep_values(tl, anim.fps), out)
+    if out.errors:
         return False
     params = template_params(t, tl.parameter, 0.0)
     if any(q.type == "number" and q.name == "scale" for q in tpl.parameters) \
@@ -186,6 +194,39 @@ def _check_template_target(anim: AnimationSpec, tl: ParameterSweep, out: _Issues
                 "no 'scale' is set, so arrow lengths are rescaled in every frame and changes in "
                 "magnitude are not visible; set 'scale' to compare frames.", "warning")
     return True
+
+
+def _check_every_value(tpl, t: TemplateTarget, tl: ParameterSweep, values: list[float],
+                       out: _Issues) -> None:
+    """Run the template's own check at every sweep value (at most MAX_FRAMES,
+    guarded before this is called; repeated values are checked once).
+
+    An issue raised identically at every value, not on the swept parameter,
+    does not depend on the swept value and is reported once under
+    ``/timeline/target``. Any other issue is reported at the first value
+    raising it, ``/timeline/values/<i>`` (or
+    ``/timeline`` for an interpolated sweep, with the state index), naming
+    the template path and how many other values fail the same way."""
+    swept_path = "/params/" + tl.parameter.partition(".")[0]
+    seen: dict[float, list[ValidationIssue]] = {}
+    hits: dict[tuple[str, str, str], list[tuple[int, float, str]]] = {}
+    for k, v in enumerate(values):
+        if v not in seen:
+            seen[v] = tpl.check(t.data, **template_params(t, tl.parameter, v))
+        for i in seen[v]:
+            hits.setdefault((i.path, i.code, i.severity), []).append((k, v, i.message))
+    for (path, code, severity), where in hits.items():
+        k, v, message = where[0]
+        target = "/timeline/target" + path
+        n_at = len({j for j, *_ in where})
+        swept = path == swept_path or path.startswith(swept_path + "/")
+        if n_at == len(values) and not swept and len({m for *_, m in where}) == 1:
+            out.add(target, code, message, severity)  # independent of the swept value
+            continue
+        others = f" ({n_at - 1} other value(s) fail the same way)" if n_at > 1 else ""
+        at = f"/timeline/values/{k}" if tl.values is not None else "/timeline"
+        out.add(at, code, f"at {tl.parameter} = {v:g} (state {k}), {target}: {message}{others}",
+                severity)
 
 
 def _check_frame_column(anim: AnimationSpec, tl: FrameColumn, out: _Issues):
@@ -211,13 +252,13 @@ def _check_frame_column(anim: AnimationSpec, tl: FrameColumn, out: _Issues):
         if ds.columns and tl.column not in ds.columns:
             out.add(p + "/column", "unknown_column", f"reference {tl.dataset!r} declares no "
                     f"column {tl.column!r}.")
-        return None if out else _Deferred()
+        return None if out.errors else _Deferred()
     if tl.column not in ds.columns:
         out.add(p + "/column", "unknown_column",
                 f"dataset {tl.dataset!r} has no column {tl.column!r}."
                 f"{suggest(tl.column, ds.columns)}")
         return None
-    if out:
+    if out.errors:
         return None
     keys, _, nulls = frame_keys(ds, tl.column)
     if not keys:
@@ -234,10 +275,6 @@ class _Deferred(DataSnapshot):
 
 
 def check_frame_count(anim: AnimationSpec, n_states: int) -> list[ValidationIssue]:
-    """Frame guards once the real number of states is known (references)."""
-    n = anim.hold_start + anim.hold_end + n_states
-    if n > MAX_FRAMES or n / anim.fps > MAX_DURATION_S:
-        return [ValidationIssue("/timeline", "too_many_frames",
-                                f"the resolved data gives {n} frames ({n / anim.fps:.1f} s); "
-                                f"the limits are {MAX_FRAMES} frames and {MAX_DURATION_S:g} s.")]
-    return []
+    """Frame, duration and poster guards once the real number of distinct
+    states is known (a referenced frame dataset after resolution)."""
+    return frame_limit_issues(anim, n_states, resolved=True)

@@ -28,6 +28,7 @@ from ..spec import (
     FunctionMark,
     ValidationIssue,
 )
+from .limits import frame_limit_issues, frame_mapping, poster_index, sweep_state_count
 from .spec import AnimationSpec, FrameColumn, MarkTarget, ParameterSweep, TemplateTarget
 
 
@@ -77,10 +78,13 @@ def _ease(t: float, easing: str) -> float:
 
 
 def sweep_values(tl: ParameterSweep, fps: int) -> list[float]:
-    """The parameter value of each sweep state, endpoints included."""
+    """The parameter value of each sweep state, endpoints included.
+
+    Builds the whole list: check :func:`~ieeVisualizer.animation.limits.sweep_state_count`
+    against the frame guards first (validation and :func:`plan` do)."""
     if tl.values is not None:
         return list(tl.values)
-    n = max(2, int(round(tl.duration * fps)))
+    n = sweep_state_count(tl, fps)
     return [tl.start + (tl.end - tl.start) * _ease(i / (n - 1), tl.easing) for i in range(n)]
 
 
@@ -192,27 +196,74 @@ def _labelled(spec: FigureSpec | None, anim: AnimationSpec, label: str) -> Figur
 
 
 def count_states(anim: AnimationSpec, snapshot: DataSnapshot | None = None) -> int:
+    """Distinct states (not output frames), without building them."""
     tl = anim.timeline
     if isinstance(tl, ParameterSweep):
-        return len(sweep_values(tl, anim.fps))
-    return len(frame_keys(snapshot, tl.column)[0]) * tl.frames_per_value
+        return sweep_state_count(tl, anim.fps)
+    return len(frame_keys(snapshot, tl.column)[0])
 
 
-def poster_index(anim: AnimationSpec, n_frames: int) -> int:
-    if anim.poster == "first":
-        return 0
-    if anim.poster == "last":
-        return n_frames - 1
-    return int(anim.poster)
+def resolved_frame_keys(spec: FigureSpec, tl: FrameColumn) -> tuple[list[Any], list[Any]]:
+    """``(keys, values)`` of the frame column in a resolved figure; raises
+    :class:`~ieeVisualizer.spec.SpecValidationError` (``unknown_column``,
+    ``no_frames``) when the resolved data cannot drive the timeline."""
+    from ..spec import SpecValidationError
+
+    snap = spec.datasets.get(tl.dataset)
+    if not isinstance(snap, DataSnapshot) or tl.column not in snap.columns:
+        raise SpecValidationError([ValidationIssue(
+            "/timeline/column", "unknown_column",
+            f"the resolved dataset {tl.dataset!r} has no column {tl.column!r}.")])
+    keys, values, _ = frame_keys(snap, tl.column)
+    if not keys:
+        raise SpecValidationError([ValidationIssue(
+            "/timeline/column", "no_frames",
+            f"column {tl.column!r} of the resolved data has no non-null value.")])
+    return keys, values
+
+
+def _build_template(tl: ParameterSweep, i: int, v: float) -> FigureSpec:
+    """The template's figure at sweep state ``i``; a refusal is reported at
+    the sweep value (``/timeline/values/<i>``, or ``/timeline`` for an
+    interpolated sweep) naming the template path, never as a bare
+    template-internal path."""
+    from .. import templates
+    from ..spec import SpecError, SpecValidationError
+
+    t = tl.target
+    try:
+        return templates.get(t.name, t.version).build(t.data, **template_params(t, tl.parameter, v))
+    except SpecError as e:
+        at = f"/timeline/values/{i}" if tl.values is not None else "/timeline"
+        raise SpecValidationError([
+            ValidationIssue(at, x.code, f"at {tl.parameter} = {v:g} (state {i}), template "
+                            f"{t.name!r} {x.path or '/'}: {x.message}", x.severity)
+            for x in getattr(e, "issues", []) if x.severity == "error"
+        ] or [ValidationIssue(at, "template_build_failed",
+                              f"at {tl.parameter} = {v:g} (state {i}): {e}")]) from None
+
+
+def _guard(anim: AnimationSpec, n_states: int, resolved: bool) -> None:
+    from ..spec import SpecValidationError
+
+    errors = [i for i in frame_limit_issues(anim, n_states, resolved=resolved)
+              if i.severity == "error"]
+    if errors:
+        raise SpecValidationError(errors)
 
 
 def plan(anim: AnimationSpec, resolver=None) -> FramePlan:
     """Build every state's FigureSpec. The spec must validate
-    (:func:`~ieeVisualizer.animation.validate_animation`); callers check first."""
+    (:func:`~ieeVisualizer.animation.validate_animation`); callers check first.
+
+    The frame, duration and poster guards are checked again here, from the
+    state count alone, before any value, state or frame list is built
+    (:class:`~ieeVisualizer.spec.SpecValidationError` if they fail)."""
     tl = anim.timeline
+    if isinstance(tl, ParameterSweep):
+        _guard(anim, sweep_state_count(tl, anim.fps), resolved=False)
     issues: list[ValidationIssue] = []
     states: list[FrameState] = []
-    repeat = 1
     base = None
     if anim.figure is not None:
         from ..render.prepare import prepare
@@ -227,28 +278,11 @@ def plan(anim: AnimationSpec, resolver=None) -> FramePlan:
                 assert isinstance(mark, FunctionMark)
                 mark.parameters = {**mark.parameters, tl.parameter: v}
             else:
-                from .. import templates
-
-                t = tl.target
-                spec = templates.get(t.name, t.version).build(
-                    t.data, **template_params(t, tl.parameter, v))
+                spec = _build_template(tl, i, v)
             states.append(FrameState(i, v, label, _labelled(spec, anim, label)))
     else:
-        snap = base.datasets.get(tl.dataset)
-        if not isinstance(snap, DataSnapshot) or tl.column not in snap.columns:
-            from ..spec import SpecValidationError
-
-            raise SpecValidationError([ValidationIssue(
-                "/timeline/column", "unknown_column",
-                f"the resolved dataset {tl.dataset!r} has no column {tl.column!r}.")])
-        keys, values, _ = frame_keys(snap, tl.column)
-        if not keys:
-            from ..spec import SpecValidationError
-
-            raise SpecValidationError([ValidationIssue(
-                "/timeline/column", "no_frames",
-                f"column {tl.column!r} of the resolved data has no non-null value.")])
-        repeat = tl.frames_per_value
+        keys, values = resolved_frame_keys(base, tl)
+        _guard(anim, len(keys), resolved=True)
         for k, v in enumerate(values):
             if tl.display == "current":
                 label = f"{tl.column}: {_show(v)}"
@@ -264,9 +298,6 @@ def plan(anim: AnimationSpec, resolver=None) -> FramePlan:
                     f"frame {k} ({label}): layer {i} has no complete row, so it is left out of "
                     "this frame rather than drawn as zero.", "warning"))
             states.append(FrameState(k, v, label, _labelled(spec, anim, label), omitted))
-    frames = [0] * anim.hold_start
-    for s in states:
-        frames.extend([s.index] * repeat)
-    frames.extend([states[-1].index] * anim.hold_end)
+    frames = frame_mapping(anim, len(states))
     return FramePlan(states=states, frames=frames, fps=anim.fps,
                      poster=poster_index(anim, len(frames)), issues=issues)

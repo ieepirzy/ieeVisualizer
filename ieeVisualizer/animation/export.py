@@ -8,10 +8,12 @@ artifact id:
     animation.json                  canonical AnimationSpec (hash = animation_hash)
     manifest.json                   AnimationArtifact (written last)
 
-The poster is the static Matplotlib render of the poster state's FigureSpec
-(with the animation's fixed axis limits), so it equals that frame of a
-Matplotlib-rendered animation pixel for pixel. Every output is rendered
-before anything is written; a failure leaves no partial artifact.
+The poster is frame ``poster_frame`` of the first requested format's clip,
+recorded with the adapter that drew it: for the Matplotlib adapter, the
+static render of the poster state's FigureSpec (with the animation's fixed
+axis limits), which equals that frame pixel for pixel; for an adapter with
+its own look (Manim), the frame decoded from its clip. Every output is
+rendered before anything is written; a failure leaves no partial artifact.
 """
 
 from __future__ import annotations
@@ -25,10 +27,12 @@ from typing import Any, Callable
 from ..artifacts.export import _file, _records, artifact_id_for, library_versions
 from ..artifacts.manifest import DatasetRecord, FileEntry, RenderVariant
 from ..artifacts.writers import ArtifactWriter
+from ..render.base import issue as _issue
 from ..spec import spec_hash
 from ..spec._common import canonical_json
 from .base import (
     ANIMATION_MEDIA_TYPES,
+    AnimationError,
     AnimationRegistry,
     AnimationRequest,
     render_animation,
@@ -108,6 +112,7 @@ def export_animation(
     registry: AnimationRegistry | None = None,
 ) -> AnimationArtifact:
     from ..render.prepare import prepare
+    from .frames import plan
     from .mpl import MatplotlibAnimationAdapter
 
     if writer is None:
@@ -130,9 +135,23 @@ def export_animation(
     first = results[0]
 
     mpl = MatplotlibAnimationAdapter()
-    fp, _ = mpl.plan(anim, base, resolver=resolver)
+    if first.poster_png is not None:  # the adapter's own frame, not a Matplotlib still
+        fp = plan(anim, resolver)
+    else:
+        fp, _ = mpl.plan(anim, base, resolver=resolver)
+    if fp.poster != first.poster_frame or fp.frames != first.frames:
+        raise AnimationError([_issue("", "poster_mismatch",
+                                     f"the {first.adapter_name} result maps frames differently "
+                                     "from the frame plan; refusing to record a poster for the "
+                                     "wrong frame.")])
     state = fp.state_of(fp.poster)
-    if state.spec is None:
+    if first.poster_png is not None:
+        poster_bytes = first.poster_png
+        poster_warn = [{"code": "poster_from_clip", "path": "/poster",
+                        "message": f"frame {fp.poster} decoded from the {first.adapter_name} "
+                                   f"{first.format} clip ({state.label})"}]
+        poster_adapter = (first.adapter_name, first.adapter_version)
+    elif state.spec is None:
         from PIL import Image
 
         from .mpl import _no_data_frame
@@ -181,7 +200,8 @@ def export_animation(
         spec_file=_file(SPEC_NAME, spec_bytes, "application/json"),
         timeline=timeline_to_dict(anim.timeline), fps=first.fps,
         frame_count=first.frame_count, state_count=first.state_count,
-        frame_duration_ms=first.frame_duration_ms, poster_frame=fp.poster, poster=poster,
+        frame_duration_ms=first.frame_duration_ms, poster_frame=first.poster_frame,
+        poster=poster,
         variants=[v for *_, v in outputs], states=first.states, frames=first.frames,
         datasets=records, library_versions=versions, created_at=created.isoformat(),
         figure_spec_hash=fig_hash, title=anim.title or (anim.figure.title if anim.figure

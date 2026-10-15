@@ -20,7 +20,9 @@ from ..spec import SpecValidationError
 from .spec import MAX_DURATION_S, MAX_FRAMES, AnimationSpec, FrameColumn, TemplateTarget
 
 ANIMATION_MEDIA_TYPES = {"gif": "image/gif", "mp4": "video/mp4"}
-#: Largest frame area x frame count rendered (bounds memory and time).
+#: Largest frame area x output frame count (hold and repeated frames
+#: included) any adapter renders or encodes; bounds memory and time.
+#: Enforced by :func:`enforce_limits` for every adapter.
 MAX_TOTAL_PIXELS = 120_000_000
 
 
@@ -82,6 +84,10 @@ class AnimationResult:
     states: list[dict[str, Any]] = field(default_factory=list)
     #: State index shown in each frame.
     frames: list[int] = field(default_factory=list)
+    #: Frame ``poster_frame`` of this clip as PNG, when the adapter's frames
+    #: are not the Matplotlib stills (Manim). None: the poster is the static
+    #: Matplotlib render of the poster state, which equals that frame.
+    poster_png: bytes | None = None
 
     @property
     def sha256(self) -> str:
@@ -105,13 +111,17 @@ class AnimationCapabilities:
     templates: frozenset[str] | None = None
     #: Why a format or feature is missing (e.g. "mp4: ffmpeg not found").
     notes: tuple[str, ...] = ()
+    #: Whether selection may pick this adapter when the request names none.
+    #: False for an adapter with a different look (Manim): it is used only
+    #: when asked for by name (``AnimationRequest(adapter=...)``).
+    auto_select: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {"figure": self.figure.to_dict(), "timelines": sorted(self.timelines),
                 "output_formats": sorted(self.output_formats), "max_frames": self.max_frames,
                 "max_duration_s": self.max_duration_s,
                 "templates": None if self.templates is None else sorted(self.templates),
-                "notes": list(self.notes)}
+                "notes": list(self.notes), "auto_select": self.auto_select}
 
 
 def timeline_kind(anim: AnimationSpec) -> str:
@@ -144,6 +154,48 @@ def base_unmet(anim: AnimationSpec, request: AnimationRequest,
         reqs = requirements_for(anim.figure, request.frame_request())
         out.extend(m for m in reqs.unmet(caps.figure) if not m.startswith("output format"))
     return out
+
+
+def enforce_limits(anim: AnimationSpec, request: AnimationRequest, n_states: int) -> int:
+    """Every resource guard, from counts alone, before anything is drawn:
+    frames, duration and poster (:class:`SpecValidationError`) and frame
+    area x output frames <= :data:`MAX_TOTAL_PIXELS` (:class:`AnimationError`,
+    ``animation_too_large``). Returns the output frame count.
+
+    :func:`render_animation` calls this for every adapter before selection;
+    adapters call it again themselves (they can be called directly)."""
+    from .limits import frame_limit_issues, frame_total
+
+    errors = [i for i in frame_limit_issues(anim, n_states) if i.severity == "error"]
+    if errors:
+        raise SpecValidationError(errors)
+    n_frames = frame_total(anim, n_states)
+    w, h = request.frame_request().size_px
+    if w * h * n_frames > MAX_TOTAL_PIXELS:
+        raise AnimationError([_issue("", "animation_too_large",
+                                     f"{n_frames} frames of {w}x{h} px = {w * h * n_frames} "
+                                     f"pixels exceed {MAX_TOTAL_PIXELS}; lower the size, dpi, "
+                                     "fps, number of values or hold frames.")])
+    return n_frames
+
+
+def output_timing(fmt: str, fps: int, loop: bool) -> tuple[float, list[RenderWarning]]:
+    """``(frame_duration_ms actually stored, warnings)`` for an output format;
+    shared by every adapter so results report timing the same way."""
+    from .encode import gif_delay_ms
+
+    if fmt == "gif":
+        delay = float(gif_delay_ms(fps))
+        if abs(delay - 1000.0 / fps) > 1e-9:
+            return delay, [RenderWarning(
+                "frame_timing_rounded", f"GIF stores delays in 10 ms steps: {fps} fps is "
+                f"played at {delay:g} ms per frame ({1000.0 / delay:.3g} fps).", "/fps")]
+        return delay, []
+    warnings = []
+    if loop:
+        warnings.append(RenderWarning("loop_ignored", "MP4 has no loop flag; looping is up to "
+                                      "the player.", "/loop"))
+    return 1000.0 / fps, warnings
 
 
 @runtime_checkable
@@ -188,6 +240,8 @@ class AnimationRegistry:
         unmet: dict[str, list[str]] = {}
         for a in cands:
             missing = a.unmet(anim, request)
+            if not request.adapter and not getattr(a.capabilities, "auto_select", True):
+                missing = [*missing, f"automatic selection (request it with adapter={a.name!r})"]
             if not missing:
                 return a
             unmet[a.name] = missing
@@ -221,7 +275,15 @@ def default_animation_registry() -> AnimationRegistry:
 def render_animation(anim: AnimationSpec, request: AnimationRequest | None = None, *,
                      resolver=None, registry: AnimationRegistry | None = None
                      ) -> AnimationResult:
-    """Validate, select an adapter by capability, render."""
+    """Validate, select an adapter, enforce the resource guards, render.
+
+    The guards (:func:`enforce_limits`) run here for every adapter, before
+    its ``render`` is called. A referenced frame dataset is resolved first to count its
+    states; the adapter then gets a resolver that returns that same data, so
+    the count checked is the count rendered and each reference is resolved
+    once."""
+    from .frames import resolved_frame_keys
+    from .limits import sweep_state_count
     from .validate import validate_animation
 
     request = request or AnimationRequest()
@@ -229,4 +291,28 @@ def render_animation(anim: AnimationSpec, request: AnimationRequest | None = Non
     if errors:
         raise SpecValidationError(errors)
     adapter = (registry or default_animation_registry()).select(anim, request)
+    tl = anim.timeline
+    resolver = _memoized(resolver)
+    if isinstance(tl, FrameColumn):
+        from ..render.prepare import prepare
+
+        n_states = len(resolved_frame_keys(prepare(anim.figure, resolver).spec, tl)[0])
+    else:
+        n_states = sweep_state_count(tl, anim.fps)
+    enforce_limits(anim, request, n_states)
     return adapter.render(anim, request, resolver=resolver)
+
+
+def _memoized(resolver):
+    """``resolver`` answering each DatasetRef object once (None stays None)."""
+    if resolver is None:
+        return None
+    cache: dict[int, tuple[Any, Any]] = {}
+
+    def resolve(ref):
+        hit = cache.get(id(ref))
+        if hit is None or hit[0] is not ref:
+            hit = cache[id(ref)] = (ref, resolver(ref))
+        return hit[1]
+
+    return resolve

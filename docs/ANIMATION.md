@@ -49,7 +49,7 @@ Serialized form (`to_json` is canonical: sorted keys, numbers as floats;
 | `hold_start`, `hold_end` | Extra frames repeating the first/last state. |
 | `axis_limits` | `fixed` (default): every axis keeps one range for the whole animation; `auto`: each frame scales itself. Limits set in the figure are kept; only open ends are filled. |
 | `label_frames` | Append the state to the title: `phase = 1.571`, `week: through 2026-07-13`. |
-| `poster` | `first`, `last` or a frame index: the frame exported as a still. |
+| `poster` | `first`, `last` or a frame index `0..frame_count-1`: the frame exported as a still. Negative indices are refused (`invalid_poster`; use `last`), not read Python-style. |
 | `loop` | GIF loops forever when true (MP4 has no loop flag; a warning says so). |
 
 ### Parameter sweep
@@ -65,8 +65,9 @@ Serialized form (`to_json` is canonical: sorted keys, numbers as floats;
   is recomputed honestly per frame.
 
 Values are either listed (`values`, at least two, one state each) or
-interpolated: `start`, `end`, `duration` seconds give `round(duration * fps)`
-states (at least 2) including both endpoints, eased `linear` or `smooth`
+interpolated: `start`, `end`, `duration` seconds give
+`floor(duration * fps + 0.5)` states (halves round up, so 0.25 s at 10 fps is
+3 states; at least 2) including both endpoints, eased `linear` or `smooth`
 (smoothstep).
 
 ### Frame column
@@ -79,7 +80,10 @@ appearance. State *k* shows the rows whose value is the *k*-th
 (`current`), any of the first *k* (`cumulative`) or the last `window` values
 (`window`). Other datasets are drawn unchanged in every frame. Rows with no
 frame value appear in no frame (`frame_value_missing` warning). A `DatasetRef`
-is resolved once, through `resolver=`, before frames are cut.
+is resolved once per `render_animation` call, through `resolver=`, before
+frames are cut; the frame, duration and poster guards are checked against the
+resolved count before any frame is built (validation can only check the hold
+frames plus one state, and the poster's sign, until then).
 
 ## Validation
 
@@ -97,9 +101,25 @@ every frame, hiding changes in magnitude). `from_dict`/`from_json` raise
 `SpecParseError` for structural problems (`not_an_animation`,
 `unsupported_schema_version`, unknown keys, NaN/Infinity).
 
-**Guards:** at most 300 frames, 60 s and 60 fps (validation errors), and at
-most 120 million pixels over all distinct states (`animation_too_large`,
-checked before drawing).
+A template sweep runs the template's own check at **every** sweep value (at
+most 300, after the frame guard), not only the ends. An issue that does not
+depend on the value is reported once under `/timeline/target/...`; one raised
+at some values is reported at the first, `/timeline/values/<i>` (`/timeline`
+for an interpolated sweep, with the state index), naming the template path and
+how many other values fail. If a template's `build()` still refuses a value,
+the render reports it at the same sweep-value path.
+
+**Guards:** at most 300 output frames, 60 s and 60 fps (validation errors
+`too_many_frames`, `duration_too_long`), and at most 120 million pixels as
+frame area x output frames, hold and repeated frames included
+(`animation_too_large`). Frame counts are computed arithmetically from
+`duration`, `fps`, `len(values)`, the number of distinct frame values,
+`frames_per_value` and the holds, before any list of values, states or frames
+is built, so an oversized spec is refused in milliseconds. They are checked
+in `validate_animation`, again in `plan()`, and, with the pixel guard, by
+`render_animation` for every adapter before its `render` is called
+(`base.enforce_limits`); each built-in adapter also checks them itself when
+called directly.
 
 ## Matplotlib adapter (`matplotlib-animation`)
 
@@ -139,7 +159,8 @@ unchanged.
 `PATH`). `capabilities.output_formats` lists `mp4` only when one is found and
 `notes` says why it is missing; requesting MP4 without it is refused with
 `format_unavailable` (adapter) or `CapabilityError` (selection), never
-silently turned into a GIF. Encoding: libx264 (`-threads 1`, bitexact flags,
+silently turned into a GIF. Frames are streamed to ffmpeg's stdin one at a
+time. Encoding: libx264 (`-threads 1`, bitexact flags,
 metadata stripped, yuv420p, odd sizes padded by one pixel) or MPEG-4 part 2
 without libx264. With ffmpeg 6.1.1 here the bytes were identical across two
 processes; this is not promised for other ffmpeg builds.
@@ -149,9 +170,12 @@ processes; this is not promised for other ffmpeg builds.
 `export_animation(anim, formats, writer, *, resolver, clock, request, name,
 registry)` renders every format first, then writes `animation.<fmt>`,
 `poster.png`, `animation.json` (canonical spec) and `manifest.json` last; a
-failure writes nothing. The poster is the static Matplotlib render of the
-poster state (with the fixed limits), so it equals that frame of a
-Matplotlib-rendered animation. The `AnimationArtifact` manifest records
+failure writes nothing. The poster is frame `poster_frame` of the first
+format's clip, recorded with the adapter that drew it. For the Matplotlib
+adapter it is the static render of the poster state (with the fixed limits),
+which equals that frame. For Manim it is that frame decoded from the Manim
+clip (`poster.adapter` is `manim`, warning `poster_from_clip`), never a
+Matplotlib still standing in for a Manim frame. The `AnimationArtifact` manifest records
 `artifact_id` (`<name or "anim">-<16 hex>` over the animation hash, dataset
 content hashes, formats and request), `animation_hash`, `figure_spec_hash`,
 the `timeline`, `fps`, `frame_count`, `state_count`, `frame_duration_ms`,
@@ -168,9 +192,14 @@ manim when used) and `created_at`.
 `frame_column`) + `output_formats` + `max_frames`/`max_duration_s` +
 `templates` + `notes`. `render_animation` validates, then picks the first
 adapter in `default_animation_registry()` whose `unmet(anim, request)` is
-empty; `AnimationRequest(adapter="manim")` pins one. The registry holds the
-Matplotlib adapter, plus the Manim adapter only if `import manim` succeeds
-(tried once, on first use).
+empty and whose capabilities allow automatic selection
+(`auto_select`); `AnimationRequest(adapter="manim")` pins one. The registry
+holds the Matplotlib adapter, plus the Manim adapter only if `import manim`
+succeeds (tried once, on first use). **Manim is never selected
+automatically** (`auto_select=False`): its frames look different from the
+Matplotlib frames and from a still of the same state, so a request that does
+not name it never gets it, and a missing ffmpeg makes an MP4 request fail
+with `CapabilityError` instead of silently switching renderer.
 
 ## Manim adapter (optional, `pip install -e ".[manim]"`)
 
@@ -204,9 +233,15 @@ so float rounding can neither add nor drop a frame; a rate function holds the
 first/last state for the hold frames). Separate `wait()` segments lost frames
 when Manim concatenated them, so they are not used. The clip is written as
 MP4 by Manim (through PyAV, not the system ffmpeg); GIF is made by decoding
-those frames and re-encoding with the same Pillow encoder as above, because
-Manim's own GIF palette banded colours badly. Both outputs were
-byte-identical across two processes here.
+those frames one at a time (never all held as RGB) straight into the same
+Pillow encoder as above, because Manim's own GIF palette banded colours
+badly; for MP4 the frames are only counted. A clip whose decoded frame count
+differs from the plan is refused (`frame_count_mismatch`). Both outputs were
+byte-identical across two processes here. The result reports timing and the
+frame mapping exactly as the Matplotlib adapter does: `frame_duration_ms` is
+the stored GIF delay (70 ms at 15 fps, with `frame_timing_rounded`) or
+`1000 / fps` for MP4 (with `loop_ignored`), `frames` maps every output frame
+to its state, and `poster_frame` is the validated poster index.
 
 ### Installing Manim: what happened here
 

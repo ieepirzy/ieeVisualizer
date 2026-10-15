@@ -88,3 +88,47 @@ def test_vector_field_arrows_share_one_length_scale_across_frames():
     frames = _video_frames(res.content)
     assert len(frames) == 2
     assert _ink(frames[-1]) > 1.3 * _ink(frames[0])
+
+
+@needs_manim
+def test_gif_result_reports_the_stored_delay_frame_mapping_and_poster():
+    anim = sine_anim(fps=15, hold_start=1, hold_end=2)  # 8 states at 15 fps
+    res = ManimAdapter().render(anim, AnimationRequest(format="gif", width=160, height=120,
+                                                       units="px", adapter="manim"))
+    _, delays = gif_frames(res.content)
+    assert res.frame_duration_ms == 70.0 and set(delays) == {70}
+    assert "frame_timing_rounded" in [w.code for w in res.warnings]
+    assert res.frames == [0] + list(range(8)) + [7, 7] and res.frame_count == len(res.frames)
+    assert res.poster_frame == len(res.frames) - 1 and res.poster_png[:4] == b"\x89PNG"
+    assert res.duration_s == pytest.approx(len(res.frames) * 0.07)
+
+
+@needs_manim
+def test_mp4_result_reports_timing_and_loop_like_the_matplotlib_adapter():
+    res = ManimAdapter().render(sine_anim(poster="first"), REQ)
+    assert res.frame_duration_ms == 100.0 and res.poster_frame == 0
+    assert res.frames == [0, 1, 2, 3, 4]
+    assert "loop_ignored" in [w.code for w in res.warnings]
+
+
+@needs_manim
+def test_export_records_the_manim_frame_as_poster_with_its_adapter(tmp_path):
+    import json
+
+    from anim_helpers import png_pixels
+
+    from ieeVisualizer.animation import export_animation
+    from ieeVisualizer.artifacts import MemoryWriter
+
+    w = MemoryWriter()
+    req = AnimationRequest(format="mp4", width=320, height=180, units="px", dpi=50,
+                           adapter="manim")
+    art = export_animation(sine_anim(poster=2), "mp4", w, request=req)
+    files = {name: c for (aid, name), c in w.files.items() if aid == art.artifact_id}
+    m = json.loads(files["manifest.json"])
+    assert m["frames"] == [0, 1, 2, 3, 4] and m["frame_count"] == 5 and m["poster_frame"] == 2
+    assert m["poster"]["adapter"]["name"] == "manim"
+    assert m["poster"]["warnings"][0]["code"] == "poster_from_clip"
+    poster = png_pixels(files["poster.png"])
+    frame = _video_frames(files["animation.mp4"])[2]
+    assert poster.shape == frame.shape and np.array_equal(poster, frame)

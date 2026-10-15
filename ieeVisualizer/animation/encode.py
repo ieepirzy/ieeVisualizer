@@ -19,7 +19,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterable
 
 import numpy as np
 
@@ -28,18 +28,23 @@ def gif_delay_ms(fps: int) -> int:
     return max(10, int(round(100.0 / fps)) * 10)
 
 
-def encode_gif(frames: Sequence[np.ndarray], fps: int, loop: bool) -> bytes:
-    """``frames`` are HxWx3 uint8 arrays (repeated arrays are fine)."""
+def encode_gif(frames: Iterable[np.ndarray], fps: int, loop: bool) -> bytes:
+    """``frames`` are HxWx3 uint8 arrays (repeated arrays are fine), from a
+    sequence or a generator. Each frame is quantized to a 1-byte-per-pixel
+    palette image as it arrives, so a generator's RGB frames are not all
+    held at once (Pillow keeps the palette images until it writes)."""
     from PIL import Image
 
-    cache: dict[int, Image.Image] = {}
+    cache: dict[int, tuple[np.ndarray, Image.Image]] = {}
     images = []
     for f in frames:
-        key = id(f)
-        if key not in cache:
-            cache[key] = Image.fromarray(f, "RGB").quantize(
-                colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
-        images.append(cache[key])
+        hit = cache.get(id(f))
+        if hit is None or hit[0] is not f:
+            hit = (f, Image.fromarray(f, "RGB").quantize(
+                colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE))
+            if isinstance(frames, (list, tuple)):  # repeated arrays: quantize once
+                cache[id(f)] = hit
+        images.append(hit[1])
     buf = io.BytesIO()
     kw = {"loop": 0} if loop else {}
     images[0].save(buf, format="GIF", save_all=True, append_images=images[1:],
@@ -72,8 +77,12 @@ def _has_x264(exe: str) -> bool:
     return " libx264 " in out.stdout
 
 
-def encode_mp4(frames: Sequence[np.ndarray], fps: int, exe: str, timeout: float = 300) -> bytes:
-    h, w = frames[0].shape[:2]
+def encode_mp4(frames: Iterable[np.ndarray], fps: int, exe: str, timeout: float = 300) -> bytes:
+    """Frames are streamed to ffmpeg's stdin one at a time (never joined into
+    one buffer); stderr goes to a file so a chatty ffmpeg cannot block."""
+    it = iter(frames)
+    first = next(it)
+    h, w = first.shape[:2]
     codec = ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-threads", "1"] \
         if _has_x264(exe) else ["-c:v", "mpeg4", "-q:v", "2"]
     with tempfile.TemporaryDirectory() as tmp:
@@ -83,14 +92,33 @@ def encode_mp4(frames: Sequence[np.ndarray], fps: int, exe: str, timeout: float 
                "-i", "-", "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", *codec,
                "-pix_fmt", "yuv420p", "-map_metadata", "-1", "-fflags", "+bitexact",
                "-flags:v", "+bitexact", "-movflags", "+faststart", out]
-        raw = b"".join(np.ascontiguousarray(f).tobytes() for f in frames)
-        proc = subprocess.run(cmd, input=raw, capture_output=True, timeout=timeout)
-        if proc.returncode != 0:
-            from ..render.base import issue
-            from .base import AnimationError
+        with open(os.path.join(tmp, "stderr.txt"), "w+b") as err:
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                    stderr=err)
+            try:
+                try:
+                    proc.stdin.write(np.ascontiguousarray(first).tobytes())
+                    for f in it:
+                        proc.stdin.write(np.ascontiguousarray(f).tobytes())
+                except BrokenPipeError:
+                    pass  # ffmpeg exited early; its exit code and stderr say why
+                finally:
+                    try:
+                        proc.stdin.close()
+                    except BrokenPipeError:
+                        pass
+                code = proc.wait(timeout=timeout)
+            except BaseException:
+                proc.kill()
+                proc.wait()
+                raise
+            if code != 0:
+                from ..render.base import issue
+                from .base import AnimationError
 
-            raise AnimationError([issue("", "encoder_failed",
-                                        f"ffmpeg exited with {proc.returncode}: "
-                                        f"{proc.stderr.decode(errors='replace').strip()}")])
+                err.seek(0)
+                raise AnimationError([issue("", "encoder_failed",
+                                            f"ffmpeg exited with {code}: "
+                                            f"{err.read().decode(errors='replace').strip()}")])
         with open(out, "rb") as fh:
             return fh.read()

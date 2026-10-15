@@ -19,6 +19,13 @@ the capabilities, never approximated. Text uses ``Text`` (Pango), never
 ``MathTex``, so no LaTeX installation is needed. Frames are NOT pixel-equal
 to the Matplotlib frames: this is a different renderer with its own look.
 
+Never chosen automatically: its frames look different from the Matplotlib
+frames (and from a still of the same state), so it is used only when the
+request names it (``AnimationRequest(adapter="manim")``); a missing ffmpeg
+never silently switches an MP4 to this renderer. The resource guards
+(:func:`~ieeVisualizer.animation.base.enforce_limits`: frames, duration,
+poster and frame area x output frames) are checked before Manim starts.
+
 Importing this module does not import manim; :func:`manim_available` tries
 once and caches the answer. Expressions go through the same checked parser as
 the Matplotlib adapter (``render.mpl.function.parse``).
@@ -41,9 +48,12 @@ from .base import (
     AnimationRequest,
     AnimationResult,
     base_unmet,
+    enforce_limits,
+    output_timing,
     timeline_kind,
 )
 from .frames import sweep_values, template_params
+from .limits import frame_mapping, frame_total, poster_index, sweep_state_count
 from .spec import AnimationSpec, ParameterSweep, TemplateTarget
 
 ADAPTER_NAME = "manim"
@@ -68,7 +78,9 @@ CAPABILITIES = AnimationCapabilities(
     output_formats=frozenset({"mp4", "gif"}),
     templates=SUPPORTED_TEMPLATES,
     notes=("only symbolic one-variable function marks (no data layers, annotations or "
-           "legend) and the vector_field_2d template in expression mode",),
+           "legend) and the vector_field_2d template in expression mode",
+           "used only when requested by name (adapter='manim'), never selected automatically"),
+    auto_select=False,
 )
 
 
@@ -112,13 +124,18 @@ class ManimAdapter:
         errors = [i for i in validate_animation(anim) if i.severity == "error"]
         if errors:
             raise SpecValidationError(errors)
+        if isinstance(anim.timeline, ParameterSweep):  # guards first: spec + request only
+            enforce_limits(anim, request, sweep_state_count(anim.timeline, anim.fps))
         missing = self.unmet(anim, request)
         if missing:
             raise AnimationError([issue("", "unsupported_by_adapter",
                                         f"the manim adapter cannot provide: "
                                         f"{'; '.join(missing)}.")])
         tl: ParameterSweep = anim.timeline
+        n_frames = frame_total(anim, sweep_state_count(tl, anim.fps))
         values = sweep_values(tl, anim.fps)
+        frames = frame_mapping(anim, len(values))
+        poster = poster_index(anim, n_frames)
         warnings: list[RenderWarning] = []
         if isinstance(tl.target, TemplateTarget):
             build, title = _vector_field_scene(anim, tl, values)
@@ -128,16 +145,22 @@ class ManimAdapter:
             warnings.append(RenderWarning("axis_limits_fixed", "manim keeps one coordinate "
                                           "system for the whole clip; axis_limits 'auto' is "
                                           "drawn as 'fixed'.", "/axis_limits"))
-        content, n_frames = _run(build, title, anim, request, len(values))
+        content, decoded, poster_png = _run(build, title, anim, request, len(values), poster)
+        if decoded != n_frames:
+            raise AnimationError([issue("", "frame_count_mismatch",
+                                        f"manim wrote {decoded} frames, {n_frames} were planned; "
+                                        "the frame-to-state mapping would be wrong.")])
+        delay, timing = output_timing(request.format, anim.fps, anim.loop)
+        warnings.extend(timing)
         return AnimationResult(
             content=content, format=request.format, media_type=request.media_type,
             adapter_name=self.name, adapter_version=self.version, frame_count=n_frames,
             state_count=len(values), fps=anim.fps,
-            frame_duration_ms=1000.0 / anim.fps, poster_frame=-1, warnings=warnings,
+            frame_duration_ms=delay, poster_frame=poster, warnings=warnings,
             request=request,
-            states=[{"index": i, "value": v, "label": f"{tl.parameter} = {v:.4g}",
+            states=[{"index": i, "value": v, "label": f"{tl.parameter} = {format(v, '.4g')}",
                      "empty": False} for i, v in enumerate(values)],
-            frames=[])
+            frames=frames, poster_png=poster_png)
 
 
 # --------------------------------------------------------------------------
@@ -353,7 +376,12 @@ def _axis_titles(M, ax, labels):
                 ax.c2p(x_lo, (y_lo + y_hi) / 2), M.LEFT, buff=0.45)]
 
 
-def _run(construct, title, anim: AnimationSpec, request: AnimationRequest, n_values: int):
+def _run(construct, title, anim: AnimationSpec, request: AnimationRequest, n_values: int,
+         poster: int):
+    """``(content, frames decoded, poster PNG)``. Manim writes an MP4; it is
+    decoded one frame at a time (never all held): for GIF each frame goes
+    straight into the Pillow encoder, for MP4 frames are only counted. The
+    poster is frame ``poster`` of that clip, as PNG."""
     import manim as M
 
     w, h = request.frame_request().size_px
@@ -396,24 +424,46 @@ def _run(construct, title, anim: AnimationSpec, request: AnimationRequest, n_val
             finally:
                 M.VMobject.set_default()
                 M.Text.set_default()
-            frames = _decode(path)
+            seen = {"n": 0, "poster": None}
+
+            def stream():
+                for k, frame in enumerate(_decode(path)):
+                    seen["n"] = k + 1
+                    if k == poster:
+                        seen["poster"] = _png(frame)
+                    yield frame
+
             if request.format == "gif":
                 # Manim's own GIF output (PyAV palette) bands colours badly; the
                 # MP4 frames are re-encoded with the same Pillow encoder as the
                 # Matplotlib adapter instead.
                 from .encode import encode_gif
 
-                content = encode_gif(frames, anim.fps, anim.loop)
+                content = encode_gif(stream(), anim.fps, anim.loop)
             else:
+                for _ in stream():
+                    pass
                 content = path.read_bytes()
-    return content, len(frames)
+    return content, seen["n"], seen["poster"]
 
 
-def _decode(path: Path) -> list:
+def _decode(path: Path):
+    """The clip's frames as HxWx3 uint8 arrays, one at a time."""
     import av
 
     with av.open(str(path)) as c:
-        return [f.to_ndarray(format="rgb24") for f in c.decode(video=0)]
+        for f in c.decode(video=0):
+            yield f.to_ndarray(format="rgb24")
+
+
+def _png(frame) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.fromarray(frame, "RGB").save(buf, format="PNG")
+    return buf.getvalue()
 
 
 __all__ = ["ADAPTER_NAME", "CAPABILITIES", "ManimAdapter", "manim_available"]

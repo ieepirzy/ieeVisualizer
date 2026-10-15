@@ -26,17 +26,18 @@ from ..render.mpl import CAPABILITIES as FIGURE_CAPABILITIES
 from ..render.mpl import MatplotlibAdapter
 from ..spec import Axis, FigureSpec, SpecValidationError
 from .base import (
-    MAX_TOTAL_PIXELS,
     AnimationCapabilities,
     AnimationError,
     AnimationRequest,
     AnimationResult,
     base_unmet,
+    enforce_limits,
+    output_timing,
 )
-from .encode import encode_gif, encode_mp4, find_ffmpeg, gif_delay_ms
+from .encode import encode_gif, encode_mp4, find_ffmpeg
 from .frames import FramePlan, plan
 from .spec import AnimationSpec, FrameColumn
-from .validate import check_frame_count, validate_animation
+from .validate import validate_animation
 
 ADAPTER_NAME = "matplotlib-animation"
 ADAPTER_VERSION = "1.0.0"
@@ -82,15 +83,15 @@ class MatplotlibAnimationAdapter:
 
     def plan(self, anim: AnimationSpec, request: AnimationRequest | None = None, *,
              resolver=None) -> tuple[FramePlan, list[RenderWarning]]:
-        """The frame plan with fixed axis limits applied to every state spec."""
+        """The frame plan with fixed axis limits applied to every state spec.
+        Every resource guard (:func:`~ieeVisualizer.animation.base.enforce_limits`)
+        is checked before any state is built or drawn."""
         errors = [i for i in validate_animation(anim) if i.severity == "error"]
         if errors:
             raise SpecValidationError(errors)
         request = request or AnimationRequest()
-        fp = plan(anim, resolver)
-        problems = check_frame_count(anim, len(fp.frames) - anim.hold_start - anim.hold_end)
-        if problems:
-            raise SpecValidationError(problems)
+        fp = plan(anim, resolver)  # checks frames/duration/poster before building
+        enforce_limits(anim, request, len(fp.states))
         warnings = [RenderWarning(i.code, i.message, i.path) for i in fp.issues]
         if anim.axis_limits == "fixed":
             # A frame column's range is that of all its frames' data together
@@ -163,11 +164,6 @@ class MatplotlibAnimationAdapter:
 
         request = request or AnimationRequest()
         fp, warnings = self.plan(anim, request, resolver=resolver)
-        w, h = request.frame_request().size_px
-        if w * h * len(fp.states) > MAX_TOTAL_PIXELS:
-            raise AnimationError([issue("", "animation_too_large",
-                                        f"{len(fp.states)} states of {w}x{h} px exceed "
-                                        f"{MAX_TOTAL_PIXELS} pixels; lower size, dpi or frames.")])
         pixels = []
         per_state: dict[tuple[str, str, str], list[int]] = {}
         for s in fp.states:
@@ -196,20 +192,13 @@ class MatplotlibAnimationAdapter:
                                         "install ffmpeg (or set IEEVISUALIZER_FFMPEG), or "
                                         "request format='gif'.")])
         fp, warnings, pixels = self.render_frames(anim, request, resolver=resolver)
-        frames = [pixels[i] for i in fp.frames]
+        frames = [pixels[i] for i in fp.frames]  # references; holds are not copies
         if request.format == "gif":
             content = encode_gif(frames, fp.fps, anim.loop)
-            delay = float(gif_delay_ms(fp.fps))
-            if abs(delay - 1000.0 / fp.fps) > 1e-9:
-                warnings.append(RenderWarning(
-                    "frame_timing_rounded", f"GIF stores delays in 10 ms steps: {fp.fps} fps is "
-                    f"played at {delay:g} ms per frame ({1000.0 / delay:.3g} fps).", "/fps"))
         else:
             content = encode_mp4(frames, fp.fps, self.ffmpeg)
-            delay = 1000.0 / fp.fps
-            if anim.loop:
-                warnings.append(RenderWarning("loop_ignored", "MP4 has no loop flag; looping is "
-                                              "up to the player.", "/loop"))
+        delay, timing = output_timing(request.format, fp.fps, anim.loop)
+        warnings.extend(timing)
         return AnimationResult(
             content=content, format=request.format, media_type=request.media_type,
             adapter_name=self.name, adapter_version=self.version,

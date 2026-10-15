@@ -206,6 +206,11 @@ class VectorField2DTemplate(ComponentTemplate):
                          "give expressions u and v in x and y (e.g. u='-y', v='x'), or data "
                          "with x, y, u, v columns.")
             return
+        if p["scale"] is not None and not p["scale"] > 0:
+            # build() would produce a quiver the spec validator refuses
+            # (scale must be > 0); check() reports it as the input problem.
+            issues.error(param_path("scale"), "invalid_parameter",
+                         f"scale must be > 0 (or omitted for auto), got {p['scale']!r}.")
         if data is None:
             self._check_expressions(p, issues)
         else:
