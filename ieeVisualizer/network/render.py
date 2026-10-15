@@ -6,8 +6,10 @@ Rendering reuses the FigureSpec adapter's determinism setup
 ``Figure`` objects, never ``pyplot``), so the same spec and library versions
 give byte-identical SVG/PDF in any process.
 
-Honesty rules: a missing edge weight is drawn dotted in a neutral grey with
-its own legend entry (never at the width of 0), a missing node size is drawn
+Honesty rules: a missing edge weight is drawn thin in a colour the weight
+scale never uses, keeping its kind's dash pattern, with its own legend entry
+(never at the width or shade of 0); parallel and reciprocal edges bow apart
+so none hides another; a missing node size is drawn
 hollow at a neutral size; every legend for a measured quantity states its
 unit; labels that would overlap are abbreviated or left out with a warning
 (the text outline always lists them all).
@@ -33,7 +35,14 @@ LW_MIN, LW_MAX = 0.6, 5.0
 #: Node marker area (points^2) for the largest size; area is proportional to
 #: the value, floored at AREA_FLOOR so a tiny value stays visible.
 AREA_MAX, AREA_FLOOR, AREA_DEFAULT = 700.0, 6.0, 140.0
-MISSING_COLOR = "0.62"
+#: Colour of an edge whose weight was not recorded: a hue the unsigned
+#: (grey) weight scale never uses; for signed weights (red/blue) a neutral
+#: grey, which that scale never uses either.
+MISSING_COLOR = "#d95f02"
+MISSING_COLOR_SIGNED = "0.45"
+#: Bow (fraction of the edge length) between neighbouring edges that join the
+#: same two nodes (parallel edges of different kinds, reciprocal edges).
+MULTI_BOW = 0.3
 UNGROUPED_COLOR = "0.55"
 KIND_STYLES = ("-", "--", "-.", (0, (6, 2, 1, 2, 1, 2)))
 GROUP_MARKERS = ("o", "s", "^", "D", "v")
@@ -145,14 +154,14 @@ def edge_geometry(p0, p1, r0: float, r1: float, head: float, bow: float):
     ``r0``) to the rim at ``p1``, straight or bowed by ``bow`` x length, plus
     an arrowhead triangle of length ``head`` whose tip touches the target rim
     (``None`` when ``head`` is 0). A self-loop (p0 == p1) is a small circle
-    sitting on top of the node."""
+    sitting on top of the node, ``1 + |bow|`` times larger."""
     import numpy as np
 
     p0, p1 = np.asarray(p0, float), np.asarray(p1, float)
     d = p1 - p0
     length = float(np.hypot(*d))
-    if length < 1e-9:
-        rr = max(r0 * 0.8, 3.0)
+    if length < 1e-9:  # bow > 0: a further loop on the same node, drawn larger
+        rr = max(r0 * 0.8, 3.0) * (1.0 + abs(bow))
         t = np.linspace(0, 2 * np.pi, 25)
         return np.c_[p0[0] + rr * np.sin(t), p0[1] + r0 + rr - rr * np.cos(t)], None
     u = d / length
@@ -260,6 +269,9 @@ def _draw(spec: NetworkSpec, lay: LayoutResult, request: RenderRequest,
     kind_ls = {k: KIND_STYLES[r % len(KIND_STYLES)] for r, k in enumerate(kinds)}
     idx = {n.id: i for i, n in enumerate(spec.nodes)}
     n_missing = 0
+    signed = spec.edge_weight is not None and spec.edge_weight.signed
+    missing_color = MISSING_COLOR_SIGNED if signed else MISSING_COLOR
+    bows = _multi_bows(spec, idx)
     ax.apply_aspect()
     to_px = ax.transData.transform
     from_px = ax.transData.inverted().transform
@@ -271,8 +283,8 @@ def _draw(spec: NetworkSpec, lay: LayoutResult, request: RenderRequest,
         ls = kind_ls.get(e.kind, "-")
         if spec.edge_weight is None:
             lw, color = 1.0, "0.45"
-        elif e.weight is None:
-            lw, color, ls = LW_MIN + 0.4, MISSING_COLOR, ":"
+        elif e.weight is None:  # keeps the kind's dash pattern
+            lw, color = LW_MIN + 0.4, missing_color
             n_missing += 1
         else:
             lw, color = style(e.weight)
@@ -281,7 +293,7 @@ def _draw(spec: NetworkSpec, lay: LayoutResult, request: RenderRequest,
         span = abs(lay.layers[a] - lay.layers[b]) if lay.layers else 1
         pts, head = edge_geometry(disp[a], disp[b], radius_pt[a] * px, radius_pt[b] * px,
                                   (4.0 + 1.3 * lw) * px if spec.is_directed(e) else 0.0,
-                                  0.25 if span > 1 else 0.0)
+                                  (0.25 if span > 1 and a != b else 0.0) + bows.get(k, 0.0))
         built.edge_paths[k] = from_px(pts)
         built.edge_widths[k] = lw
         segs.append(built.edge_paths[k])
@@ -330,7 +342,7 @@ def _draw(spec: NetworkSpec, lay: LayoutResult, request: RenderRequest,
             rows.append((Line2D([], [], lw=2.5, color=style(wmax or 1)[1]), "positive"))
             rows.append((Line2D([], [], lw=2.5, color=style(-(wmax or 1))[1]), "negative"))
         if n_missing:
-            rows.append((Line2D([], [], lw=LW_MIN + 0.4, ls=":", color=MISSING_COLOR),
+            rows.append((Line2D([], [], lw=LW_MIN + 0.4, color=missing_color),
                          f"not recorded ({n_missing})"))
         sections.append((f"{q.title} ({q.unit})" + (", |value|" if q.signed else ""), rows,
                          0.5))
@@ -354,6 +366,30 @@ def _draw(spec: NetworkSpec, lay: LayoutResult, request: RenderRequest,
         fig.text(0.02, 0.012, spec.caption, fontsize=7.5, color="0.3", wrap=True)
     _place_labels(spec, built, radius_pt)
     return built
+
+
+def _multi_bows(spec: NetworkSpec, idx: dict[str, int]) -> dict[int, float]:
+    """Extra bow per edge index so edges joining the same two nodes (parallel
+    edges of different kinds or directions, reciprocal edges) do not draw on
+    top of each other: the m edges of a pair take slots spaced MULTI_BOW
+    apart, symmetric about the straight line, measured in one orientation of
+    the pair so a -> b and b -> a land on opposite sides. The j-th further
+    loop on a node gets bow j (a larger ring)."""
+    pairs: dict[tuple[int, int], list[int]] = {}
+    for k, e in enumerate(spec.edges):
+        a, b = idx[e.source], idx[e.target]
+        pairs.setdefault((min(a, b), max(a, b)), []).append(k)
+    out: dict[int, float] = {}
+    for (lo, hi), ks in pairs.items():
+        if len(ks) < 2:
+            continue
+        for r, k in enumerate(ks):
+            if lo == hi:
+                out[k] = float(r)
+            else:
+                o = MULTI_BOW * (r - (len(ks) - 1) / 2)
+                out[k] = o if idx[spec.edges[k].source] == lo else -o
+    return out
 
 
 def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]) -> None:
@@ -382,14 +418,19 @@ def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]
     for i in prio:
         full = spec.nodes[i].display_label
         cands = [full] + [full[:c].rstrip() + "…" for c in (12, 6) if len(full) > c + 1]
-        off, ha, va = (0.0, -(radius_pt[i] + 2)), "center", "top"
-        if spec.layout.algorithm == "circular":  # radially outwards
+        below = ((0.0, -(radius_pt[i] + 2)), "center", "top", False)
+        spots = [below]
+        if spec.layout.algorithm == "layered" and spec.layout.direction == "TB":
+            # beside the node first (below it is where the edges to its children
+            # start), if that stays inside the axes; else below as elsewhere
+            spots = [((radius_pt[i] + 3, 0.0), "left", "center", True), below]
+        elif spec.layout.algorithm == "circular":  # radially outwards
             dx, dy = built.node_xy[i] - 0.5
             norm = max((dx * dx + dy * dy) ** 0.5, 1e-9)
-            off = (dx / norm * (radius_pt[i] + 3), dy / norm * (radius_pt[i] + 3))
-            ha = "left" if dx > 0.05 else "right" if dx < -0.05 else "center"
-            va = "bottom" if dy > 0.05 else "top" if dy < -0.05 else "center"
-        for text in cands:
+            spots = [((dx / norm * (radius_pt[i] + 3), dy / norm * (radius_pt[i] + 3)),
+                      "left" if dx > 0.05 else "right" if dx < -0.05 else "center",
+                      "bottom" if dy > 0.05 else "top" if dy < -0.05 else "center", False)]
+        for text, (off, ha, va, inside) in ((c, sp) for c in cands for sp in spots):
             t = ax.annotate(text, xy=tuple(built.node_xy[i]), xytext=off,
                             textcoords="offset points", ha=ha, va=va,
                             fontsize=fontsize, color="0.15", zorder=4,
@@ -397,7 +438,8 @@ def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]
                                   "alpha": 0.8})
             bb = t.get_window_extent(renderer)
             clash = any(bb.overlaps(o) for o in placed) or any(
-                bb.overlaps(o) for j, o in enumerate(obstacles) if j != i)
+                bb.overlaps(o) for j, o in enumerate(obstacles) if j != i) or (
+                inside and bb.x1 > ax.bbox.x1)
             if not clash:
                 placed.append(bb)
                 built.labels[i] = t

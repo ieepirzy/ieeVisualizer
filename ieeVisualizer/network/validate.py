@@ -13,12 +13,15 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from ..spec._common import ValidationIssue, json_problem, ptr, suggest
+from ..spec._common import SpecParseError, ValidationIssue, ptr, suggest
 from .model import (
+    _PROV_FIELDS,
     DIRECTIONS,
     KIND,
     LAYOUTS,
     MATRIX_ORDERS,
+    MAX_FREE_JSON_BYTES,
+    MAX_JSON_DEPTH,
     SELF_LOOP_POLICIES,
     SUPPORTED_SCHEMA_VERSIONS,
     Edge,
@@ -26,6 +29,8 @@ from .model import (
     NetworkSpec,
     Node,
     Quantity,
+    free_json,
+    text_problem,
 )
 
 #: Limits (see docs/NETWORKS.md for the timings they were chosen from).
@@ -38,6 +43,9 @@ MAX_FORCE_WORK = 50_000_000
 MAX_MATRIX_NODES = 1000
 MAX_LABEL_CHARS = 200
 MAX_TOTAL_LABEL_CHARS = 50_000
+#: Largest |coordinate| of a pinned ``nodes[].position``. The force layout
+#: works at a scale of about 1; far larger pins would overflow its forces.
+MAX_ABS_POSITION = 1e6
 #: At most this many issues of one code are listed individually.
 MAX_ISSUES_PER_CODE = 20
 
@@ -108,7 +116,54 @@ def _check_limits(spec: NetworkSpec, out: _Issues) -> bool:
                 f"{total} characters of ids and labels exceed the limit of "
                 f"{MAX_TOTAL_LABEL_CHARS}.")
         ok = False
-    return ok
+    return _check_free_json(spec, out) and ok
+
+
+def _check_free_json(spec: NetworkSpec, out: _Issues) -> bool:
+    """Node attributes, metadata and provenance.extra: JSON values only, valid
+    text, at most MAX_JSON_DEPTH deep and MAX_FREE_JSON_BYTES together.
+    False when a size limit (too_deep / too_large) is exceeded."""
+    blobs = [(ptr("nodes", i, "attributes"), "attributes", n.attributes)
+             for i, n in enumerate(spec.nodes)]
+    blobs.append(("/metadata", "metadata", spec.metadata))
+    blobs.append(("/provenance/extra", "provenance.extra",
+                  getattr(spec.provenance, "extra", None) or {}))
+    used = 0
+    for path, what, value in blobs:
+        if not isinstance(value, dict):
+            out.add(path, "invalid_type", f"{what} must be a JSON object.")
+            continue
+        try:
+            used += free_json(value, path, what, MAX_FREE_JSON_BYTES - used)[1]
+        except SpecParseError as e:
+            i = e.issues[0]
+            out.add(i.path, i.code, i.message)
+            if i.code in ("too_deep", "too_large"):
+                return False
+    return True
+
+
+def _check_text(spec: NetworkSpec, out: _Issues) -> None:
+    """``invalid_text`` for every string field holding a lone surrogate or a
+    character XML 1.0 forbids (free-form JSON is checked with the limits)."""
+    fields = [(f"/{k}", getattr(spec, k, None)) for k in ("id", "title", "caption", "theme",
+                                                          "self_loops")]
+    fields += [(f"/layout/{k}", getattr(spec.layout, k, None))
+               for k in ("algorithm", "direction", "order")]
+    for qk in ("node_size", "edge_weight"):
+        q = getattr(spec, qk)
+        if isinstance(q, Quantity):
+            fields += [(f"/{qk}/{f}", getattr(q, f)) for f in ("title", "unit")]
+    fields += [(f"/provenance/{k}", getattr(spec.provenance, k, None)) for k in _PROV_FIELDS]
+    fields += [(ptr("nodes", i, f), getattr(n, f)) for i, n in enumerate(spec.nodes)
+               for f in ("id", "label", "group")]
+    fields += [(ptr("edges", i, f), getattr(e, f)) for i, e in enumerate(spec.edges)
+               for f in ("source", "target", "kind", "label")]
+    for path, s in fields:
+        if isinstance(s, str):
+            bad = text_problem(s)
+            if bad:
+                out.add(path, "invalid_text", f"the text {bad}")
 
 
 def components(ids: list[str], pairs: list[tuple[str, str]]) -> list[list[str]]:
@@ -213,10 +268,7 @@ def validate_network(spec: Any) -> list[ValidationIssue]:
         out.add("/directed", "invalid_type", "directed must be true or false.")
     _quantity(spec.node_size, "/node_size", out, node=True)
     _quantity(spec.edge_weight, "/edge_weight", out, node=False)
-    for key in ("metadata",):
-        bad = json_problem(getattr(spec, key), f"/{key}")
-        if bad:
-            out.add(*bad)
+    _check_text(spec, out)
     if not spec.nodes:
         out.add("/nodes", "empty_network", "the network has no nodes; there is nothing to "
                 "draw. Supply nodes rather than drawing an empty figure.")
@@ -254,9 +306,11 @@ def validate_network(spec: Any) -> list[ValidationIssue]:
                                        or not all(_num_ok(v) and v is not None
                                                   for v in n.position)):
             out.add(f"{p}/position", "invalid_value", "position must be [x, y] numbers.")
-        bad = json_problem(n.attributes, f"{p}/attributes")
-        if bad:
-            out.add(*bad)
+        elif n.position is not None and any(abs(v) > MAX_ABS_POSITION for v in n.position):
+            out.add(f"{p}/position", "position_out_of_range",
+                    f"position {n.position} is beyond +-{MAX_ABS_POSITION:g}; the force layout "
+                    "works at a scale of about 1, so give pins in that range (only their "
+                    "relative placement matters).")
 
     pairs: list[tuple[str, str]] = []
     pair_index: list[int] = []
@@ -285,8 +339,8 @@ def validate_network(spec: Any) -> list[ValidationIssue]:
         elif spec.edge_weight is not None:
             out.add(f"{p}/weight", "missing_weight",
                     f"edge {e.source!r} -> {e.target!r} has no recorded "
-                    f"{spec.edge_weight.title}; it is drawn dotted in a neutral colour, "
-                    "not as 0.", "warning")
+                    f"{spec.edge_weight.title}; it is drawn in a 'not recorded' style with "
+                    "its own legend entry, never as 0.", "warning")
         if not okref:
             continue
         if e.source == e.target:
@@ -347,6 +401,6 @@ def validate_network(spec: Any) -> list[ValidationIssue]:
     return out.items
 
 
-__all__ = ["KIND", "MAX_EDGES", "MAX_FORCE_NODES", "MAX_FORCE_WORK", "MAX_LABEL_CHARS",
-           "MAX_MATRIX_NODES", "MAX_NODES", "MAX_TOTAL_LABEL_CHARS", "back_edges", "components",
-           "validate_network"]
+__all__ = ["KIND", "MAX_ABS_POSITION", "MAX_EDGES", "MAX_FORCE_NODES", "MAX_FORCE_WORK",
+           "MAX_FREE_JSON_BYTES", "MAX_JSON_DEPTH", "MAX_LABEL_CHARS", "MAX_MATRIX_NODES",
+           "MAX_NODES", "MAX_TOTAL_LABEL_CHARS", "back_edges", "components", "validate_network"]

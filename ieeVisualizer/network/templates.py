@@ -247,7 +247,7 @@ class DependencyMapTemplate(_NetworkTemplate):
     )
     columns = _EDGE_COLUMNS
     notes = ("Arrows point from the dependent (source) to what it depends on (target).",
-             "A null weight is drawn dotted in grey and flagged, never as 0.")
+             "A null weight is drawn in its own 'not recorded' colour and flagged, never as 0.")
 
     def _build(self, data, params, issues):
         edges, ids, weight = self._edges_spec(data, params, issues)

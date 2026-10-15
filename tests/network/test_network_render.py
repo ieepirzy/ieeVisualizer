@@ -131,7 +131,8 @@ def test_missing_weight_is_not_drawn_as_zero_and_is_flagged():
     from matplotlib.colors import to_rgba
 
     assert tuple(colours[5]) == to_rgba(MISSING_COLOR)
-    assert styles[5] != styles[4] and styles[4][1] is None  # dotted vs solid
+    # no kind: both solid; the colour (a hue no weight maps to) marks the gap
+    assert styles[5] == styles[4] and styles[4][1] is None
     assert lw[5] == built.edge_widths[5]
     texts = [t.get_text() for t in built.legends[1].get_texts()]
     assert "not recorded (1)" in texts

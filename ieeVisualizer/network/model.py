@@ -13,6 +13,8 @@ as an adjacency matrix or read as a text outline.
 from __future__ import annotations
 
 import copy
+import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -23,7 +25,6 @@ from ..spec._common import (
     canon_float,
     canonical_json,
     check_keys,
-    copy_json,
     expect_bool,
     expect_dict,
     expect_int,
@@ -31,6 +32,7 @@ from ..spec._common import (
     expect_number,
     expect_str,
     fail,
+    non_finite_error,
     ptr_join,
     sha256_of,
 )
@@ -45,6 +47,106 @@ DIRECTIONS = ("TB", "LR")
 SELF_LOOP_POLICIES = ("forbid", "allow")
 _PROV_FIELDS = ("source", "query", "retrieved_at", "source_version", "timezone", "run_id",
                 "notes")
+#: Free-form JSON (``nodes[].attributes``, ``metadata``, ``provenance.extra``)
+#: may nest at most this deep ...
+MAX_JSON_DEPTH = 64
+#: ... and takes at most this many bytes of canonical JSON, all of it together.
+MAX_FREE_JSON_BYTES = 2_000_000
+
+# C0 controls other than tab, newline and carriage return, and the two
+# noncharacters U+FFFE/U+FFFF: none of them may appear in XML 1.0, so a string
+# holding one would make the SVG (and the outline embedded in it) malformed.
+_BAD_CHARS = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+
+
+def text_problem(s: str) -> str | None:
+    """Why ``s`` cannot be stored, hashed and drawn, or ``None``: a lone
+    surrogate (not encodable as UTF-8) or a character XML 1.0 forbids."""
+    try:
+        s.encode("utf-8")
+    except UnicodeEncodeError as e:
+        return (f"contains a lone surrogate (U+{ord(s[e.start]):04X} at character "
+                f"{e.start}), which is not valid Unicode text; fix the encoding upstream.")
+    m = _BAD_CHARS.search(s)
+    if m:
+        return (f"contains the control character U+{ord(m.group()):04X} at character "
+                f"{m.start()}, which SVG/XML cannot hold; remove it upstream.")
+    return None
+
+
+def _str(value: Any, path: str, what: str, optional: bool = False) -> str | None:
+    """:func:`expect_str` that also refuses text :func:`text_problem` rejects."""
+    s = expect_str(value, path, what, optional)
+    if s is not None:
+        bad = text_problem(s)
+        if bad:
+            raise fail(path, "invalid_text", f"{what} {bad}")
+    return s
+
+
+def _leaf_bytes(v: Any, path: str) -> int:
+    try:
+        return len(canonical_json(v).encode("utf-8"))
+    except ValueError:  # an int beyond Python's int -> str digit limit
+        raise fail(path, "number_out_of_range", "a number with that many digits cannot be "
+                   "written as JSON that readers can hold; rescale it upstream.") from None
+
+
+def free_json(value: Any, path: str, what: str,
+              budget: int = MAX_FREE_JSON_BYTES) -> tuple[Any, int]:
+    """Validated deep copy of free-form JSON and its size in bytes of canonical
+    JSON (exactly ``len(canonical_json(value).encode())``). Iterative, so a
+    deeply nested input cannot exhaust the interpreter stack. Raises
+    :class:`SpecParseError`: ``too_deep`` beyond :data:`MAX_JSON_DEPTH`
+    levels, ``too_large`` beyond ``budget`` bytes, ``invalid_text``,
+    ``invalid_type``, ``non_finite_number``; the pointer names the value."""
+    root: list[Any] = [None]
+    stack: list[tuple[Any, Any, Any, str, int]] = [(value, root, 0, path, 1)]
+    size = 0
+    while stack:
+        v, parent, key, p, depth = stack.pop()
+        if depth > MAX_JSON_DEPTH:
+            raise fail(p, "too_deep", f"{what} nests more than {MAX_JSON_DEPTH} levels deep; "
+                       "flatten it or keep it outside the spec.")
+        if isinstance(v, dict):
+            out: Any = {}
+            size += 2 + max(len(v) - 1, 0)
+            children = []
+            for k, item in v.items():
+                if not isinstance(k, str):
+                    raise fail(p, "invalid_type", f"{what} keys must be strings, got {k!r}.")
+                kp = ptr_join(p, k)
+                bad = text_problem(k)
+                if bad:
+                    raise fail(kp, "invalid_text", f"{what} key {bad}")
+                size += _leaf_bytes(k, kp) + 1
+                out[k] = None  # keeps the input's key order
+                children.append((item, out, k, kp, depth + 1))
+            stack.extend(reversed(children))
+        elif isinstance(v, list):
+            out = [None] * len(v)
+            size += 2 + max(len(v) - 1, 0)
+            stack.extend((item, out, i, ptr_join(p, i), depth + 1)
+                         for i, item in reversed(list(enumerate(v))))
+        elif v is None or isinstance(v, (str, bool, int, float)):
+            if isinstance(v, str):
+                bad = text_problem(v)
+                if bad:
+                    raise fail(p, "invalid_text", f"{what} {bad}")
+            elif isinstance(v, float) and not math.isfinite(v):
+                raise non_finite_error(p, what, v)
+            out = v
+            size += _leaf_bytes(v, p)
+        else:
+            raise fail(p, "invalid_type",
+                       f"{what} must hold only JSON values, got {type(v).__name__}.")
+        if size > budget:
+            raise fail(p, "too_large",
+                       f"free-form JSON (node attributes, metadata and provenance.extra "
+                       f"together) exceeds {MAX_FREE_JSON_BYTES:,} bytes of canonical JSON; "
+                       "keep large payloads outside the spec and reference them.")
+        parent[key] = out
+    return root[0], size
 
 
 @dataclass
@@ -208,8 +310,11 @@ def network_hash(spec: NetworkSpec) -> str:
 
 def graph_hash(spec: NetworkSpec) -> str:
     """Hash of the semantic graph only (nodes, edges, quantities): the same
-    graph under another layout or title has the same ``graph_hash``."""
+    graph under another layout or title, or with other pinned
+    ``nodes[].position`` (a layout hint), has the same ``graph_hash``."""
     d = network_to_dict(spec)
+    for n in d["nodes"]:
+        n.pop("position", None)
     return sha256_of({k: d.get(k) for k in ("nodes", "edges", "directed", "node_size",
                                              "edge_weight")})
 
@@ -219,13 +324,21 @@ def _quantity(d: Any, path: str, what: str) -> Quantity | None:
         return None
     d = expect_dict(d, path, what)
     check_keys(d, path, what, ("title", "unit", "signed"), ("title", "unit"))
-    return Quantity(title=expect_str(d["title"], ptr_join(path, "title"), "title"),
-                    unit=expect_str(d["unit"], ptr_join(path, "unit"), "unit"),
+    return Quantity(title=_str(d["title"], ptr_join(path, "title"), "title"),
+                    unit=_str(d["unit"], ptr_join(path, "unit"), "unit"),
                     signed=expect_bool(d.get("signed", False), ptr_join(path, "signed"),
                                        "signed"))
 
 
-def _node(d: Any, path: str) -> Node:
+def _free(d: Any, path: str, what: str, used: list[int]) -> dict[str, Any]:
+    """Parse one free-form JSON object, charging it to the spec's byte budget."""
+    out, size = free_json(expect_dict(d, path, what), path, what,
+                          MAX_FREE_JSON_BYTES - used[0])
+    used[0] += size
+    return out
+
+
+def _node(d: Any, path: str, used: list[int]) -> Node:
     d = expect_dict(d, path, "a node")
     check_keys(d, path, "a node", ("id", "label", "group", "size", "position", "attributes"),
                ("id",))
@@ -237,14 +350,13 @@ def _node(d: Any, path: str) -> Node:
             raise fail(pp, "invalid_value", f"position must be [x, y], got {len(pos)} values.")
         pos = [expect_number(v, ptr_join(pp, i), "a coordinate") for i, v in enumerate(pos)]
     return Node(
-        id=expect_str(d["id"], ptr_join(path, "id"), "node id"),
-        label=expect_str(d.get("label"), ptr_join(path, "label"), "label", optional=True),
-        group=expect_str(d.get("group"), ptr_join(path, "group"), "group", optional=True),
+        id=_str(d["id"], ptr_join(path, "id"), "node id"),
+        label=_str(d.get("label"), ptr_join(path, "label"), "label", optional=True),
+        group=_str(d.get("group"), ptr_join(path, "group"), "group", optional=True),
         size=expect_number(d.get("size"), ptr_join(path, "size"), "size", optional=True),
         position=pos,
-        attributes=copy_json(expect_dict(d.get("attributes", {}), ptr_join(path, "attributes"),
-                                         "attributes"), ptr_join(path, "attributes"),
-                             "attributes"))
+        attributes=_free(d.get("attributes", {}), ptr_join(path, "attributes"), "attributes",
+                         used))
 
 
 def _edge(d: Any, path: str) -> Edge:
@@ -253,13 +365,13 @@ def _edge(d: Any, path: str) -> Edge:
                ("source", "target"))
     directed = d.get("directed")
     return Edge(
-        source=expect_str(d["source"], ptr_join(path, "source"), "source"),
-        target=expect_str(d["target"], ptr_join(path, "target"), "target"),
+        source=_str(d["source"], ptr_join(path, "source"), "source"),
+        target=_str(d["target"], ptr_join(path, "target"), "target"),
         weight=expect_number(d.get("weight"), ptr_join(path, "weight"), "weight", optional=True),
         directed=None if directed is None else expect_bool(directed, ptr_join(path, "directed"),
                                                            "directed"),
-        kind=expect_str(d.get("kind"), ptr_join(path, "kind"), "kind", optional=True),
-        label=expect_str(d.get("label"), ptr_join(path, "label"), "label", optional=True))
+        kind=_str(d.get("kind"), ptr_join(path, "kind"), "kind", optional=True),
+        label=_str(d.get("label"), ptr_join(path, "label"), "label", optional=True))
 
 
 def _layout(d: Any, path: str) -> Layout:
@@ -270,7 +382,7 @@ def _layout(d: Any, path: str) -> Layout:
     lay = Layout()
     for key in ("algorithm", "direction", "order"):
         if key in d:
-            setattr(lay, key, expect_str(d[key], ptr_join(path, key), key))
+            setattr(lay, key, _str(d[key], ptr_join(path, key), key))
     for key in ("seed", "iterations"):
         if key in d:
             setattr(lay, key, expect_int(d[key], ptr_join(path, key), key))
@@ -292,7 +404,8 @@ def network_from_dict(d: Any) -> NetworkSpec:
                    f"(supported: {', '.join(SUPPORTED_SCHEMA_VERSIONS)}).")
     if d.get("kind", KIND) != KIND:
         raise fail("/kind", "invalid_value", f"kind must be {KIND!r}, got {d.get('kind')!r}.")
-    nodes = [_node(n, ptr_join("/nodes", i))
+    used = [0]  # bytes of free-form JSON so far (MAX_FREE_JSON_BYTES in total)
+    nodes = [_node(n, ptr_join("/nodes", i), used)
              for i, n in enumerate(expect_list(d["nodes"], "/nodes", "nodes"))]
     edges = [_edge(e, ptr_join("/edges", i))
              for i, e in enumerate(expect_list(d.get("edges", []), "/edges", "edges"))]
@@ -301,21 +414,19 @@ def network_from_dict(d: Any) -> NetworkSpec:
         pd = expect_dict(d["provenance"], "/provenance", "provenance")
         check_keys(pd, "/provenance", "provenance", _PROV_FIELDS + ("extra",))
         for k in _PROV_FIELDS:
-            setattr(prov, k, expect_str(pd.get(k), f"/provenance/{k}", k, optional=True))
-        prov.extra = copy_json(expect_dict(pd.get("extra", {}), "/provenance/extra", "extra"),
-                               "/provenance/extra", "provenance.extra")
-    opt = {k: expect_str(d.get(k), f"/{k}", k, optional=True)
+            setattr(prov, k, _str(pd.get(k), f"/provenance/{k}", k, optional=True))
+        prov.extra = _free(pd.get("extra", {}), "/provenance/extra", "provenance.extra", used)
+    opt = {k: _str(d.get(k), f"/{k}", k, optional=True)
            for k in ("id", "title", "caption", "theme")}
     return NetworkSpec(
         nodes=nodes, edges=edges,
         directed=expect_bool(d.get("directed", False), "/directed", "directed"),
-        self_loops=expect_str(d.get("self_loops", "forbid"), "/self_loops", "self_loops"),
+        self_loops=_str(d.get("self_loops", "forbid"), "/self_loops", "self_loops"),
         layout=_layout(d.get("layout", {}), "/layout"),
         node_size=_quantity(d.get("node_size"), "/node_size", "node_size"),
         edge_weight=_quantity(d.get("edge_weight"), "/edge_weight", "edge_weight"),
         provenance=prov,
-        metadata=copy_json(expect_dict(d.get("metadata", {}), "/metadata", "metadata"),
-                           "/metadata", "metadata"),
+        metadata=_free(d.get("metadata", {}), "/metadata", "metadata", used),
         schema_version=version, **opt)
 
 
@@ -356,6 +467,7 @@ def apply_network_patch(spec: NetworkSpec, ops: Sequence[dict[str, Any]], *,
     return new
 
 
-__all__ = ["Edge", "Layout", "NetworkSpec", "Node", "Quantity", "SpecParseError",
+__all__ = ["MAX_FREE_JSON_BYTES", "MAX_JSON_DEPTH", "Edge", "Layout", "NetworkSpec", "Node",
+           "Quantity", "SpecParseError", "free_json", "text_problem",
            "apply_network_patch", "graph_hash", "network_from_dict", "network_from_json",
            "network_hash", "network_to_dict", "network_to_json"]

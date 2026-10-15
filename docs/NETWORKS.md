@@ -51,8 +51,8 @@ neither numpy nor matplotlib; layout and drawing import them when called.
 | `nodes[].id` | Unique, non-empty. `label` defaults to the id. |
 | `nodes[].group` | Community / department; coloured with the categorical palette (matplotlib's 10 colours; more groups repeat colours with a different marker shape and a `colour_cycle_wrapped` warning). |
 | `nodes[].size` | A value of `node_size`. Marker **area** is proportional to it (floored at 6 pt² so a tiny value stays visible). `null` = not recorded: drawn hollow at a neutral size with its own legend entry, never as a small disc. |
-| `nodes[].position` | `[x, y]`: pins the node in a `force` layout (other layouts ignore it, `position_ignored` warning). |
-| `nodes[].attributes` | Free-form JSON carried along (not drawn). |
+| `nodes[].position` | `[x, y]`: pins the node in a `force` layout (other layouts ignore it, `position_ignored` warning). The force layout works at a scale of about ±1, so give pins in that range; \|x\|, \|y\| ≤ `MAX_ABS_POSITION` = 10⁶ (`position_out_of_range`), which keeps its forces finite. A pin is a layout hint: it does not change `graph_hash`. |
+| `nodes[].attributes` | Free-form JSON carried along (not drawn). With `metadata` and `provenance.extra`: JSON values only, at most 64 levels deep and 2 MB of canonical JSON in total (see size limits). |
 | `edges[].weight` | A value of `edge_weight`. `null` = not recorded. |
 | `edges[].directed` | Overrides the spec-wide `directed` for this edge. |
 | `edges[].kind` | Free text; each kind gets a dash pattern and a legend entry. `label` appears in the outline. |
@@ -62,11 +62,22 @@ neither numpy nor matplotlib; layout and drawing import them when called.
 
 `network_to_json(spec)` is canonical (sorted keys, compact, numbers as
 floats so `3` and `3.0` hash alike); `network_hash(spec)` is its SHA-256;
-`graph_hash(spec)` hashes only nodes, edges, `directed` and the quantities,
-so the same graph under a different layout or title has the same
-`graph_hash`. `network_from_dict` / `network_from_json` refuse unknown
-fields, wrong types, `NaN`/`Infinity` and unsupported versions with a
-`SpecParseError` pointing at the value. `apply_network_patch(spec, ops)` is
+`graph_hash(spec)` hashes only nodes (without their layout pin
+`position`), edges, `directed` and the quantities, so the same graph under a
+different layout, title or pinning has the same `graph_hash`.
+`network_from_dict` / `network_from_json` refuse unknown fields, wrong
+types, `NaN`/`Infinity`, unsupported versions, and text that cannot be
+stored or drawn (`invalid_text`, see below) with a `SpecParseError`
+pointing at the value.
+
+**Text.** Every string (ids, labels, groups, kinds, title, caption, units,
+provenance, and every key and string inside the free-form JSON) must be
+valid Unicode that XML 1.0 can hold: no lone surrogates (which cannot be
+encoded as UTF-8, so neither hashed nor drawn) and no C0 control
+characters other than tab, newline and carriage return, nor U+FFFE/U+FFFF
+(which would make the SVG and its embedded outline malformed). Parsing and
+`validate_network` both report them as `invalid_text` at the offending
+value. `apply_network_patch(spec, ops)` is
 `ieeVisualizer.spec.apply_patch` (same implementation, same RFC 6902 rules)
 on the network's dict form, atomic, and by default refuses a result with
 validation errors.
@@ -96,23 +107,38 @@ fresh processes with different `PYTHONHASHSEED`s.
   legend section is titled "title (unit)" and shows two to four round
   reference values, each labelled with the unit, drawn at the width they
   map to.
-* **Missing weight** (`null`): drawn dotted in neutral grey at a width that
-  no weight maps to, listed as "not recorded (n)" in the legend, a
+* **Missing weight** (`null`): drawn thin (1 pt) in a colour the weight
+  scale never uses - orange next to the grey scale, a neutral grey next to
+  the red/blue signed scale - listed as "not recorded (n)" in the legend, a
   `missing_weight` warning, and "not recorded" in the outline. It is never
-  drawn at the width or shade of 0. (Its dotted pattern replaces the kind's
-  dash pattern; the kind is still in the outline.)
+  drawn at the width or shade of 0. It keeps its kind's dash pattern, so
+  kind and missingness are both visible. (For signed weights the grey is
+  told apart from red and blue by lightness as well as hue; under a
+  red-green colour-vision deficiency the legend and the outline remain the
+  reference.)
+* **Parallel and reciprocal edges.** Edges joining the same two nodes (a ->
+  b and b -> a; or edges of different kinds or directions) bow apart
+  symmetrically about the straight line, 0.3 x length apart, so none is
+  hidden under another; further self-loops on one node are larger rings.
+  In the matrix such edges share a cell: it shows no single weight, is
+  cross-hatched with the number of edges, has its own legend entry and an
+  `edges_combined_in_cell` warning naming the cells; the outline lists each
+  edge with its own weight.
 * **Node size → area**, legend "title (unit)" with round reference values.
 * **Directed edges** end in an arrowhead whose tip touches the target's rim;
   undirected edges run rim to rim. Edge geometry is computed in display
   space from the node radii, so the tests can check every edge starts and
   ends at its nodes.
-* **Labels** sit under their node (outwards on a circle) with a light
-  halo. Collision avoidance is greedy in priority order (degree, then size,
+* **Labels** sit under their node (outwards on a circle; beside it in a
+  top-down layered layout, where the edges to its children leave from
+  below, falling back to under it when the side would overlap or leave the
+  plot) with a light halo. Collision avoidance is greedy in priority order (degree, then size,
   then declaration order): the full label, else abbreviations to 12 and 6
   characters + "…", else the label is left out. A label never covers
   another label or another node. Abbreviated or omitted labels give
-  `labels_abbreviated` / `labels_skipped` warnings naming the nodes; the
-  outline always has every label in full.
+  `labels_abbreviated` / `labels_skipped` warnings naming the nodes (the
+  matrix's row/column labels, cut at 18 characters, give
+  `labels_abbreviated` too); the outline always has every label in full.
 
 ## Text alternative
 
@@ -144,14 +170,17 @@ metadata), so the connectivity stays inspectable in the file itself.
 (same ends, direction and kind: merge upstream and say how weights were
 combined; nothing is summed silently), `undeclared_quantity`,
 `missing_unit`, `negative_weight` (unless `edge_weight.signed`),
-`negative_size`, `not_bipartite`; warnings `missing_weight`,
+`negative_size`, `not_bipartite`, `invalid_text`, `non_finite_number`,
+`position_out_of_range`, `too_deep`, `too_large`; warnings `missing_weight`,
 `missing_value` (node size), `position_ignored`; info
 `cycle_in_layered_layout`, `disconnected` (number and sizes of connected
 components). At most 20 issues per code are listed, then one info line
 with the remainder. Rendering raises `SpecValidationError` on any error and
 copies warnings into `RenderResult.warnings`, plus the drawing warnings
 `labels_abbreviated`, `labels_skipped`, `colour_cycle_wrapped`,
-`matrix_labels_omitted`.
+`matrix_labels_omitted`, `edges_combined_in_cell`. `compute_layout` checks
+its own output: a NaN or infinite coordinate raises `RenderError`
+(`layout_not_finite`) instead of drawing an empty figure.
 
 ## Size limits
 
@@ -169,6 +198,16 @@ oversized graph is refused in milliseconds (100 000 nodes / 200 000 edges:
 | `MAX_MATRIX_NODES` | 1000 | `too_many_nodes` |
 | `MAX_LABEL_CHARS` | 200 per id / label / group / kind | `label_too_long` |
 | `MAX_TOTAL_LABEL_CHARS` | 50 000 | `too_much_text` |
+| `MAX_JSON_DEPTH` | 64 levels in `attributes`, `metadata`, `provenance.extra` | `too_deep` |
+| `MAX_FREE_JSON_BYTES` | 2 000 000 bytes of canonical JSON, all free-form JSON together | `too_large` |
+| `MAX_ABS_POSITION` | \|pinned coordinate\| ≤ 10⁶ | `position_out_of_range` |
+
+Free-form JSON is walked with an explicit stack (parsing and validation
+alike), so a deeply nested document is refused at depth 65 with a pointer
+rather than exhausting the interpreter stack, and the walk stops as soon as
+the byte budget is spent. The layered layout's tidy-tree placement is
+iterative too: a 1000-node chain lays out from any call depth and the
+interpreter's recursion limit is never changed.
 
 Measured on the development container (Python 3.13, matplotlib 3.11,
 numpy 2.5; random graphs with 5 groups and labels on every node; default
@@ -242,15 +281,19 @@ seriation) and a bipartite allocation graph.
   would add a dependency for less control over determinism.
 * **Quantities are declared once per spec**, not per node or edge, so mixed
   units cannot occur and every legend can state the unit.
-* **Parallel edges are refused** rather than summed or overdrawn: combining
-  them is an aggregation the data owner must state.
+* **Parallel edges of the same kind and direction are refused** rather than
+  summed or overdrawn: combining them is an aggregation the data owner must
+  state. Edges that differ in kind or direction are distinct facts; they
+  are drawn apart (bowed) and, in the matrix, flagged where they share a
+  cell, never hidden.
 * **Weights never influence positions.** A force layout that pulls heavy
   edges together looks like a measurement of distance and is not one.
 
 ## Known gaps
 
 * No edge labels drawn on the canvas (they are in the outline); no edge
-  bundling; parallel edges are refused, not drawn side by side.
+  bundling; parallel edges of the same kind and direction are refused, not
+  drawn side by side.
 * The layered layout has no dummy nodes; long edges are bowed, not routed
   around nodes, and the barycentre heuristic does not guarantee minimum
   crossings. Flow diagrams in the view layer (#12) route long edges

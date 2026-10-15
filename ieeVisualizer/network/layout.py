@@ -182,25 +182,24 @@ def _layered(spec: NetworkSpec) -> LayoutResult:
                 queue.append(w)
     pos = [0.0] * n
     if all(len(p) <= 1 for p in parents):
-        nxt = [0.0]
-
-        def place(v: int) -> None:  # iterative post-order would be longer; depth <= n
-            if not children[v]:
-                pos[v] = nxt[0]
-                nxt[0] += 1.0
-                return
-            for c in children[v]:
-                place(c)
-            pos[v] = (pos[children[v][0]] + pos[children[v][-1]]) / 2
-
-        import sys
-        limit = sys.getrecursionlimit()
-        sys.setrecursionlimit(max(limit, n + 100))
-        try:
-            for r in (i for i in range(n) if not parents[i]):
-                place(r)
-        finally:
-            sys.setrecursionlimit(limit)
+        # post-order with an explicit stack (a chain is up to MAX_NODES deep, so
+        # recursion would depend on the caller's stack depth): leaves side by
+        # side in DFS order, each parent centred over its first and last child
+        nxt = 0.0
+        for root in (i for i in range(n) if not parents[i]):
+            stack = [(root, 0)]
+            while stack:
+                v, j = stack[-1]
+                if not children[v]:
+                    pos[v] = nxt
+                    nxt += 1.0
+                    stack.pop()
+                elif j < len(children[v]):
+                    stack[-1] = (v, j + 1)
+                    stack.append((children[v][j], 0))
+                else:
+                    pos[v] = (pos[children[v][0]] + pos[children[v][-1]]) / 2
+                    stack.pop()
     else:
         rows: dict[int, list[int]] = {}
         for i in range(n):
@@ -227,16 +226,32 @@ def _layered(spec: NetworkSpec) -> LayoutResult:
 
 
 def compute_layout(spec: NetworkSpec) -> LayoutResult:
-    """Positions for every node of a spec that passed :func:`validate_network`."""
+    """Positions for every node of a spec that passed :func:`validate_network`.
+    Raises :class:`~ieeVisualizer.render.base.RenderError`
+    (``layout_not_finite``) rather than return a NaN or infinite coordinate."""
     algo = spec.layout.algorithm
     if algo == "force":
-        return LayoutResult(_force(spec), list(range(len(spec.nodes))))
-    if algo == "layered":
-        return _layered(spec)
-    if algo == "matrix":
+        with np.errstate(all="ignore"):  # overflow is reported below, not warned
+            res = LayoutResult(_force(spec), list(range(len(spec.nodes))))
+    elif algo == "layered":
+        res = _layered(spec)
+    elif algo == "matrix":
         order = {"group": group_order, "seriation": seriation_order,
                  "input": lambda s: list(range(len(s.nodes)))}[spec.layout.order](spec)
-        return LayoutResult(np.zeros((len(spec.nodes), 2)), order)
-    fn = {"circular": _circular, "grid": _grid, "bipartite": _bipartite}[algo]
-    xy, order = fn(spec)
-    return LayoutResult(xy, order)
+        res = LayoutResult(np.zeros((len(spec.nodes), 2)), order)
+    else:
+        fn = {"circular": _circular, "grid": _grid, "bipartite": _bipartite}[algo]
+        xy, order = fn(spec)
+        res = LayoutResult(xy, order)
+    bad = ~np.isfinite(res.xy).all(axis=1)
+    if bad.any():
+        from ..render.base import RenderError
+        from ..spec._common import ValidationIssue
+
+        first = int(np.nonzero(bad)[0][0])
+        raise RenderError([ValidationIssue(
+            f"/nodes/{first}", "layout_not_finite",
+            f"the {algo} layout produced non-finite coordinates for {int(bad.sum())} node(s) "
+            f"(first: {spec.nodes[first].id!r}); nothing is drawn. Check pinned positions "
+            "(validate_network bounds them).")])
+    return res
