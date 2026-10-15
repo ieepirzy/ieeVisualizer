@@ -516,6 +516,25 @@ def test_null_value_bar_is_labelled_once():
     assert [a.xy[0] for a in _no_data(built, 0)] == [pytest.approx(0.8)]
 
 
+@pytest.mark.parametrize("horizontal", [False, True])
+def test_no_data_note_in_the_last_slot_is_inside_the_view(horizontal):
+    """With no bar in it, the last slot used to fall outside the autoscaled
+    limits, so its note was clipped away (drawn nowhere)."""
+    enc = {"x": "v", "y": "k", "series": "g"} if horizontal else \
+        {"x": "k", "y": "v", "series": "g"}
+    spec = one_layer(BarMark(encoding=enc,
+                             orientation="horizontal" if horizontal else "vertical"),
+                     {"k": ["a", "a", "b", "c", "c"], "g": ["x", "y", "x", "x", "y"],
+                      "v": [5.0, 6.0, 7.0, 3.0, None]})
+    built = build_figure(spec)
+    notes = _no_data(built, 0)
+    assert len(notes) == 2  # (b, y) absent and (c, y) null
+    lo, hi = built.axes.get_ylim() if horizontal else built.axes.get_xlim()
+    for n in notes:
+        q = n.xy[1] if horizontal else n.xy[0]
+        assert lo < q < hi
+
+
 def _many_series(mark, n):
     return one_layer(mark, {"t": [float(k % 3) for k in range(3 * n)],
                             "v": [float(k) for k in range(3 * n)],
