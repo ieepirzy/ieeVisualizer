@@ -25,6 +25,14 @@ from .base import (
 )
 from .mpl import MatplotlibAdapter, build_figure
 from .prepare import PreparedSpec, prepare
+from .profiles import (
+    LEGIBILITY_CODES,
+    LegibilityError,
+    RenderProfile,
+    check_legible,
+    get_profile,
+    list_profiles,
+)
 from .registry import (
     AdapterRegistry,
     Requirements,
@@ -35,13 +43,16 @@ from .registry import (
 )
 
 __all__ = [
+    "LEGIBILITY_CODES",
     "MEDIA_TYPES",
     "AdapterRegistry",
     "Capabilities",
     "CapabilityError",
+    "LegibilityError",
     "MatplotlibAdapter",
     "PreparedSpec",
     "RenderError",
+    "RenderProfile",
     "RenderRequest",
     "RenderResult",
     "RenderWarning",
@@ -50,7 +61,10 @@ __all__ = [
     "Resolver",
     "UnresolvedDatasetError",
     "build_figure",
+    "check_legible",
     "default_registry",
+    "get_profile",
+    "list_profiles",
     "prepare",
     "render",
     "requirements_for",

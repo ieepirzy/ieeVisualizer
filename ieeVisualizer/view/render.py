@@ -27,8 +27,8 @@ from typing import Any
 
 from ..render import RenderError, RenderRequest, RenderResult, RenderWarning, Resolver, render
 from ..spec import SpecValidationError, ValidationIssue
-from .draw import Embed, esc, num, to_png, to_svg
-from .layout import layout_view
+from .draw import Embed, Group, Label, esc, num, to_png, to_svg
+from .layout import NARROW_MIN_SLOT, layout_view
 from .limits import MAX_PNG_PIXELS, MAX_PNG_SIDE_PX
 from .model import ViewSpec
 from .validate import errors, too_narrow_at
@@ -46,8 +46,9 @@ _STAR_RULE = re.compile(r"\s*\*\s*\{([^{}]*)\}\s*")
 class FigureRenderer:
     """Renders each embedded figure once per (pointer, size, format)."""
 
-    def __init__(self, resolver: Resolver | None):
+    def __init__(self, resolver: Resolver | None, profile: Any = None):
         self.resolver = resolver
+        self.profile = profile
         self.cache: dict[tuple, Any] = {}
         self.warnings: list[RenderWarning] = []
 
@@ -55,8 +56,10 @@ class FigureRenderer:
                ) -> RenderResult:
         key = (e.pointer, fmt, round(w_px, 2), round(h_px, 2), dpi)
         if key not in self.cache:
+            prof = {} if self.profile is None else {"profile": self.profile.name,
+                                                    "display_width": float(w_px)}
             req = RenderRequest(format=fmt, width=w_px / 96, height=h_px / 96, units="in",
-                                dpi=dpi)
+                                dpi=dpi, **prof)
             try:
                 result = render(e.spec, req, resolver=self.resolver)
             except UnicodeError as exc:  # backstop; validation rejects such strings
@@ -155,11 +158,27 @@ def nest_parts(svg: bytes, prefix: str) -> tuple[str, str]:
     return root.get("viewBox", "0 0 100 100"), inner
 
 
-def render_view(view: ViewSpec, format: str = "svg", *, width: float = 960.0,
-                scale: float = 2.0, resolver: Resolver | None = None) -> RenderResult:
-    """Render ``view`` ``width`` CSS px wide. ``scale`` is the PNG pixel
-    ratio (2 = 1920 px wide for the default width). Raises
-    :class:`SpecValidationError` if :func:`validate_view` reports errors."""
+def render_view(view: ViewSpec, format: str = "svg", *, width: float | None = None,
+                scale: float | None = None, resolver: Resolver | None = None,
+                profile: str | None = None) -> RenderResult:
+    """Render ``view`` ``width`` CSS px wide (default 960). ``scale`` is the
+    PNG pixel ratio (default 2: 1920 px wide for the default width). A
+    ``profile`` (e.g. ``"email-phone"``, see
+    :mod:`ieeVisualizer.render.profiles`) sets both, keeps text at its
+    minimum size, stacks columns on a narrow profile and reports text below
+    the minimum as warnings. Raises :class:`SpecValidationError` if
+    :func:`validate_view` reports errors. For email, see
+    :func:`ieeVisualizer.view.render_email`."""
+    prof = None
+    if profile is not None:
+        from ..render.profiles import get_profile
+
+        if width is not None or scale is not None:
+            raise ValueError("a profile sets width and scale; pass one or the other.")
+        prof = get_profile(profile)
+        width, scale = prof.css_width, prof.scale
+    width = 960.0 if width is None else width
+    scale = 2.0 if scale is None else scale
     if format not in VIEW_FORMATS:
         raise ValueError(f"render_view cannot produce {format!r}; use one of "
                          f"{', '.join(VIEW_FORMATS)} (PDF is not supported for views yet).")
@@ -170,16 +189,20 @@ def render_view(view: ViewSpec, format: str = "svg", *, width: float = 960.0,
     errs = errors(view)
     if errs:
         raise SpecValidationError(errs)
-    narrow = too_narrow_at(view, width)  # validation checked the default width only
+    min_slot = NARROW_MIN_SLOT if prof is not None and prof.narrow else None
+    narrow = too_narrow_at(view, width, min_slot)  # validation checked the default width only
     if narrow is not None:
         raise SpecValidationError([narrow])
-    figs = FigureRenderer(resolver)
+    figs = FigureRenderer(resolver, prof)
+    layout_warnings: list[RenderWarning] = []
     if format == "html":
         from .html import render_html
 
         content = render_html(view, figs, width).encode("utf-8")
     else:
-        items, height, _ = layout_view(view, width)
+        items, height, _ = layout_view(view, width, prof, layout_warnings)
+        if prof is not None:
+            layout_warnings += small_text(items, prof)
         if format == "svg":
             content = to_svg(items, width, height, figs.nested_svg, view.title).encode("utf-8")
         else:
@@ -200,4 +223,27 @@ def render_view(view: ViewSpec, format: str = "svg", *, width: float = 960.0,
             content = to_png(items, width, height, scale, figs.png_array)
     return RenderResult(content=content, format=format, media_type=VIEW_FORMATS[format],
                         adapter_name=RENDERER_NAME, adapter_version=RENDERER_VERSION,
-                        warnings=list(figs.warnings))
+                        warnings=layout_warnings + list(figs.warnings))
+
+
+def small_text(items: list, profile: Any) -> list[RenderWarning]:
+    """``legibility_text_too_small`` for view text (own display list; scaled
+    flows count at their scale) below the profile's minimum."""
+    found: list[tuple[float, str]] = []
+
+    def walk(its: list, k: float) -> None:
+        for it in its:
+            if isinstance(it, Group):
+                walk(it.items, k * it.scale)
+            elif isinstance(it, Label) and it.text.strip() and it.size * k < \
+                    profile.min_text_px - 1e-9:
+                found.append((it.size * k, it.text))
+
+    walk(items, 1.0)
+    if not found:
+        return []
+    found.sort()
+    return [RenderWarning("legibility_text_too_small", (
+        f"{len(found)} text(s) of the view are below {profile.min_text_px:g} CSS px "
+        f"({profile.name}); smallest: "
+        + ", ".join(f"{t[:40]!r} at {s:.1f} px" for s, t in found[:3]) + "."), "")]

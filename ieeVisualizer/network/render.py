@@ -476,10 +476,19 @@ def render_network(spec: NetworkSpec, request: RenderRequest | None = None) -> R
     if request.format == "svg":
         meta.update({"Title": spec.title or "Network",
                      "Description": network_outline(spec, lay)})
-    with render_context(theme_rc), _warnings.catch_warnings():
+    from ..render.mpl.adapter import _min_pt
+
+    with render_context(theme_rc, _min_pt(request)), _warnings.catch_warnings():
         _warnings.simplefilter("ignore")
         built = _draw(spec, lay, request, warnings)
+        if request.profile is not None:  # rc fonts raised to the minimum; audit the result
+            from ..render.mpl.legibility import audit, recording_canvas
+
+            recording_canvas(built.figure)
         built.figure.savefig(buf, format=request.format, dpi=request.dpi, metadata=meta)
+        if request.profile is not None:
+            built.warnings += audit(built.figure, request.render_profile,
+                                    request.display_width)
     return RenderResult(content=buf.getvalue(), format=request.format,
                         media_type=MEDIA_TYPES[request.format], adapter_name=ADAPTER_NAME,
                         adapter_version=ADAPTER_VERSION, warnings=built.warnings,

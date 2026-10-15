@@ -227,6 +227,7 @@ def _arrange(ctx: Any, status: dict) -> bool:
     labels = ctx.value_labels
     if not labels:
         return False
+    min_pt = max(MIN_LABEL_PT, ctx.min_pt)
     before = [_state(lab.text) for lab in labels]
     for lab in labels:  # start from the labels as drawn
         _set_rotation(lab, 0)
@@ -245,8 +246,8 @@ def _arrange(ctx: Any, status: dict) -> bool:
         size = smallest * scale * 0.98
         # the labels whose own room would need a size below the minimum
         culprits = [lab for lab, r in zip(labels, room)
-                    if (r - gap) / max(_thickness(lab), 1e-9) * smallest * 0.98 < MIN_LABEL_PT]
-        if size >= MIN_LABEL_PT:
+                    if (r - gap) / max(_thickness(lab), 1e-9) * smallest * 0.98 < min_pt]
+        if size >= min_pt:
             for lab in labels:
                 lab.text.set_fontsize(min(lab.fontsize, size))
             culprits = [lab for lab, r in zip(labels, room) if _thickness(lab) > r - gap]
@@ -271,7 +272,7 @@ def _omitted_warning(ctx: Any, labels: list, culprits: list) -> Any:
         fix = "Place the layers so their bars do not overlap."
     else:
         why = ("the bars are too narrow for their value labels to sit beside each other "
-               f"legibly (at least {MIN_LABEL_PT:g} pt)")
+               f"legibly (at least {max(MIN_LABEL_PT, ctx.min_pt):.3g} pt)")
         fix = "Read the values from the axis, use horizontal bars or a larger figure."
     return RenderWarning("value_labels_omitted",
                          f"{why}; the value labels of layer(s) {layers} were left out. {fix}",

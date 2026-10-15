@@ -1,0 +1,135 @@
+"""Views at phone and tablet profiles, and the email-safe HTML."""
+
+from __future__ import annotations
+
+import re
+import struct
+
+import pytest
+
+from ieeVisualizer.render import get_profile
+from ieeVisualizer.spec import DataSnapshot
+from ieeVisualizer.view import (
+    Grid,
+    Kpi,
+    Stack,
+    Table,
+    ViewSpec,
+    render_email,
+    render_view,
+)
+from ieeVisualizer.view.draw import Label, Rect
+from ieeVisualizer.view.examples import reporting_pipeline, weekly_briefing
+from ieeVisualizer.view.layout import layout_view
+
+
+def png_width(content: bytes) -> int:
+    return struct.unpack(">I", content[16:20])[0]
+
+
+def test_phone_view_png_is_legible_and_profile_sized():
+    result = render_view(weekly_briefing(), "png", profile="email-phone")
+    assert png_width(result.content) == get_profile("email-phone").pixel_width
+    codes = {w.code for w in result.warnings}
+    assert not {c for c in codes if c.startswith("legibility_")}
+    # the table is too wide for 272 px: its cut cells are reported, not silent
+    assert "table_cells_truncated" in codes
+
+
+def test_narrow_profile_stacks_kpi_tiles():
+    view = ViewSpec(root=Grid(columns=3, children=[
+        Kpi(label=f"KPI {i}", value=1234567.0 * i, unit="EUR") for i in range(1, 4)]))
+    items, _, _ = layout_view(view, 320, get_profile("email-phone"))
+    tiles = [i for i in items if isinstance(i, Rect) and i.fill == "#f6f8fa"]
+    assert len(tiles) == 3 and len({t.x for t in tiles}) == 1  # one under another
+    labels = [i for i in items if isinstance(i, Label)]
+    assert min(lab.size for lab in labels) >= 12  # no value shrinks below the minimum
+    wide, _, _ = layout_view(view, 960)
+    assert len({t.x for t in wide if isinstance(t, Rect) and t.fill == "#f6f8fa"}) == 3
+
+
+def test_flow_on_a_phone_turns_top_to_bottom_and_reports_what_is_still_small():
+    result = render_view(reporting_pipeline(), "png", profile="email-phone")
+    codes = {w.code for w in result.warnings}
+    assert {"flow_text_too_small", "legibility_text_too_small"} <= codes
+    tablet = render_view(reporting_pipeline(), "png", profile="email-tablet")
+    assert not [w for w in tablet.warnings if w.code.startswith(("legibility", "flow_"))]
+
+
+def test_profile_and_explicit_width_are_exclusive():
+    with pytest.raises(ValueError, match="profile sets width"):
+        render_view(weekly_briefing(), "png", profile="email-phone", width=400)
+
+
+# --------------------------------------------------------------------------
+# email HTML
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def briefing_email():
+    return render_email(weekly_briefing())
+
+
+def test_email_html_needs_no_style_block_script_or_svg(briefing_email):
+    html = briefing_email.html
+    for banned in ("<style", "<script", "@media", "<svg", "class=", "data:image", "<link"):
+        assert banned not in html
+    assert '<meta name="color-scheme" content="light">' in html
+    assert "-webkit-text-size-adjust:100%" in html
+
+
+def test_email_text_is_never_below_the_html_minimum(briefing_email):
+    sizes = [float(s) for s in re.findall(r"font-size:([\d.]+)px", briefing_email.html)]
+    # font-size:0 only collapses the whitespace between inline-block tiles
+    assert sizes and min(s for s in sizes if s > 0) >= get_profile("email-phone").min_html_text_px
+
+
+def test_email_images_fit_the_column_and_are_attached(briefing_email):
+    imgs = re.findall(r"<img [^>]*>", briefing_email.html)
+    assert len(imgs) == len(briefing_email.images) == 1
+    for tag in imgs:
+        width = int(re.search(r'width="(\d+)"', tag).group(1))
+        assert f"max-width:{width}px" in tag and "width:100%" in tag and "height:auto" in tag
+        assert re.search(r'src="cid:figure-0\.png"', tag) and 'alt="' in tag
+    png = briefing_email.images["figure-0.png"]
+    assert png_width(png) == get_profile("email-phone").pixel_width
+    assert not [w for w in briefing_email.warnings if w.code.startswith("legibility_")]
+
+
+def test_email_kpi_tiles_stack_without_media_queries(briefing_email):
+    tiles = re.findall(r'display:inline-block;vertical-align:top;width:100%;max-width:(\d+)px',
+                       briefing_email.html)
+    # two across a 576 px column at most, so on a 320 px phone each takes a row
+    assert tiles and all(2 * int(t) > 320 for t in tiles)
+
+
+def test_email_table_too_wide_for_a_phone_becomes_cards_with_every_cell():
+    cols = {f"column {c}": [f"value {c}{r} with some words" for r in range(3)] for c in "ABCD"}
+    view = ViewSpec(datasets={"t": DataSnapshot.from_columns(cols)},
+                    root=Stack(children=[Table(data="t", title="Wide")]))
+    html = render_email(view).html
+    assert "One card per row: the 4 columns do not fit" in html
+    for values in cols.values():
+        for v in values:
+            assert v in html  # whole, never cut with an ellipsis
+    narrow = ViewSpec(datasets={"t": DataSnapshot.from_columns({"n": [1, 2], "m": [None, 4]})},
+                      root=Stack(children=[Table(data="t")]))
+    html = render_email(narrow).html
+    assert "One card per row" not in html and "<th" in html and "—" in html
+
+
+def test_email_flow_is_an_image_with_its_text_version():
+    email = render_email(reporting_pipeline())
+    assert list(email.images) == ["flow-0.png"]
+    assert "Text version" in email.html and "<ol" in email.html
+    assert "flow_text_too_small" in {w.code for w in email.warnings}
+
+
+def test_email_reports_gmail_clipping():
+    view = ViewSpec(datasets={"t": DataSnapshot.from_columns(
+        {f"c{c}": [f"row {i} column {c} " + "x" * 20 for i in range(200)] for c in range(5)})},
+        root=Stack(children=[Table(data="t")]))  # 1000 cells, the view's limit
+    email = render_email(view)
+    assert len(email.html.encode()) > 102 * 1024
+    assert "email_clipped_by_gmail" in {w.code for w in email.warnings}
