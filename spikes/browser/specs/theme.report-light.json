@@ -1,6 +1,6 @@
 {
   "background": "#ffffff",
-  "description": "Neutral, accessible light theme for email and print. Awaits an official brand palette: the 'pending' slots are placeholders.",
+  "description": "Neutral, accessible light theme for email and print.",
   "diverging": [
     "#007c47",
     "#cecece",
@@ -51,22 +51,17 @@
     "tag": "fi-FI"
   },
   "muted": "#545454",
-  "name": "muutto365-report-light",
+  "name": "report-light",
   "palette": [
     "#007c47",
     "#2f4380",
     "#9262b6"
   ],
-  "pending": [
-    "palette",
-    "signal",
-    "semantic",
-    "typography.family"
-  ],
+  "pending": [],
   "provenance": {
     "background": "site --paper #ffffff",
     "diverging": "palette ends with --ink at 20 % as the neutral midpoint",
-    "fonts": "Brand UI fonts (admin: Geist / IBM Plex Sans; site: Public Sans) are not bundled; DejaVu Sans ships with matplotlib, so a render is byte-identical on every machine.",
+    "fonts": "The source UIs' web fonts are not bundled; DejaVu Sans ships with matplotlib, so a render is byte-identical on every machine.",
     "foreground": "site --ink #0a0a0a",
     "grid": "site --line rgba(10,10,10,.12) composited on --paper",
     "locale": "fi-FI",
@@ -76,12 +71,11 @@
       "admin --indigo hue at OKLCH lightness 0.40 (dark enough to stay apart from the purple under protan/deutan simulation)",
       "admin --cyan hue darkened to 4.5:1 on white"
     ],
-    "pending": "replace the pending slots with the official brand palette when one exists; publish it as a new theme version",
     "roles": "forecast lines at 85 % opacity: at the renderer's default 75 % the purple series colour is 2.92:1 on white, below 3:1 for graphics",
     "semantic": "admin --green / --red hues darkened to 4.5:1, signal as attention",
     "sequential": "matplotlib viridis sampled on [0, 0.82] (high end visible on white)",
     "signal": "admin --orange hue darkened to 3:1 on white; reserved",
-    "source": "movingfirm-admin/tests/fixtures/interface/home.css (public site) and movingfirm-admin/frontend/src/styles/tokens.css; no brand guideline for external/light use exists in the movingfirm-* repositories"
+    "source": "a light site design-token set (CSS custom properties) and a dark dashboard design-token set (CSS custom properties)"
   },
   "roles": {
     "forecast_fill_alpha": 0.85,
@@ -128,7 +122,7 @@
       "width": 8.0
     }
   },
-  "title": "Muutto365 report (light)",
+  "title": "Report (light)",
   "typography": {
     "caption": 8.0,
     "family": [

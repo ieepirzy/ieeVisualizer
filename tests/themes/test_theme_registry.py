@@ -94,8 +94,8 @@ def test_versions_duplicates_and_unknown_names():
         reg.resolve("t@9.9.9")
     assert e.value.issues[0].code == "unknown_theme_version"
     with pytest.raises(ThemeError) as e:
-        themes.default_registry.resolve("muutto365-report-lite")
-    assert "Did you mean 'muutto365-report-light'?" in e.value.issues[0].message
+        themes.default_registry.resolve("report-lite")
+    assert "Did you mean 'report-light'?" in e.value.issues[0].message
 
 
 def test_theme_is_json_data_with_a_content_hash():
@@ -105,7 +105,7 @@ def test_theme_is_json_data_with_a_content_hash():
         again = Theme.from_json(text)
         assert again == t and again.sha256 == t.sha256
         assert json.loads(text) == t.to_dict()
-    t = themes.get("muutto365-report-light")
+    t = themes.get("report-light")
     changed = dataclasses.replace(t, palette=("#007c47", "#2f4380"))
     assert changed.sha256 != t.sha256
     assert t.record() == {"name": t.name, "version": "1.0.0", "sha256": t.sha256}
@@ -115,9 +115,9 @@ def test_theme_is_json_data_with_a_content_hash():
 
 
 def test_target_requests():
-    t = themes.get("muutto365-report-light")
+    t = themes.get("report-light")
     req = t.request("email", "png")
-    assert req.size_px == (1200, 750) and req.theme == "muutto365-report-light@1.0.0"
+    assert req.size_px == (1200, 750) and req.theme == "report-light@1.0.0"
     assert t.request("slide").size_px == (1920, 1080)
     with pytest.raises(ThemeError):
         t.request("poster")
@@ -127,7 +127,7 @@ def test_importing_themes_does_not_import_matplotlib():
     import subprocess
     import sys
 
-    code = ("import sys, ieeVisualizer.themes as t; t.get('muutto365-admin-dark'); "
+    code = ("import sys, ieeVisualizer.themes as t; t.get('admin-dark'); "
             "print('matplotlib' in sys.modules)")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                          check=True)

@@ -2,7 +2,7 @@
  "schema_version": "1.0",
  "title": "Daily volume with 90 % prediction interval",
  "caption": "Shaded: 90 % prediction interval (provisional band mark). Day 25 interval missing.",
- "theme": "muutto365-report-light",
+ "theme": "report-light",
  "datasets": {
   "d": {
    "type": "snapshot",

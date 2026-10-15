@@ -106,7 +106,7 @@ a provisional `band` mark that spec 1.0 cannot parse):
 
 All three top candidates got an adapter `figureSpecTo<Engine>(spec, theme)`
 (`spikes/browser/adapters/`); the top two were not separable on paper, so the
-third was cheaper to build than to argue about. Theme: `muutto365-report-light`
+third was cheaper to build than to argue about. Theme: `report-light`
 1.0.0 consumed directly as `Theme.to_json()`. ECharts and Vega render to SVG in
 Node; Plotly renders in Chromium. All four PNGs are 800x500 px. Node ran with
 `TZ=America/New_York` and the browser with `timezoneId: America/New_York` on
@@ -141,7 +141,7 @@ What the images show (measured, after the adapter fixes listed below):
   The naive alternative, `new Date("2026-07-06T00:00:00+03:00")` in New York,
   is `Sun Jul 05 17:00` (measured): every weekly point would move a day.
 - **Forecast.** Dashed with doubled gaps, the theme's `roles.forecast_line_alpha`
-  as opacity (0.85 in `muutto365-report-light`; 0.75, the Matplotlib default,
+  as opacity (0.85 in `report-light`; 0.75, the Matplotlib default,
   when a theme leaves it out), legend says
   "(forecast)", same colour as the observed series it continues (the
   Matplotlib rule). Equivalent in all three.
@@ -473,14 +473,28 @@ hash. Not spiked.
 
 ## Open questions for Ilari
 
+Decided on 2026-10-15 (docs/ROADMAP.md, "Phase 2 onward: decided
+direction"), superseding parts of the plan above: question 2, **Python is the
+single validator**, the browser does no independent validation and every
+edit round-trips through Python (so the Ajv / compiled-validator step and a
+TypeScript `validate()` port are dropped); question 3, **PyPI only, no npm**:
+the browser / Vue assets ship inside the Python package with ECharts pinned
+to an exact version and vendored, so the `js/` workspace is a build input,
+not a set of published `@ieevisualizer` packages; question 5, accessibility
+is **very strict for mobile and tablet viewports** (reporting emails are
+Matplotlib PNG plus HTML tables, since mail clients run no JavaScript), while
+screen-reader and CVD support is not a current requirement; question 7, the
+spec models stay stdlib dataclasses (no pydantic migration). The remaining
+questions are open.
+
 1. Is ECharts' release cadence (two core releases since January 2025)
    acceptable for the primary engine, given the mitigations above?
 2. Semantic validation for browser edits: always round-trip to Python, or plan
    for a TypeScript port of `validate()`?
 3. In-repo `js/` workspace and the `@ieevisualizer` npm scope: publish
    publicly, privately, or not at all for now?
-4. Fonts: ship a webfont (DejaVu Sans to match Matplotlib, or the brand's
-   Public Sans / Geist) with the Vue package?
+4. Fonts: ship a webfont (DejaVu Sans to match Matplotlib, or a theme's own
+   UI font) with the Vue package?
 5. Accessibility target: is "spec-derived description plus an HTML data
    table" enough, or is keyboard navigation of data points required (and to
    which WCAG level)?
@@ -488,7 +502,7 @@ hash. Not spiked.
    as the 3D specialist adapter from the start?
 7. The provisional band shape used here (`y_lower`/`y_upper` encoding plus
    `interval_level`/`interval_kind` on the mark): confirm or change it before
-   the pydantic migration fixes the wire format.
+   the wire format is fixed.
 8. Dates: always show the data's timezone (as Matplotlib does now), or offer
    viewers a switch to their own zone with the zone named on the axis?
 

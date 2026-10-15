@@ -23,12 +23,12 @@ diagrams, Manim and reporting integrations come after it and reuse its spec.
 | Decision | Default | Why |
 |---|---|---|
 | Core language | Python ≥ 3.9; serialized specs are plain JSON | Existing code is Python; JSON keeps a later TS/Vue host possible. |
-| Spec modelling | stdlib `dataclasses` + explicit validation, no pydantic | Keeps runtime deps at matplotlib/numpy/sympy. Revisit if validation code grows. |
+| Spec modelling | stdlib `dataclasses` + explicit validation | Keeps runtime deps at matplotlib/numpy/sympy. Revisited 2026-10-15 and kept; pydantic only where it validates something (see "Phase 2 onward", Foundation). |
 | Spec versioning | every serialized spec carries `schema_version` | Historical report figures must not silently change meaning. |
 | Package layout | `ieeVisualizer/spec/`, `render/`, `artifacts/`, `templates/`; legacy `core.Visualizer` kept | Separates spec / backend / export as §3.2 asks; existing API is bridged, not broken. |
 | First backend | Matplotlib only, headless (`Agg`) | Phase 1 scope. Browser backend chosen in Phase 2 after an evaluation. |
 | Determinism | SVG `svg.hashsalt` fixed, PDF/PNG/SVG `metadata` dates stripped | "Rerender gives the same output from a frozen snapshot" must be testable byte-for-byte for SVG. |
-| Missing data | rendering an empty/absent series is an error or an explicit warning on the result, never a silent zero line | Same rule as the Muutto365 products: a figure on screen is a claim. |
+| Missing data | rendering an empty/absent series is an error or an explicit warning on the result, never a silent zero line | A figure on screen is a claim: an uncollected value must not look like a measured zero. |
 | Tests / CI | pytest + ruff, GitHub Actions on push and PR, Python 3.9 and 3.12 | Nothing in the repo is tested today. |
 
 ## Phase 0 / Phase 1 branches
@@ -166,12 +166,27 @@ reviewable branches; order follows dependencies, not importance.
 
 ### Foundation
 
-- **Pydantic models everywhere applicable.** Spec, view, animation, theme and
-  template schemas move from stdlib dataclasses to pydantic (v2, `pydantic.dataclasses`
-  where the dataclass shape is kept, `BaseModel` where it isn't). Hard
-  requirement: the JSON wire format, `schema_version` meaning and every
-  `spec_hash` stay byte-identical; the existing test suite is the oracle.
-  Validation issues keep their JSON-pointer paths and codes.
+- **Pydantic where it validates, not as a blanket migration.** The existing
+  spec, render, artifact and template models stay stdlib dataclasses with the
+  explicit validator. A hash-identical migration of them (PR #18, closed)
+  left pydantic validating nothing: every rule still lived in `validate()`,
+  so it added a dependency and a second model layer for no checked property.
+  Pydantic (v2) is used where it is the validator: agent-contributed
+  declarative template schemas, template parameter schemas, report and email
+  configuration, and an exported pydantic view of the spec for FastAPI /
+  JSON Schema consumers. That view is generated from, and tested against,
+  the dataclass spec; the dataclasses and `validate()` stay authoritative,
+  and the JSON wire format, `schema_version` and `spec_hash` do not change.
+- **Distribution: PyPI only.** No npm packages. The browser / Vue assets are
+  built and shipped inside the Python package (package data), so one version
+  number covers the spec, the validator, the themes and the browser code.
+  ECharts is pinned to an exact version and vendored into the package, not
+  fetched from a CDN or resolved by a host's package manager.
+- **Python is the single validator.** The browser does no independent
+  validation: it renders specs Python has validated, and every edit (agent or
+  person) round-trips through Python (`apply_patch` + `validate`) before it is
+  rendered. No TypeScript port of `validate()`, no second schema check that
+  could disagree with the first.
 - **Uncertainty is first-class.** A `band` mark (lower/upper), `errorbar`
   mark, interval encodings on line/scatter/bar (`y_lower`, `y_upper`,
   `interval_level`, `interval_kind`: confidence / credible / prediction /
@@ -207,8 +222,8 @@ reviewable branches; order follows dependencies, not importance.
   layered layouts, adjacency matrices, weighted/directed edges, communities;
   size limits like the view layer. Corporate uses (org charts, process and
   dependency maps) share the machinery with #12's flow diagrams.
-- **Agent-contributed templates:** a declarative template format (pydantic
-  schema, no executable code) that agents can propose; a contribution harness
+- **Agent-contributed templates:** a declarative template format (a pydantic
+  schema, which is what validates it; no executable code) that agents can propose; a contribution harness
   checks it builds, validates and renders its example under every theme,
   passes the accessibility checks, and records author and provenance; humans
   approve before registration. Code templates stay human-reviewed PRs.
@@ -220,7 +235,32 @@ reviewable branches; order follows dependencies, not importance.
   accessibility. Written decision first.
 - **Vue 3 components** that render FigureSpec / ViewSpec JSON with the chosen
   engine and the same themes (tokens exported from `ieeVisualizer.themes`),
-  plus interaction state and static capture.
+  plus interaction state and static capture. Shipped inside the Python
+  package with vendored, exact-pinned ECharts (see Foundation); no npm
+  publication.
+
+### Accessibility priority
+
+- **Very strict for mobile and tablet viewports**, above all for reporting
+  emails. Email clients do not run JavaScript, so email content is Matplotlib
+  PNG plus HTML tables, never an interactive chart: figures and tables must
+  stay legible at phone width (sizes, text, labels that do not collide or
+  truncate), and the table carries every number the figure claims.
+- **Disability accessibility (screen readers, colour-vision deficiency) is
+  not a current requirement.** The existing WCAG contrast and CVD checks in
+  `ieeVisualizer.themes` stay and keep running, but are not extended until
+  recipients who need them are on the roadmap.
+
+### Brand and organisation content
+
+- **No organisation-specific content in this library.** Organisation themes,
+  metrics, templates and example wording live in the organisation's own
+  repository and register through the theme and template registries
+  (`ieeVisualizer.themes.register`,
+  `ieeVisualizer.templates.default_registry.register`). The
+  built-in themes are generic worked examples; a test fails if an
+  organisation's name appears in the package, tests, examples, skills or
+  spikes.
 
 ### Domains
 

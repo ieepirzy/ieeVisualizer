@@ -30,7 +30,7 @@ const HOSTILE_LABEL = 'Target {b} {c} {a|x} <script>window.__pwned="label"</scri
 const HOSTILE_NAME = 'Observed {b} <img src=x onerror="window.__pwned=\'name\'">';
 const HOSTILE_TITLE = 'Revenue {c} <b>bold?</b>';
 
-const theme = JSON.parse(readFileSync('specs/theme.muutto365-report-light.json', 'utf8'));
+const theme = JSON.parse(readFileSync('specs/theme.report-light.json', 'utf8'));
 const spec = JSON.parse(readFileSync('specs/line.json', 'utf8'));
 spec.title = HOSTILE_TITLE;
 spec.annotations[0].label = HOSTILE_LABEL;

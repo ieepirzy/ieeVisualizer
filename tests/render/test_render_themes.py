@@ -21,8 +21,8 @@ from ieeVisualizer.spec import (
 from ieeVisualizer.themes import RoleStyle, Theme
 
 S = " "
-DARK = "muutto365-admin-dark"
-LIGHT = "muutto365-report-light"
+DARK = "admin-dark"
+LIGHT = "report-light"
 
 
 def hexes(artists):

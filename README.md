@@ -89,8 +89,8 @@ matrices) have their own spec and renderer; see [docs/NETWORKS.md](docs/NETWORKS
 
 **Themes** are versioned, accessibility-checked data (palette, colour maps,
 type, role styling, fi-FI number format, email/slide sizes):
-`FigureSpec(theme="muutto365-report-light")` or
-`themes.get("muutto365-admin-dark").request("slide")`. The manifest records
+`FigureSpec(theme="report-light")` or
+`themes.get("admin-dark").request("slide")`. The manifest records
 the theme's name, version and hash and stores it as `theme.json`; see
 [docs/THEMES.md](docs/THEMES.md).
 

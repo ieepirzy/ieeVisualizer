@@ -1,10 +1,8 @@
 """The built-in themes: derived colours recomputed from the cited tokens, and
 the pre-theme presets unchanged.
 
-Token values are quoted from the files the themes cite
-(movingfirm-admin/frontend/src/styles/tokens.css and
-movingfirm-admin/tests/fixtures/interface/home.css); that repository is not
-needed to run these tests.
+The source token values (a dark dashboard token set and a light site token
+set) are quoted here; every derived theme value is recomputed from them.
 """
 
 import pytest
@@ -27,7 +25,7 @@ SITE = {"paper": "#ffffff", "ink": "#0a0a0a", "mint-deep": "oklch(0.50 0.15 162)
 
 
 def test_admin_dark_is_derived_from_admin_tokens():
-    t = themes.get("muutto365-admin-dark")
+    t = themes.get("admin-dark")
     assert (t.background, t.foreground, t.muted) == (ADMIN["bg"], ADMIN["text"], ADMIN["text2"])
     assert t.grid == to_hex(blend(ADMIN["border2"], ADMIN["bg"], 0.1))
     assert t.palette == (ADMIN["indigo"], ADMIN["green"], with_lightness(ADMIN["cyan"], 0.62))
@@ -36,11 +34,11 @@ def test_admin_dark_is_derived_from_admin_tokens():
     assert t.semantic == {"positive": ADMIN["green"], "negative": ADMIN["red"],
                           "attention": ADMIN["orange"]}
     assert t.diverging[1] == ADMIN["text3"]
-    assert "tokens.css" in t.provenance["source"]
+    assert "design-token set" in t.provenance["source"]
 
 
 def test_report_light_reuses_site_and_admin_hues_only_where_they_pass():
-    t = themes.get("muutto365-report-light")
+    t = themes.get("report-light")
     white = SITE["paper"]
     assert (t.background, t.foreground) == (SITE["paper"], SITE["ink"])
     assert t.muted == to_hex(blend(SITE["ink"], white, 0.7))
@@ -54,12 +52,12 @@ def test_report_light_reuses_site_and_admin_hues_only_where_they_pass():
     # none of the admin's own (dark-UI) hues passes 3:1 on white as they are
     assert all(contrast_ratio(ADMIN[k], white) < 3 for k in
                ("green", "orange", "red", "indigo", "cyan"))
-    assert set(t.pending) == {"palette", "signal", "semantic", "typography.family"}
-    assert "no brand guideline" in t.provenance["source"]
+    assert t.pending == ()
+    assert "design-token set" in t.provenance["source"]
 
 
-@pytest.mark.parametrize("name", ["muutto365-admin-dark", "muutto365-report-light"])
-def test_muutto_themes_pass_every_check(name):
+@pytest.mark.parametrize("name", ["admin-dark", "report-light"])
+def test_derived_themes_pass_every_check(name):
     t = themes.get(name)
     assert [i for i in themes.check_theme(t) if i.severity != "info"] == []
     rep = themes.report(t)
@@ -69,7 +67,7 @@ def test_muutto_themes_pass_every_check(name):
     assert t.locale.tag == "fi-FI" and set(t.targets) == {"email", "slide"}
 
 
-@pytest.mark.parametrize("name", ["muutto365-admin-dark", "muutto365-report-light"])
+@pytest.mark.parametrize("name", ["admin-dark", "report-light"])
 def test_forecast_lines_keep_graphics_contrast(name):
     # measured on the line actually drawn, not on the theme's declaration
     from matplotlib import colors as mcolors
@@ -104,7 +102,7 @@ def test_presets_map_to_the_former_rcparams_exactly():
 def test_report_light_provenance_quotes_the_measured_dim_ink_contrast():
     import re
 
-    note = themes.get("muutto365-report-light").provenance["muted"]
+    note = themes.get("report-light").provenance["muted"]
     quoted = float(re.search(r"ink at 55 %, is ([0-9.]+):1", note).group(1))
     dim = blend(SITE["ink"], SITE["paper"], 0.55)
     # 4.40:1 composited exactly, 4.42:1 once quantized to #787878: 4.4 either way

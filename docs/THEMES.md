@@ -12,11 +12,11 @@ from ieeVisualizer import themes
 from ieeVisualizer.render import render
 
 themes.list_themes()                       # name, version, versions, title, description, pending
-t = themes.get("muutto365-report-light")   # latest; "name@1.0.0" pins a version
+t = themes.get("report-light")             # latest; "name@1.0.0" pins a version
 t.record()                                 # {"name", "version", "sha256"}
 t.to_json(); themes.Theme.from_json(...)   # round-trips; sha256 is over the canonical JSON
-themes.describe("muutto365-admin-dark")    # theme + hash + accessibility report
-spec.theme = "muutto365-report-light"      # or RenderRequest(theme=...) to override
+themes.describe("admin-dark")              # theme + hash + accessibility report
+spec.theme = "report-light"                # or RenderRequest(theme=...) to override
 render(spec, t.request("email", "png"))    # 1200 x 750 px; "slide" = 1920 x 1080 px
 themes.format_quantity(1234.5, "EUR", t.locale)   # '1 234,50 €' (no-break spaces)
 ```
@@ -112,9 +112,10 @@ before (84 renders compared). matplotlib's default colour
 cycle is not checked (`palette_unchecked`): tab10's orange and green differ
 by only 1.3 under simulated protanopia.
 
-### `muutto365-admin-dark` 1.0.0
+### `admin-dark` 1.0.0
 
-From `movingfirm-admin/frontend/src/styles/tokens.css`:
+A worked example of deriving a chart theme from a dark dashboard's CSS
+design tokens (source values quoted in `tests/themes/test_builtin_themes.py`):
 
 | Slot | Value | Source |
 |---|---|---|
@@ -127,34 +128,32 @@ From `movingfirm-admin/frontend/src/styles/tokens.css`:
 | semantic | positive `--green`, negative `--red`, attention `--orange` | token comments |
 | sequential | viridis sampled on [0.25, 1] | low end visible on `--bg` |
 
-Finding: the admin's own first two series colours, `--indigo` and `--cyan`
+Finding: the token set's own first two series colours, `--indigo` and `--cyan`
 (lilac), are 17 CIEDE2000 apart for normal vision but **2.1 under
 protanopia and 1.8 under deuteranopia**: the same colour to a red-green
 dichromat (about 2 % of men) and hard to separate for many of the roughly
 8 % of men with a red-green deficiency. The theme keeps the hue and lowers
-its lightness; the admin charts themselves are unchanged (another
-repository).
+its lightness.
 
-### `muutto365-report-light` 1.0.0
+### `report-light` 1.0.0
 
-No brand guideline for external or light use exists in the movingfirm-*
-repositories. The theme is a neutral, accessible light theme; its
-`pending` slots (`palette`, `signal`, `semantic`, `typography.family`)
-await an official brand palette. Publish that as version 2.0.0 of this
-theme (or a new name); never change 1.0.0 in place.
+A neutral, accessible light theme for email and print, derived from a light
+site token set plus the dashboard hues above darkened to pass on white.
+Change it only by publishing a new version (or a new name); never change
+1.0.0 in place.
 
 | Slot | Value | Source |
 |---|---|---|
-| background, foreground | `#ffffff`, `#0a0a0a` | public site `--paper`, `--ink` (`movingfirm-admin/tests/fixtures/interface/home.css`, a copy of the CSS production served) |
+| background, foreground | `#ffffff`, `#0a0a0a` | site `--paper`, `--ink` |
 | muted | `#545454` | `--ink` at 70 % (7.6:1); the site's `--text-dim-ink` (ink at 55 %) is 4.4:1 |
 | grid | `#e2e2e2` | site `--line` on `--paper` |
-| palette | `#007c47`, `#2f4380`, `#9262b6` | site `--mint-deep` `oklch(0.50 0.15 162)`; admin `--indigo` hue at OKLCH L 0.40; admin `--cyan` hue darkened to 4.5:1 |
-| signal / semantic | `#cc8600` / `#148759`, `#d24539` | admin `--orange` (3:1), `--green`, `--red` (4.5:1) darkened |
+| palette | `#007c47`, `#2f4380`, `#9262b6` | site `--mint-deep` `oklch(0.50 0.15 162)`; dashboard `--indigo` hue at OKLCH L 0.40; dashboard `--cyan` hue darkened to 4.5:1 |
+| signal / semantic | `#cc8600` / `#148759`, `#d24539` | dashboard `--orange` (3:1), `--green`, `--red` (4.5:1) darkened |
 | sequential | viridis sampled on [0, 0.82] | high end visible on white |
 
-Fonts: the admin uses Geist / IBM Plex Sans, the site Public Sans. None is
-bundled; both Muutto365 themes use DejaVu Sans (shipped with matplotlib), so
-a render is byte-identical on every machine. A theme may list other
+Fonts: the source UIs' web fonts are not bundled; both themes use DejaVu
+Sans (shipped with matplotlib), so a render is byte-identical on every
+machine. A theme may list other
 families; the first installed one is used.
 
 Measured (`themes.describe(name)["accessibility"]`):
