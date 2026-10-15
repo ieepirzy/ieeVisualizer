@@ -550,7 +550,16 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         # of a layer dodged with it is drawn at) this group has no row for.
         missing = ~np.ma.getmaskarray(p) & np.ma.getmaskarray(v)
         absent = np.setdiff1d(everywhere, np.asarray(p.compressed()))
-        for q in np.concatenate([np.asarray(p[missing].filled(np.nan)), absent]) + off:
+        slots_without_bar = np.concatenate([np.asarray(p[missing].filled(np.nan)), absent]) + off
+        if slots_without_bar.size:
+            # Keep those slots in view: with no bar there, an edge slot would
+            # otherwise fall outside the autoscaled limits and its note be
+            # clipped away.
+            edges = np.concatenate([slots_without_bar - each / 2, slots_without_bar + each / 2])
+            ctx.ax.update_datalim([(0.0, e) if horizontal else (e, 0.0) for e in edges],
+                                  updatex=not horizontal, updatey=horizontal)
+            ctx.ax.autoscale_view()
+        for q in slots_without_bar:
             xy = (0.0, q) if horizontal else (q, 0.0)
             artists.append(ctx.ax.annotate(
                 "no data", xy, xytext=(3, 0) if horizontal else (0, 3),
