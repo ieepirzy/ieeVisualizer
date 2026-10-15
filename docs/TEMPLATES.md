@@ -190,6 +190,14 @@ Example payload (expression mode):
             "title": "Rotation field"}}
 ```
 
+### `org_chart`, `dependency_map`, `network` 1.0.0
+
+These build a **NetworkSpec** (a graph, not a FigureSpec) and are described
+in [NETWORKS.md](NETWORKS.md#templates): a hierarchy from an id/parent table,
+directed dependencies from an edge table, and a generic graph from an edge
+table plus an optional node table. Render the result with
+`ieeVisualizer.network.render_network`, not `ieeVisualizer.render.render`.
+
 ## Adding a template
 
 1. Subclass `ComponentTemplate` and set `name`, `version` (semver), `title`,
