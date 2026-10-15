@@ -4,7 +4,7 @@ A unified, agent-accessible framework for **mathematical, scientific, multidimen
 
 Originally conceived as a simpler interface over `matplotlib.pyplot`, ieeVisualizer's longer-term direction is a coherent visualization layer over specialist plotting, interactive, 3D and animation backends. It focuses on figures, reusable components and templates, declarative visualization specifications, human/agent-guided exploration, and portable visualization artifacts.
 
-**[Read the consolidated vision and architecture](docs/VISION_AND_ARCHITECTURE.md).** See also **[conversational UI and agent-generated company reporting](docs/CONVERSATIONAL_UI_AND_REPORTING.md)** for the OpenAI-inspired interaction model and recurring-report workflow. The **[reporting decision loop](docs/REPORTING_DECISION_LOOP.md)** captures the product rationale: evidence → understanding → follow-up → decision, without automating pointless report production.
+**[Read the consolidated vision and architecture](docs/VISION_AND_ARCHITECTURE.md)** and the **[roadmap of first executable slices](docs/ROADMAP.md)**. See also **[conversational UI and agent-generated company reporting](docs/CONVERSATIONAL_UI_AND_REPORTING.md)** for the OpenAI-inspired interaction model and recurring-report workflow. The **[reporting decision loop](docs/REPORTING_DECISION_LOOP.md)** captures the product rationale: evidence → understanding → follow-up → decision, without automating pointless report production.
 
 > **Project status:** early-stage. The vision describes planned capabilities, not features already implemented. See [existing issues](https://github.com/ieepirzy/ieeVisualizer/issues) for immediate baseline work.
 
