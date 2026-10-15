@@ -267,3 +267,112 @@ def test_request_validation():
     with pytest.raises(ValueError):
         RenderRequest(units="cm")
     assert RenderRequest(width=800, height=600, units="px", dpi=200).size_in == (4.0, 3.0)
+
+
+# ------------------------------------------------- forecast distinctness / pairing
+
+_LINESTYLES = [None, "solid", "dashed", "dotted", "dashdot"]
+
+
+def _obs_fc(obs_style, fc_style):
+    spec = revenue_spec(**fc_style)
+    spec.layers[0].style = dict(obs_style)
+    return spec
+
+
+@pytest.mark.parametrize("fc_ls", _LINESTYLES)
+@pytest.mark.parametrize("obs_ls", _LINESTYLES)
+def test_forecast_line_never_looks_like_an_observed_line(obs_ls, fc_ls):
+    obs_style = {} if obs_ls is None else {"linestyle": obs_ls}
+    fc_style = {} if fc_ls is None else {"linestyle": fc_ls}
+    built = build_figure(_obs_fc(obs_style, fc_style))
+    (obs,) = built.layer_artists[0]
+    (fc,) = built.layer_artists[1]
+    assert fc.get_color() == obs.get_color()  # same series ...
+    # ... but a dash pattern no observed linestyle has, and lighter
+    assert fc._unscaled_dash_pattern != obs._unscaled_dash_pattern
+    assert fc.get_linestyle() != "-"
+    assert obs.get_alpha() is None and 0 < fc.get_alpha() < 1
+
+
+def test_forecast_line_markers_are_hollow():
+    built = build_figure(_obs_fc({"marker": "o"}, {"marker": "o", "linestyle": "dotted"}))
+    (obs,) = built.layer_artists[0]
+    (fc,) = built.layer_artists[1]
+    assert obs.get_markerfacecolor() != "none"
+    assert fc.get_markerfacecolor() == "none"
+
+
+def _bounds_spec(names=("v range", "v range"), color_of="v", fc_color_of="v (forecast)"):
+    from ieeVisualizer.spec import DataSnapshot
+
+    def snap(days, vals):
+        n = len(days)
+        return DataSnapshot.from_columns(
+            {"t": days * 2, "s": ["A"] * n + ["B"] * n, "v": vals,
+             "lo": [x - 1 for x in vals], "hi": [x + 1 for x in vals]},
+            units={"v": "m", "lo": "m", "hi": "m"})
+
+    def line(part, fld, name, ref=None):
+        return LineMark(data=part, encoding={"x": "t", "y": fld, "series": "s"}, role=part,
+                        name=name, style={"linestyle": "dotted", **(
+                            {"color_of": ref} if ref else {})})
+
+    return FigureSpec(
+        datasets={"observed": snap([1, 2, 3], [1.0, 2, 3, 4, 5, 6]),
+                  "forecast": snap([4, 5], [3.0, 4, 6, 7])},
+        layers=[line("observed", "v", "v"),
+                line("observed", "lo", names[0], color_of),
+                line("observed", "hi", names[1], color_of),
+                line("forecast", "v", "v (forecast)"),
+                line("forecast", "lo", names[0], fc_color_of),
+                line("forecast", "hi", names[1], fc_color_of)])
+
+
+def test_color_of_pairs_bounds_with_their_value_series_per_group():
+    built = build_figure(_bounds_spec())
+    colours = [[ln.get_color() for ln in built.layer_artists[i]] for i in range(6)]
+    assert colours[0][0] != colours[0][1]  # series A and B differ
+    for k in (1, 2, 3, 4, 5):
+        assert colours[k] == colours[0], k  # bounds and forecast share A/B colours
+    assert not [w for w in built.warnings if w.code == "unknown_color_of"]
+    # forecast bounds are forecast-styled even though observed bounds are dotted too
+    obs_lo, fc_lo = built.layer_artists[1][0], built.layer_artists[4][0]
+    assert fc_lo._unscaled_dash_pattern != obs_lo._unscaled_dash_pattern
+    assert fc_lo.get_alpha() < 1
+
+
+def test_color_of_with_bound_layer_drawn_before_its_target():
+    spec = _bounds_spec()
+    spec.layers = [spec.layers[1], spec.layers[0]]  # bound first, value after
+    spec.datasets.pop("forecast")
+    built = build_figure(spec)
+    assert [ln.get_color() for ln in built.layer_artists[0]] == \
+        [ln.get_color() for ln in built.layer_artists[1]]
+
+
+def test_identical_bound_entries_share_one_legend_entry():
+    fig = build_figure(_bounds_spec()).figure
+    labels = [t.get_text() for t in fig.axes[0].get_legend().get_texts()]
+    # one "range" entry per series and role, not one per bound line
+    assert labels.count("v range: A") == 1 and labels.count("v range: B") == 1
+    assert labels.count("v range: A (forecast)") == 1
+
+
+@pytest.mark.parametrize("ref,why", [("nope", "no other layer"), ("v range", "several")])
+def test_unknown_or_ambiguous_color_of_warns_and_falls_back(ref, why):
+    built = build_figure(_bounds_spec(color_of=ref, fc_color_of="v (forecast)"))
+    w = [w for w in built.warnings if w.code == "unknown_color_of"]
+    assert {x.path for x in w} == {"/layers/1/style/color_of", "/layers/2/style/color_of"}
+    assert why in w[0].message
+    colours = [[ln.get_color() for ln in built.layer_artists[i]] for i in range(3)]
+    assert colours[1] != colours[0]  # own colour, not a guessed one
+
+
+def test_explicit_color_beats_color_of_with_a_warning():
+    spec = _bounds_spec()
+    spec.layers[1].style["color"] = "black"
+    built = build_figure(spec)
+    assert all(ln.get_color() == "black" for ln in built.layer_artists[1])
+    assert any(w.code == "style_key_ignored" and w.path == "/layers/1/style/color_of"
+               for w in built.warnings)

@@ -55,6 +55,7 @@ class DrawContext:
     layer_artists: dict[int, list[Any]] = field(default_factory=dict)
     _color_i: int = 0
     _series: dict[tuple, _Series] = field(default_factory=dict)
+    _color_of: dict[int, int | None] = field(default_factory=dict)
 
     @property
     def three_d(self) -> bool:
@@ -101,8 +102,70 @@ class DrawContext:
         self._series[key] = _Series(color, fld, group, paired=partner is not None)
         return color
 
+    def layer_color(self, i: int, m: Mark, group: str | None, style: dict[str, Any],
+                    explicit: str | None) -> str:
+        """Colour of series ``group`` of layer ``i``: :meth:`series_color`, or
+        with a ``color_of`` style hint the colour of the named layer's series
+        with the same group (so a bound line matches the value it bounds)."""
+        target = self._color_of_target(i, m, style, explicit)
+        if target is None:
+            return self.series_color(m, _series_field(m), group, explicit)
+        t = self.spec.layers[target]
+        tcolor = t.style.get("color")
+        tcolor = tcolor if isinstance(tcolor, str) and _color_like(tcolor) else None
+        tgroup = group if _group_channel(t) is not None else None
+        return self.series_color(t, _series_field(t), tgroup, tcolor)
+
+    def _color_of_target(self, i: int, m: Mark, style: dict[str, Any],
+                         explicit: str | None) -> int | None:
+        if "color_of" not in style:
+            return None
+        if i in self._color_of:
+            return self._color_of[i]
+        ref, p = style["color_of"], f"/layers/{i}/style/color_of"
+        found = [k for k, t in enumerate(self.spec.layers) if t.name == ref and k != i]
+        target = None
+        if explicit is not None:
+            self.warn("style_key_ignored", "the layer gives an explicit color; color_of was "
+                      "ignored.", p)
+        elif len(found) != 1:
+            what = "several layers" if found else "no other layer"
+            self.warn("unknown_color_of",
+                      f"color_of {ref!r} names {what}; it must match the name of exactly one "
+                      "other layer. The layer gets its own colour.", p)
+        elif self.spec.layers[found[0]].type not in _SERIES_COLOURED or \
+                self.spec.layers[found[0]].role == "reference":
+            self.warn("unknown_color_of",
+                      f"color_of {ref!r} names a {self.spec.layers[found[0]].type} layer with "
+                      f"role {self.spec.layers[found[0]].role!r}, which has no series colour; "
+                      "the layer gets its own colour.", p)
+        else:
+            target = found[0]
+        self._color_of[i] = target
+        return target
+
     def warn(self, code: str, message: str, path: str) -> None:
         self.warnings.append(RenderWarning(code, message, path))
+
+
+_SERIES_COLOURED = ("line", "scatter", "area", "bar", "histogram", "function")
+
+
+def _color_like(c: str) -> bool:
+    from matplotlib import colors as mcolors
+
+    return mcolors.is_color_like(c)
+
+
+def _series_field(m: Mark) -> str:
+    """The field that identifies a layer's series (with its dataset/name)."""
+    if m.type == "function" and getattr(m, "expression", None) is not None:
+        return f"function|{m.expression}"
+    if m.type == "histogram":
+        return m.encoding["x"].field
+    if m.type == "bar" and getattr(m, "orientation", "vertical") == "horizontal":
+        return m.encoding["x"].field
+    return m.encoding["y"].field
 
 
 # --------------------------------------------------------------------------
@@ -247,13 +310,15 @@ def draw_line(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         _require(_mask(*sub), i, m, group)
         kw = line_kwargs(style, m.role, f"/layers/{i}", ctx.warnings)
         if m.role != "reference":
-            kw["color"] = ctx.series_color(m, m.encoding["y"].field, group, kw.get("color"))
+            kw["color"] = ctx.layer_color(i, m, group, style, kw.get("color"))
         kw["label"] = _label(m, group, _title(m, "y"))
         lone = _isolated(_mask(*sub))
         if lone and "marker" not in kw:
             # A valid point between two gaps has no segment; mark it so it is
             # not invisible.
             kw.update(marker="o", markevery=lone, markersize=3.5)
+            if m.role == "forecast":
+                kw["markerfacecolor"] = "none"
         if ctx.three_d:
             xs, ys, zs = (np.ma.filled(a.astype(float), np.nan) for a in sub)
             artists += ctx.ax.plot(xs, ys, zs, **kw)
@@ -304,7 +369,7 @@ def draw_scatter(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                 color = color or "0.45"
                 kw.setdefault("alpha", REFERENCE_ALPHA)
             else:
-                color = ctx.series_color(m, m.encoding["y"].field, group, color)
+                color = ctx.layer_color(i, m, group, style, color)
             if m.role == "forecast":  # hollow markers
                 kw["facecolors"] = "none"
                 kw["edgecolors"] = color
@@ -331,7 +396,7 @@ def draw_area(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         _require(valid, i, m, group)
         kw = fill_kwargs(style, m.role)
         if m.role != "reference":
-            kw["color"] = ctx.series_color(m, m.encoding["y"].field, group, kw.get("color"))
+            kw["color"] = ctx.layer_color(i, m, group, style, kw.get("color"))
         if m.role == "forecast":
             kw.setdefault("edgecolor", kw["color"])
             kw["facecolor"] = "none"
@@ -383,8 +448,7 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         off = (g - (len(grp) - 1) / 2.0) * each
         kw = fill_kwargs(style, m.role)
         if m.role != "reference":
-            kw["color"] = ctx.series_color(m, m.encoding[val_ch].field, group,
-                                           kw.get("color"))
+            kw["color"] = ctx.layer_color(i, m, group, style, kw.get("color"))
         if m.role == "forecast":
             kw["edgecolor"] = kw["color"]
         kw["label"] = _label(m, group, _title(m, val_ch))
@@ -438,7 +502,7 @@ def draw_histogram(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     for group, d in data:
         kw = fill_kwargs(style, m.role)
         if m.role != "reference":
-            kw["color"] = ctx.series_color(m, m.encoding["x"].field, group, kw.get("color"))
+            kw["color"] = ctx.layer_color(i, m, group, style, kw.get("color"))
         if m.role == "forecast":
             kw["edgecolor"] = kw["color"]
         if len(data) > 1:
@@ -567,8 +631,7 @@ def draw_function(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                      f"{path}/style/{k}")
     kw = line_kwargs(style, m.role, path, ctx.warnings)
     if m.role != "reference":
-        kw["color"] = ctx.series_color(m, f"function|{m.expression}", None,
-                                       kw.get("color"))
+        kw["color"] = ctx.layer_color(i, m, None, style, kw.get("color"))
     kw["label"] = legend_label(m.name, m.expression, m.role)
     return ctx.ax.plot(inputs[0], out, **kw)
 

@@ -98,7 +98,7 @@ def apply_legend(ctx: DrawContext) -> None:
     spec = ctx.spec
     if not spec.legend.show:
         return
-    handles, labels = ctx.ax.get_legend_handles_labels()
+    handles, labels = _dedupe(*ctx.ax.get_legend_handles_labels())
     if not handles:
         return
     labelled_roles = any(m.role != "observed" for m in spec.layers)
@@ -110,6 +110,27 @@ def apply_legend(ctx: DrawContext) -> None:
     else:
         kw["loc"] = LEGEND_LOC[spec.legend.position]
     ctx.ax.legend(handles, labels, **kw)
+
+
+def _dedupe(handles: list[Any], labels: list[str]) -> tuple[list[Any], list[str]]:
+    """Show a legend entry once when several lines have the same label and
+    look identical (e.g. the lower and upper bound lines of one series, both
+    named "range"); entries that differ in any visible way are all kept."""
+    from matplotlib.lines import Line2D
+
+    seen: set = set()
+    out_h, out_l = [], []
+    for h, lab in zip(handles, labels):
+        if isinstance(h, Line2D):
+            dashes = getattr(h, "_unscaled_dash_pattern", h.get_linestyle())
+            key = (lab, str(h.get_color()), repr(dashes), h.get_linewidth(), h.get_alpha(),
+                   h.get_marker(), str(h.get_markerfacecolor()))
+            if key in seen:
+                continue
+            seen.add(key)
+        out_h.append(h)
+        out_l.append(lab)
+    return out_h, out_l
 
 
 def apply_annotations(ctx: DrawContext) -> list[Any]:

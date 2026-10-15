@@ -67,13 +67,27 @@ with no value says "no data"; null heatmap cells stay blank. Each case adds a
 `null_values_omitted` warning. A layer or series with no complete row is a
 `RenderError` (`empty_series`).
 
-**Roles.** `forecast` is always distinguishable: dashed lines (a solid style
-is overridden with a warning), hollow markers, hatched bars/areas, and the
-legend label says "forecast". `reference` is lighter and thinner.
+**Roles.** `forecast` is always distinguishable, whatever style it asks for:
+a forecast line uses the requested dash pattern (`solid` or unspecified
+count as `dashed`; a solid request is overridden with a warning) with every
+gap doubled, a pattern no observed `linestyle` produces, and is drawn at
+0.75 times the requested opacity; markers are hollow, bars/areas hatched,
+and the legend label says "forecast". So a dotted forecast bound never looks
+like a dotted observed bound. `reference` is lighter and thinner.
 
 **Style keys** `color`, `colormap`, `linewidth`, `linestyle`, `marker`,
 `opacity`. Unknown keys (`unknown_style_key`), keys the mark does not use
 (`style_key_ignored`) and invalid values (`invalid_style_value`) are warnings.
+
+**Paired colours.** `color_of: "<layer name>"` (line, scatter, area, bar,
+histogram, function) draws each series group of the layer in the colour of
+the named layer's series with the same group, e.g. uncertainty-bound lines
+in the colour of the value they bound (the timeseries template sets it). The
+name must match exactly one other, non-reference layer; otherwise
+`unknown_color_of` is a warning and the layer gets its own colour. An
+explicit `color` wins (`style_key_ignored` on `color_of`). Legend entries
+with the same label that look identical (e.g. a lower and an upper bound
+line both named "range") are shown once.
 
 **Functions.** Expressions are checked before SymPy sees them: only numbers,
 `+ - * / ^ ( )`, the mark's variables and parameters, and an allow-list of
