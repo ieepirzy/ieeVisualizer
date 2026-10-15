@@ -51,12 +51,15 @@ from dataclasses import dataclass, field
 from typing import Any, Union
 
 from ._common import (
+    SpecParseError,
+    beyond_float64,
     check_keys,
     copy_json,
     expect_dict,
     expect_list,
     expect_str,
     fail,
+    out_of_range_error,
     ptr_join,
     sha256_of,
 )
@@ -80,6 +83,11 @@ def parse_iso_datetime(s: str) -> _dt.datetime:
     ``Z`` and most fraction lengths, so it is not used directly).
     """
     m = _ISO_RE.fullmatch(s)
+    if m is None and re.match(r"[+-]?[0-9]{5,}-|-[0-9]", s):
+        raise ValueError(
+            f"{s!r} has a year outside 0001-9999, which cannot be stored; only four-digit "
+            "years are supported."
+        )
     if m is None:
         raise ValueError(
             f"{s!r} is not an ISO-8601 date/time; use YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS[.ffffff]] "
@@ -147,12 +155,20 @@ def _canon_datetimes(values: list[Any]) -> list[Any]:
 
 def _np_datetimes_as_strings(values: Any) -> list[Any]:
     """ISO strings (``None`` for NaT) for a datetime64 array or scalar, at the
-    value's own precision; month/year/week units are taken at their first day."""
+    value's own precision; month/year/week units are taken at their first day.
+
+    numpy prints some units in forms that are not ISO-8601 (``Y`` as ``2026``,
+    ``M`` as ``2026-01``, ``h`` as ``2026-01-01T05``), so those are first cast
+    to a finer unit that prints in full (``Y``/``M``/``W`` to days, ``h`` to
+    minutes); the cast is exact. Every other unit (``D``, ``m``, ``s`` and the
+    sub-second units, with any multiplier) already prints as ISO-8601."""
     import numpy as np
 
     unit = np.datetime_data(values.dtype)[0]
     if unit in ("Y", "M", "W"):
         values = values.astype("datetime64[D]")
+    elif unit == "h":
+        values = values.astype("datetime64[m]")
     strings = np.atleast_1d(np.datetime_as_string(values)).tolist()
     return [None if s == "NaT" else s for s in strings]
 
@@ -238,6 +254,9 @@ def normalize_values(values: Any, dtype: str | None) -> tuple[list[Any], str | N
     dtype = dtype or inferred or _infer(kinds)
     _check_compatible(kinds, dtype)
     if dtype == "float":
+        for i, v in enumerate(out):
+            if beyond_float64(v):  # e.g. 10**400 among floats: no float64 holds it
+                raise out_of_range_error(f"/values/{i}", f"value at index {i}", v)
         out = [None if v is None else float(v) + 0.0 for v in out]  # -0.0 -> 0.0
     elif dtype == "datetime":
         out = _canon_datetimes(out)
@@ -389,8 +408,24 @@ def _drop_none(d: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in d.items() if v is not None}
 
 
+def _canonical_values(c: Column) -> list[Any]:
+    """``c.values`` in canonical form. Values are normalised on construction,
+    but a list mutated afterwards may not be (an int appended to a float
+    column, a date-only string, a NaN): re-normalising here keeps equal data
+    hashing equally. Values that cannot be normalised are written unchanged,
+    so an invalid spec can still be serialized (and patched); :func:`validate`
+    reports them."""
+    try:
+        return normalize_values(c.values, c.dtype)[0]
+    except (ValueError, TypeError):
+        try:
+            return list(c.values)
+        except TypeError:
+            return c.values
+
+
 def _column_to_dict(c: Column) -> dict[str, Any]:
-    d = {"values": list(c.values)}
+    d = {"values": _canonical_values(c)}
     d.update(_drop_none({k: getattr(c, k) for k in _SCHEMA_FIELDS}))
     return d
 
@@ -438,6 +473,9 @@ def dataset_from_dict(d: Any, path: str) -> Dataset:
             fields = _parse_schema_fields(cd, cp)
             try:
                 cols[name] = Column(values=values, **fields)
+            except SpecParseError as e:  # number_out_of_range; path relative to the column
+                i = e.issues[0]
+                raise fail(cp + i.path, i.code, i.message) from None
             except ValueError as e:
                 raise fail(ptr_join(cp, "values"), "invalid_values", str(e)) from None
         prov = Provenance()

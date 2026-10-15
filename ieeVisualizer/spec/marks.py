@@ -30,6 +30,7 @@ from dataclasses import dataclass, field, fields
 from typing import Any
 
 from ._common import (
+    SpecParseError,
     canon_float,
     canon_int,
     check_keys,
@@ -80,7 +81,9 @@ class Mark:
             v = getattr(self, name, None)
             if v is not None:
                 try:
-                    setattr(self, name, canon(v))
+                    setattr(self, name, canon(v, "/" + name, f"{self.type} mark {name}"))
+                except SpecParseError:
+                    raise  # number_out_of_range, already structured (path relative to the mark)
                 except ValueError as e:
                     raise ValueError(f"{self.type} mark {name}: {e}") from None
 
@@ -151,16 +154,22 @@ class FunctionMark(Mark):
     parameters: dict[str, float] = field(default_factory=dict)
 
 
-def _canon_float_list(v: Any) -> Any:
-    return [canon_float(x) for x in v] if isinstance(v, (list, tuple)) else v
+def _canon_float_list(v: Any, path: str = "", what: str = "value") -> Any:
+    if not isinstance(v, (list, tuple)):
+        return v
+    return [canon_float(x, ptr_join(path, i), what) for i, x in enumerate(v)]
 
 
-def _canon_float_map(v: Any) -> Any:
-    return {k: canon_float(x) for k, x in v.items()} if isinstance(v, dict) else v
+def _canon_float_map(v: Any, path: str = "", what: str = "value") -> Any:
+    if not isinstance(v, dict):
+        return v
+    return {k: canon_float(x, ptr_join(path, k), what) for k, x in v.items()}
 
 
-def _canon_domain(v: Any) -> Any:
-    return {k: _canon_float_list(r) for k, r in v.items()} if isinstance(v, dict) else v
+def _canon_domain(v: Any, path: str = "", what: str = "value") -> Any:
+    if not isinstance(v, dict):
+        return v
+    return {k: _canon_float_list(r, ptr_join(path, k), what) for k, r in v.items()}
 
 
 #: Declared-numeric mark fields and their canonical form (see
@@ -248,7 +257,7 @@ def mark_to_dict(m: Mark) -> dict[str, Any]:
         elif isinstance(v, (list, tuple)):
             v = list(v)
         if f.name in _CANON:
-            v = _CANON[f.name](v)
+            v = _CANON[f.name](v, "/" + f.name, f"{m.type} mark {f.name}")
         out[f.name] = v
     return out
 

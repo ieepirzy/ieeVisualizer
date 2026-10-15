@@ -70,12 +70,16 @@ def test_default_theme_keeps_matplotlib_colours():
 
 
 def test_more_series_than_palette_colours_warns():
+    # one warning for the wrap, whatever the palette's length (the theme's
+    # palette is the colour cycle; there is no second, theme-specific code)
     data = DataSnapshot.from_columns({"t": [0, 1], **{c: [1.0, 2.0] for c in "abcd"}})
     spec = FigureSpec(datasets={"d": data}, theme=DARK, layers=[
         LineMark(data="d", encoding={"x": "t", "y": c}, name=c) for c in "abcd"])
     built = build_figure(spec)
-    assert [w.code for w in built.warnings].count("palette_exhausted") == 1
-    assert "palette_exhausted" not in [w.code for w in build_figure(three_lines(DARK)).warnings]
+    assert [w.code for w in built.warnings].count("colour_cycle_wrapped") == 1
+    assert "palette_exhausted" not in [w.code for w in built.warnings]
+    assert "colour_cycle_wrapped" not in [
+        w.code for w in build_figure(three_lines(DARK)).warnings]
 
 
 def test_tick_labels_use_the_theme_locale():
@@ -115,6 +119,35 @@ def test_bar_width_and_offset_place_layers_side_by_side():
     np.testing.assert_allclose([p.get_width() for p in left.patches], [0.4, 0.4])
 
 
+def test_explicit_bar_placement_takes_a_layer_out_of_dodging():
+    # Two layers without placement share categories and are dodged; a third
+    # placing itself explicitly is drawn where it says and does not shift them.
+    data = DataSnapshot.from_columns({"k": ["x", "y"], "a": [1.0, 2.0], "b": [3.0, 4.0],
+                                      "c": [5.0, 6.0]})
+    spec = FigureSpec(datasets={"d": data}, layers=[
+        BarMark(data="d", encoding={"x": "k", "y": "a"}),
+        BarMark(data="d", encoding={"x": "k", "y": "c"}, style={"bar_width": 0.1,
+                                                                 "bar_offset": 0.45}),
+        BarMark(data="d", encoding={"x": "k", "y": "b"})])
+    built = build_figure(spec)
+    centres = [[p.get_x() + p.get_width() / 2 for p in built.layer_artists[i][0].patches]
+               for i in range(3)]
+    np.testing.assert_allclose(centres[0], [-0.2, 0.8])
+    np.testing.assert_allclose(centres[2], [0.2, 1.2])
+    np.testing.assert_allclose(centres[1], [0.45, 1.45])
+    np.testing.assert_allclose([p.get_width() for p in built.layer_artists[1][0].patches],
+                               [0.1, 0.1])
+
+
+def forecast_dashes_default(linestyle):
+    import matplotlib
+
+    from ieeVisualizer.render.mpl.style import forecast_dashes
+
+    with matplotlib.style.context("default"):
+        return forecast_dashes(linestyle)
+
+
 def test_forecast_and_reference_styling_come_from_the_theme():
     reg_theme = Theme(name="dotted-forecast", version="1.0.0", palette=("#2f4380",),
                       roles=RoleStyle(forecast_linestyle="dotted", reference_color="#545454",
@@ -128,12 +161,13 @@ def test_forecast_and_reference_styling_come_from_the_theme():
         annotations=[ReferenceLine(axis="y", value=2.0, label="target")])
     built = build_figure(spec)
     fc, ref = built.layer_artists[0][0], built.layer_artists[1][0]
-    assert fc.get_linestyle() == ":"
+    # the theme's forecast pattern (dotted), with its gaps doubled
+    assert fc._unscaled_dash_pattern == forecast_dashes_default(":")
     assert mcolors.to_hex(ref.get_color()) == "#545454" and ref.get_alpha() == 0.9
     assert mcolors.to_hex(built.annotation_artists[0].get_color()) == "#545454"
     # the default theme keeps the former look
     built = build_figure(FigureSpec(datasets={"d": data}, layers=spec.layers))
-    assert built.layer_artists[0][0].get_linestyle() == "--"
+    assert built.layer_artists[0][0]._unscaled_dash_pattern == forecast_dashes_default("--")
     # a forecast is never solid, whatever the theme
     with pytest.raises(themes.ThemeError):
         themes.ThemeRegistry().register(Theme(name="x", version="1.0.0", roles=RoleStyle(

@@ -3,6 +3,7 @@ rates transparent."""
 
 import json
 
+import numpy as np
 import pytest
 
 from ieeVisualizer.render import build_figure
@@ -47,19 +48,26 @@ def test_examples_build_and_validate(t):
 def test_bar_previous_period_is_a_distinct_labelled_reference_layer():
     spec = BAR.build(channels(), category_column="channel", value_columns=["rev"],
                      previous_column="prev", previous_label="September", orientation="vertical")
-    cur, prev = spec.layers
+    prev, cur = spec.layers
     assert (cur.role, prev.role) == ("observed", "reference")
     assert prev.name == "rev, September" and cur.name == "rev"
-    assert prev.style["bar_offset"] < 0 < cur.style["bar_offset"]
+    # placement is the renderer's dodging (layer order), not explicit offsets
+    assert not {"bar_offset", "bar_width"} & (set(prev.style) | set(cur.style))
     assert spec.metadata["template"]["previous"] == {"column": "prev", "label": "September",
                                                      "role": "reference"}
     built = build_figure(spec)
-    (cur_bars,) = [a for a in built.layer_artists[0] if hasattr(a, "patches")]
-    (prev_bars,) = [a for a in built.layer_artists[1] if hasattr(a, "patches")]
+    (prev_bars,) = [a for a in built.layer_artists[0] if hasattr(a, "patches")]
+    (cur_bars,) = [a for a in built.layer_artists[1] if hasattr(a, "patches")]
     assert cur_bars.patches[0].get_facecolor() != prev_bars.patches[0].get_facecolor()
     assert prev_bars.patches[0].get_alpha() is not None
+    # side by side, previous on the left, one 0.8-wide group per category
+    px = [b.get_x() for b in prev_bars.patches]
+    cx = [b.get_x() for b in cur_bars.patches]
+    np.testing.assert_allclose(px, [-0.4, 0.6, 1.6])
+    np.testing.assert_allclose([b.get_width() for b in prev_bars.patches], [0.4] * 3)
+    np.testing.assert_allclose(cx, [0.0, 2.0], atol=1e-12)  # B's current value is null: no bar
     labels = [t.get_text() for t in built.axes.get_legend().get_texts()]
-    assert labels == ["rev", "rev, September"]
+    assert labels == ["rev, September", "rev"]
 
 
 def test_bar_nulls_stay_null_and_negative_values_get_a_zero_line():
@@ -87,8 +95,13 @@ def test_bar_sort_orientation_and_reading_order():
 
 def test_bar_several_measures_are_side_by_side():
     spec = BAR.build(channels(), category_column="channel", value_columns=["rev", "prev"])
-    assert [m.style["bar_offset"] for m in spec.layers] == [-0.2, 0.2]
+    assert [m.encoding["y"].field for m in spec.layers] == ["rev", "prev"]
     assert all(m.role == "observed" for m in spec.layers)
+    built = build_figure(spec)
+    centres = [[p.get_x() + p.get_width() / 2 for p in a.patches]
+               for i in (0, 1) for a in built.layer_artists[i] if hasattr(a, "patches")]
+    np.testing.assert_allclose(centres[0], [-0.2, 1.8])  # B's rev is null: no bar
+    np.testing.assert_allclose(centres[1], [0.2, 1.2, 2.2])
 
 
 @pytest.mark.parametrize("data, params, expected", [

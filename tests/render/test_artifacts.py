@@ -167,7 +167,8 @@ def test_reexport_under_same_id_leaves_only_manifest_files(tmp_path):
     listed = {v.file.name for v in b.variants} | {"spec.json", "theme.json", MANIFEST_NAME}
     assert set(os.listdir(root)) == listed
     assert json.loads((root / MANIFEST_NAME).read_text()) == b.to_dict()
-    assert sorted(os.listdir(tmp_path)) == [a.artifact_id]  # no staging dirs left behind
+    # no staging dirs left behind; only the (reusable) per-id lock file
+    assert sorted(os.listdir(tmp_path)) == [f".lock-{a.artifact_id}", a.artifact_id]
 
 
 def test_memory_writer_reexport_replaces_artifact_files():
@@ -186,3 +187,114 @@ def test_names_with_newlines_are_refused(bad):
         check_name(bad, "artifact id")
     with pytest.raises(ValueError):
         MemoryWriter().write("viz-1", bad, b"", "text/plain")
+
+
+# ----------------------------------------------------- concurrent / failing writes
+
+_AID = "viz-0123456789abcdef"
+
+
+def _files(tag: bytes):
+    return [("figure.svg", tag * 50_000, "image/svg+xml"),
+            ("manifest.json", b'{"v": "' + tag + b'"}', "application/json")]
+
+
+def _contents(root):
+    d = os.path.join(root, _AID)
+    return {n: open(os.path.join(d, n), "rb").read() for n in sorted(os.listdir(d))}
+
+
+def _hammer(root, variants, rounds=50):
+    import threading
+
+    errors = []
+
+    def job(tag):
+        w = LocalDirectoryWriter(root)
+        for _ in range(rounds):
+            try:
+                w.write_artifact(_AID, _files(tag))
+            except Exception as e:  # noqa: BLE001 - collected and asserted on
+                errors.append(f"{type(e).__name__}: {e}")
+
+    threads = [threading.Thread(target=job, args=(t,)) for t in variants]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return errors
+
+
+@pytest.mark.parametrize("variants", [[b"x"] * 4, [b"a", b"b", b"c", b"d"]],
+                         ids=["same-content", "different-content"])
+def test_concurrent_exports_of_one_id_never_fail_or_leave_orphans(tmp_path, variants):
+    errors = _hammer(str(tmp_path), variants)
+    assert errors == []
+    assert sorted(os.listdir(tmp_path)) == [f".lock-{_AID}", _AID]
+    got = _contents(str(tmp_path))
+    assert any(got == {n: c for n, c, _ in _files(t)} for t in set(variants))  # one whole export
+
+
+def test_identical_reexport_does_not_rewrite(tmp_path):
+    w = LocalDirectoryWriter(tmp_path)
+    w.write_artifact(_AID, _files(b"x"))
+    before = os.stat(tmp_path / _AID / "figure.svg")
+    w.write_artifact(_AID, _files(b"x"))
+    after = os.stat(tmp_path / _AID / "figure.svg")
+    assert (before.st_ino, before.st_mtime_ns) == (after.st_ino, after.st_mtime_ns)
+
+
+def _leftovers(root):
+    return [n for n in os.listdir(root) if n.startswith((".tmp-", ".old-"))]
+
+
+def test_failure_while_staging_leaves_previous_version_and_no_orphans(tmp_path, monkeypatch):
+    import builtins
+
+    from ieeVisualizer.artifacts import writers
+
+    w = LocalDirectoryWriter(tmp_path)
+    w.write_artifact(_AID, _files(b"a"))
+    real_open, calls = builtins.open, []
+
+    def failing_open(path, mode="r", *a, **k):
+        if "w" in mode:
+            calls.append(path)
+            if len(calls) == 2:
+                raise OSError(28, "No space left on device")
+        return real_open(path, mode, *a, **k)
+
+    monkeypatch.setattr(writers, "open", failing_open, raising=False)
+    with pytest.raises(OSError, match="No space"):
+        w.write_artifact(_AID, _files(b"b"))
+    monkeypatch.undo()
+    assert _contents(str(tmp_path)) == {n: c for n, c, _ in _files(b"a")}
+    assert _leftovers(tmp_path) == []
+
+
+def test_failure_at_the_swap_restores_previous_version(tmp_path, monkeypatch):
+    from ieeVisualizer.artifacts import writers
+
+    w = LocalDirectoryWriter(tmp_path)
+    w.write_artifact(_AID, _files(b"a"))
+    real_replace = os.replace
+
+    def failing_replace(src, dst):
+        if os.path.basename(str(src)).startswith(".tmp-"):
+            raise OSError("injected failure")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(writers.os, "replace", failing_replace)
+    with pytest.raises(OSError, match="injected"):
+        w.write_artifact(_AID, _files(b"b"))
+    monkeypatch.undo()
+    assert _contents(str(tmp_path)) == {n: c for n, c, _ in _files(b"a")}
+    assert _leftovers(tmp_path) == []
+
+
+def test_leftovers_of_a_killed_export_are_removed(tmp_path):
+    (tmp_path / f".tmp-{_AID}-abc_1234").mkdir()
+    (tmp_path / f".old-{_AID}-zz99yy88").mkdir()
+    (tmp_path / f".tmp-{_AID}-x-abc_1234").mkdir()  # another id's: kept
+    LocalDirectoryWriter(tmp_path).write_artifact(_AID, _files(b"a"))
+    assert _leftovers(tmp_path) == [f".tmp-{_AID}-x-abc_1234"]

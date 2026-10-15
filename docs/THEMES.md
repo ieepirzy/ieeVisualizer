@@ -42,7 +42,7 @@ checked for) what it declares. `default` declares nothing.
 
 | Field | Meaning (matplotlib mapping) |
 |---|---|
-| `palette` | series colours in order of use (`axes.prop_cycle`); more series than colours adds a `palette_exhausted` warning |
+| `palette` | series colours in order of use (`axes.prop_cycle`); more series than colours adds one `colour_cycle_wrapped` warning (see RENDERING.md, "Many series") |
 | `sequential`, `diverging` | colour stops (low to high) or a colormap name; default colour map of heatmaps, continuous scatter/quiver colour and surfaces; a style `colormap` of `"sequential"`/`"diverging"` names the theme's map |
 | `background`, `foreground`, `muted`, `grid` | figure/axes ground; text, ticks; secondary text (caption, "no data", annotations, value labels) and spines; grid lines and legend frame |
 | `signal` | reserved emphasis colour ("needs a person"); refused if it is also a palette colour |
@@ -170,8 +170,12 @@ Bar style keys (renderer-neutral hints, matplotlib honours them):
 `value_labels: true` prints each bar's value at its end in the theme's
 locale (when the figure is drawn, the value axis is widened just enough that
 every label lies inside the plot; an end fixed by `axes.<ch>.limits` is kept
-and a label that does not fit is a `value_label_outside_axes` warning); `bar_width` (0-1) and `bar_offset` (-0.5-0.5) place a layer's bars
-as fractions of the category slot, so layers can sit side by side. A
+and a label that does not fit is a `value_label_outside_axes` warning).
+Bar layers sharing categories are dodged side by side by the renderer
+(RENDERING.md, "Bars"); `bar_width` (0-1) and `bar_offset` (-0.5-0.5) are
+explicit overrides that place one layer's bars as fractions of the category
+slot (the default group fills 0.8 of it) and take that layer out of the
+dodging. No built-in template sets them. A
 template that writes numbers into text records `label_locale` in its
 metadata; rendering with a theme that formats numbers differently adds a
 `label_locale_mismatch` warning.

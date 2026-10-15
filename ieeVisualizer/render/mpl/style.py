@@ -8,6 +8,12 @@ renderer-neutral vocabulary): ``color``, ``colormap``, ``linewidth``,
 use, or a value matplotlib would reject becomes a :class:`RenderWarning`
 and is ignored; nothing is dropped silently.
 
+One adapter-specific key pairs colours: ``color_of: "<layer name>"`` draws
+the layer (each of its series groups) in the colour of the named layer's
+series with the same group, e.g. uncertainty-bound lines in the colour of
+the value they bound. The name must match exactly one other layer
+(``unknown_color_of`` warning otherwise); an explicit ``color`` wins.
+
 Themes are :class:`ieeVisualizer.themes.Theme` records: :func:`theme_rc`
 turns what a theme declares into rcParams (``default`` declares nothing, so
 its renders are the plain matplotlib ``default`` style), and
@@ -15,9 +21,14 @@ its renders are the plain matplotlib ``default`` style), and
 
 Roles:
 
-* ``forecast`` is always distinguishable from observed data: dashed lines,
-  hollow markers, hatched fills, and the legend label says "forecast". A
-  style asking a forecast for a solid line is overridden with a warning.
+* ``forecast`` is always distinguishable from observed data, whatever style
+  it asks for. A forecast line's dash pattern is the requested pattern
+  (``solid``/unspecified count as the theme's forecast linestyle, dashed by
+  default) with every gap doubled -- a pattern no observed ``linestyle``
+  produces -- and it is drawn at :data:`FORECAST_ALPHA` times the requested
+  opacity. Markers are hollow, fills hatched, and the legend label says
+  "forecast". A style asking a forecast for a solid line is overridden with
+  a warning.
 * ``reference`` is drawn lighter (reduced opacity, thinner, the theme's
   reference colour - grey by default - unless a colour is given).
 """
@@ -31,15 +42,16 @@ from ...themes import Theme, resolve_for_render
 from ..base import RenderWarning
 
 KNOWN_STYLE_KEYS = ("color", "colormap", "linewidth", "linestyle", "marker", "opacity",
-                    "value_labels", "bar_width", "bar_offset")
+                    "value_labels", "bar_width", "bar_offset", "color_of")
 #: Which style keys each mark type can honour.
 APPLICABLE = {
-    "line": {"color", "linewidth", "linestyle", "marker", "opacity"},
-    "function": {"color", "linewidth", "linestyle", "marker", "opacity", "colormap"},
-    "scatter": {"color", "colormap", "marker", "opacity"},
-    "area": {"color", "linewidth", "linestyle", "opacity"},
-    "bar": {"color", "linewidth", "opacity", "value_labels", "bar_width", "bar_offset"},
-    "histogram": {"color", "linewidth", "opacity"},
+    "line": {"color", "linewidth", "linestyle", "marker", "opacity", "color_of"},
+    "function": {"color", "linewidth", "linestyle", "marker", "opacity", "colormap", "color_of"},
+    "scatter": {"color", "colormap", "marker", "opacity", "color_of"},
+    "area": {"color", "linewidth", "linestyle", "opacity", "color_of"},
+    "bar": {"color", "linewidth", "opacity", "value_labels", "bar_width", "bar_offset",
+            "color_of"},
+    "histogram": {"color", "linewidth", "opacity", "color_of"},
     "heatmap": {"colormap", "opacity"},
     "quiver": {"color", "colormap", "opacity"},
 }
@@ -50,6 +62,10 @@ _LINESTYLES = {
     "dashdot": "-.", "-.": "-.",
 }
 FORECAST_LINESTYLE = "--"
+#: Forecast lines are drawn at this fraction of the requested opacity.
+FORECAST_ALPHA = 0.75
+_DASH_RC = {"--": "lines.dashed_pattern", ":": "lines.dotted_pattern",
+            "-.": "lines.dashdot_pattern"}
 FORECAST_HATCH = "///"
 REFERENCE_ALPHA = 0.55
 REFERENCE_COLOR = "0.45"
@@ -196,6 +212,8 @@ def parse_style(
             ok = isinstance(value, str) and mcolors.is_color_like(value)
         elif key == "colormap":
             ok = isinstance(value, str) and (value in colormaps or value in THEME_COLORMAPS)
+        elif key == "color_of":
+            ok = isinstance(value, str) and value != ""
         elif key == "linestyle":
             ok = isinstance(value, str) and value in _LINESTYLES
             value = _LINESTYLES.get(value, value) if ok else value
@@ -258,12 +276,25 @@ def line_kwargs(style: dict[str, Any], role: str, path: str,
                 "a forecast layer asked for a solid line; forecasts are always drawn dashed so "
                 "they cannot be mistaken for observations.", path + "/style/linestyle"))
             kw["linestyle"] = roles.forecast_linestyle
-        kw.setdefault("linestyle", roles.forecast_linestyle)
+        kw["linestyle"] = forecast_dashes(kw.get("linestyle", roles.forecast_linestyle))
+        kw["alpha"] = kw.get("alpha", 1.0) * FORECAST_ALPHA
+        if "marker" in kw:
+            kw["markerfacecolor"] = "none"
     elif role == "reference":
         kw.setdefault("alpha", roles.reference_alpha)
         kw.setdefault("color", roles.reference_color)
         kw.setdefault("linewidth", roles.reference_linewidth)
     return kw
+
+
+def forecast_dashes(linestyle: str) -> tuple[float, tuple[float, ...]]:
+    """The forecast variant of a (non-solid) named linestyle: matplotlib's
+    pattern for it with every gap doubled. No observed linestyle uses such a
+    pattern, so a forecast never looks like an observed series of any style."""
+    from matplotlib import rcParams
+
+    pattern = [float(v) for v in rcParams[_DASH_RC[linestyle]]]
+    return (0.0, tuple(v * 2.0 if k % 2 else v for k, v in enumerate(pattern)))
 
 
 def fill_kwargs(style: dict[str, Any], role: str, roles: Roles = DEFAULT_ROLES) -> dict[str, Any]:

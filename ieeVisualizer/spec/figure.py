@@ -8,6 +8,7 @@ from typing import Any, Union
 from ._common import (
     SCHEMA_VERSION,
     SUPPORTED_SCHEMA_VERSIONS,
+    SpecParseError,
     canon_float,
     check_keys,
     copy_json,
@@ -20,8 +21,16 @@ from ._common import (
     ptr_join,
     suggest,
 )
-from .data import Dataset, dataset_from_dict, dataset_to_dict
-from .marks import Mark, mark_from_dict, mark_to_dict
+from .data import (
+    Dataset,
+    DatasetRef,
+    DataSnapshot,
+    dataset_from_dict,
+    dataset_to_dict,
+    format_iso_datetime,
+    parse_iso_datetime,
+)
+from .marks import Encoding, Mark, mark_from_dict, mark_to_dict
 
 SCALES = ("linear", "log", "symlog", "time", "category")
 LEGEND_POSITIONS = (
@@ -37,7 +46,8 @@ class Axis:
     """One positional axis. ``scale=None`` lets the renderer infer it from
     the data (category for strings, time for datetimes, else linear).
     ``limits`` is ``[min, max]``; either end may be ``None`` (auto). Time axes
-    use ISO-8601 strings as limits."""
+    use ISO-8601 strings as limits; on a ``scale="time"`` axis they are stored
+    in the canonical datetime form (see :mod:`ieeVisualizer.spec.data`)."""
 
     label: str | None = None
     unit: str | None = None
@@ -47,13 +57,81 @@ class Axis:
     def __post_init__(self) -> None:
         try:
             self.limits = _canon_limits(self.limits)
+        except SpecParseError:
+            raise  # number_out_of_range, already structured (path relative to the axis)
         except ValueError as e:
             raise ValueError(f"axis limits: {e}") from None
+        if self.scale == "time" and isinstance(self.limits, list):
+            self.limits = [canon_time(x) for x in self.limits]
 
 
 def _canon_limits(limits: Any) -> Any:
     """Numbers in ``limits`` as canonical floats; strings/None unchanged."""
-    return [canon_float(x) for x in limits] if isinstance(limits, (list, tuple)) else limits
+    if not isinstance(limits, (list, tuple)):
+        return limits
+    return [canon_float(x, f"/limits/{i}", "an axis limit") for i, x in enumerate(limits)]
+
+
+def parse_time_coordinate(v: Any) -> Any:
+    """The ``datetime`` a coordinate string names, or ``None`` if ``v`` is not
+    an accepted ISO-8601 string."""
+    if not isinstance(v, str):
+        return None
+    try:
+        return parse_iso_datetime(v)
+    except ValueError:
+        return None
+
+
+def canon_time(v: Any) -> Any:
+    """The canonical stored form of a date/time coordinate string; any other
+    value (a number, None, a string that is not an ISO-8601 date/time) is
+    returned unchanged for :func:`validate` to report."""
+    d = parse_time_coordinate(v)
+    if d is None:
+        return v
+    try:
+        return format_iso_datetime(d)
+    except ValueError:
+        return v
+
+
+def time_axes(spec: Any) -> set[str]:
+    """Axis keys whose coordinates are dates/times: an axis with
+    ``scale="time"``, or with no scale when at least one column bound to it is
+    declared ``datetime`` and none is declared otherwise (the renderer infers
+    a time scale there). Coordinates (limits, annotation positions) on these
+    axes are ISO-8601 strings, canonicalised on serialization; validate
+    rejects numbers and non-date strings there. Robust to malformed specs."""
+    axes = spec.axes if isinstance(spec.axes, dict) else {}
+    out: set[str] = set()
+    for key in ("x", "y", "z"):
+        a = axes.get(key)
+        scale = a.scale if isinstance(a, Axis) else None
+        if scale == "time":
+            out.add(key)
+        elif scale is None and _bound_dtypes(spec, key) == {"datetime"}:
+            out.add(key)
+    return out
+
+
+def _bound_dtypes(spec: Any, axis: str) -> set[Any]:
+    """Declared dtypes of the columns bound to ``axis`` (unknown ones skipped)."""
+    datasets = spec.datasets if isinstance(spec.datasets, dict) else {}
+    layers = spec.layers if isinstance(spec.layers, list) else []
+    out: set[Any] = set()
+    for m in layers:
+        enc = getattr(m, "encoding", None)
+        e = enc.get(axis) if isinstance(enc, dict) else None
+        name = e if isinstance(e, str) else (e.field if isinstance(e, Encoding) else None)
+        data = getattr(m, "data", None)
+        ds = datasets.get(data) if isinstance(data, str) else None
+        cols = ds.columns if isinstance(ds, (DataSnapshot, DatasetRef)) else None
+        col = cols.get(name) if isinstance(cols, dict) and isinstance(name, str) else None
+        dtype = getattr(col, "dtype", None)
+        if isinstance(dtype, str):
+            out.add(dtype)
+    return out
 
 
 @dataclass
@@ -75,7 +153,10 @@ class Annotation:
         for name in _COORD_FIELDS:
             if hasattr(self, name):
                 try:
-                    setattr(self, name, canon_float(getattr(self, name)))
+                    setattr(self, name, canon_float(getattr(self, name), "/" + name,
+                                                    f"{self.type} annotation {name}"))
+                except SpecParseError:
+                    raise  # number_out_of_range, already structured (path relative to it)
                 except ValueError as e:
                     raise ValueError(f"{self.type} annotation {name}: {e}") from None
 
@@ -145,6 +226,11 @@ class FigureSpec:
     metadata: dict[str, Any] = field(default_factory=dict)
     schema_version: str = SCHEMA_VERSION
 
+    def __post_init__(self) -> None:
+        # Date/time strings on time axes get their one stored form (the same
+        # rule as datetime columns), so equal specs compare and hash equally.
+        canonicalize_time_coordinates(self)
+
     # Convenience wrappers around the module-level functions.
     def to_dict(self) -> dict[str, Any]:
         from .serialize import to_dict
@@ -181,21 +267,65 @@ def _simple_to_dict(obj: Any) -> dict[str, Any]:
         if f.name == "limits":
             v = _canon_limits(v)
         elif f.name in _COORD_FIELDS:
-            v = canon_float(v)
+            v = canon_float(v, "/" + f.name, f.name)
         out[f.name] = list(v) if isinstance(v, (list, tuple)) else (
             dict(v) if isinstance(v, dict) else v)
     return out
 
 
+def annotation_axes(a: Any) -> dict[str, Any]:
+    """``{coordinate field: axis key}`` for an annotation's coordinates."""
+    if isinstance(a, TextAnnotation):
+        return {"x": "x", "y": "y", "z": "z"}
+    if isinstance(a, ReferenceLine):
+        return {"value": a.axis}
+    if isinstance(a, ReferenceBand):
+        return {"start": a.axis, "end": a.axis}
+    return {}
+
+
+def _canon_time_coords(spec: FigureSpec, axes: dict[str, Any], annotations: list[Any]) -> None:
+    """Canonicalise date/time strings on time axes (see :func:`time_axes`) in
+    the serialized ``axes`` / ``annotations``, in place."""
+    times = time_axes(spec)
+    for k, d in axes.items():
+        if k in times and isinstance(d.get("limits"), list):
+            d["limits"] = [canon_time(v) for v in d["limits"]]
+    for a, d in zip(spec.annotations, annotations):
+        for name, axis in annotation_axes(a).items():
+            if axis in times and name in d:
+                d[name] = canon_time(d[name])
+
+
+def canonicalize_time_coordinates(spec: FigureSpec) -> None:
+    """Store date/time coordinate strings on time axes in canonical form, in
+    place, on the spec's own Axis/Annotation objects. Run on construction and
+    on parse; :func:`figure_to_dict` applies the same rule to its output, so a
+    value assigned later is canonical there too. Malformed parts are skipped
+    (validate reports them)."""
+    times = time_axes(spec)
+    axes = spec.axes if isinstance(spec.axes, dict) else {}
+    for k, a in axes.items():
+        if k in times and isinstance(a, Axis) and isinstance(a.limits, list):
+            a.limits = [canon_time(v) for v in a.limits]
+    for a in spec.annotations if isinstance(spec.annotations, list) else []:
+        for name, axis in annotation_axes(a).items():
+            if axis in times:
+                setattr(a, name, canon_time(getattr(a, name)))
+
+
 def figure_to_dict(spec: FigureSpec) -> dict[str, Any]:
+    axes = {k: _simple_to_dict(a) for k, a in spec.axes.items()}
+    annotations = [_simple_to_dict(a) for a in spec.annotations]
+    _canon_time_coords(spec, axes, annotations)
     out: dict[str, Any] = {
         "schema_version": spec.schema_version,
         "coordinate_system": spec.coordinate_system,
         "datasets": {k: dataset_to_dict(v) for k, v in spec.datasets.items()},
         "layers": [mark_to_dict(m) for m in spec.layers],
-        "axes": {k: _simple_to_dict(a) for k, a in spec.axes.items()},
+        "axes": axes,
         "legend": _simple_to_dict(spec.legend),
-        "annotations": [_simple_to_dict(a) for a in spec.annotations],
+        "annotations": annotations,
         "metadata": dict(spec.metadata),
     }
     for k in ("id", "title", "caption", "theme"):
@@ -215,7 +345,9 @@ def _scalar(v: Any, path: str, what: str) -> Scalar | None:
         return v
     if isinstance(v, (int, float)) and not isinstance(v, bool):
         try:
-            return canon_float(v)
+            return canon_float(v, path, what)
+        except SpecParseError:
+            raise  # number_out_of_range
         except ValueError:
             raise non_finite_error(path, what, v) from None
     raise fail(path, "invalid_type", f"{what} must be a number, an ISO-8601 string or null.")

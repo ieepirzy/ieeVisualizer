@@ -2,11 +2,14 @@
 grouped bars, optionally next to the previous period's value.
 
 * One bar layer per measure (``value_columns``), side by side in each
-  category slot. ``previous_column`` (one measure only) adds a bar for the
-  previous period to the left of the current one, drawn with role
-  ``reference`` (lighter, the theme's neutral colour) and named in the
-  legend, so it cannot be mistaken for the current value. It is observed
-  data; the role only changes how it is drawn.
+  category slot: the renderer dodges bar layers that share categories, in
+  layer order, so the template sets no ``bar_width``/``bar_offset`` (those
+  are explicit overrides for hand-written specs). ``previous_column`` (one
+  measure only) adds a bar for the previous period to the left of (below)
+  the current one - the first layer, so also first in the legend - drawn
+  with role ``reference`` (lighter, the theme's neutral colour) and named in
+  the legend, so it cannot be mistaken for the current value. It is
+  observed data; the role only changes how it is drawn.
 * Rows keep their order unless ``sort`` says otherwise (by the first
   measure; a null sorts last). Horizontal bars list the first category at
   the top; ``metadata["template"]["category_order"]`` is the reading order.
@@ -28,7 +31,6 @@ from .base import ColumnRequirement, ComponentTemplate, Issues, Parameter, colum
 
 AUTO_HORIZONTAL_LABEL = 12  # characters
 AUTO_HORIZONTAL_COUNT = 12  # categories
-GROUP_WIDTH = 0.8
 
 
 class BarComparisonTemplate(ComponentTemplate):
@@ -73,8 +75,9 @@ class BarComparisonTemplate(ComponentTemplate):
                           "previous-period value of the measure, same unit"),
     )
     notes = (
-        "One bar layer per measure; previous_column adds a role 'reference' layer named by "
-        "previous_label.",
+        "One bar layer per measure, dodged side by side by the renderer; previous_column adds "
+        "a role 'reference' layer named by previous_label, first (left of / below the "
+        "current bar).",
         "Nulls stay null (the renderer writes 'no data'); negative values are allowed.",
         "Units are never converted; every drawn column must declare the same unit.",
     )
@@ -124,16 +127,12 @@ class BarComparisonTemplate(ComponentTemplate):
         snap = copy_rows(data, names, drawn_rows)
 
         cat_ch, val_ch = ("y", "x") if horizontal else ("x", "y")
-        slots = ([prev] if prev else []) + list(values)
-        each = GROUP_WIDTH / len(slots)
+        slots = ([prev] if prev else []) + list(values)  # layer order = slot order
         spec = FigureSpec(title=p["title"], caption=p["caption"], theme=p["theme"],
                           datasets={"values": snap})
         layers = []
-        for k, col in enumerate(slots):
+        for col in slots:
             style: dict[str, Any] = {"value_labels": p["value_labels"]}
-            if len(slots) > 1:
-                style.update(bar_width=round(each, 6),
-                             bar_offset=round((k - (len(slots) - 1) / 2.0) * each, 6))
             is_prev = col == prev
             label = _name(data, values[0]) + ", " + p["previous_label"] if is_prev \
                 else _name(data, col)
@@ -141,9 +140,7 @@ class BarComparisonTemplate(ComponentTemplate):
                 data="values", encoding={cat_ch: cat, val_ch: col},
                 orientation="horizontal" if horizontal else "vertical",
                 role="reference" if is_prev else "observed", name=label, style=style))
-        # the previous period sits left of (below) the current bar but is listed
-        # after the measures in the legend
-        spec.layers = layers[1:] + layers[:1] if prev else layers
+        spec.layers = layers
         vcol = data.columns[values[0]]
         value_label = p["value_label"] or (_name(data, values[0]) if len(values) == 1 else None)
         spec.axes = {

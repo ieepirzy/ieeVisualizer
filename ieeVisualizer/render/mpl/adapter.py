@@ -48,6 +48,7 @@ CAPABILITIES = Capabilities(
     interactive=False,
     vector_export=True,
     max_points=1_000_000,
+    max_bins=10_000,
 )
 
 
@@ -225,7 +226,6 @@ class MatplotlibAdapter:
             ctx.layer_artists[i] = DRAW[mark.type](ctx, i, mark)
         apply_axes(ctx)
         ann = apply_annotations(ctx)
-        apply_legend(ctx)
         _label_locale(spec, theme, warnings)
         cap: dict[str, Any] = {}
         if theme is not None and theme.muted:
@@ -233,7 +233,12 @@ class MatplotlibAdapter:
         if theme is not None and theme.typography.caption:
             cap["fontsize"] = theme.typography.caption
         caption = apply_caption(fig, spec.caption, figsize[1], figsize[0], **cap)
-        fit_value_labels(ctx)  # fits value labels at draw time, after layout
+        # Value labels are fitted by the layout engine on every draw, so they
+        # are already inside the (widened) axes when the legend pass below
+        # lays the figure out to measure it: an "auto" legend that would
+        # cover a value label is moved outside like one covering data.
+        fit_value_labels(ctx)
+        apply_legend(ctx)  # last: an "auto" legend is placed against the final layout
         return BuiltFigure(figure=fig, axes=ax, warnings=warnings,
                            layer_artists=ctx.layer_artists, annotation_artists=ann,
                            caption=caption)
