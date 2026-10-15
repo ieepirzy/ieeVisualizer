@@ -77,3 +77,34 @@ def test_check_reports_and_build_raises_the_same_structured_issue():
     with pytest.raises(TemplateInputError) as e:
         VF.build(None, u="(0*x+9)**2000", v="x")
     assert [(i.path, i.code) for i in e.value.issues] == [("/params/u", "expression_too_large")]
+
+
+@pytest.mark.parametrize("u,constants", [
+    ("x/0", {}), ("1/0", {}), ("x + log(0)", {}), ("tan(pi/2)*x", {}), ("x*0**-1", {}),
+    ("x/k", {"k": 0.0}),
+])
+def test_undefined_constant_is_an_issue_never_an_exception(u, constants):
+    params = {"u": u, "v": "y", "x_range": [-1, 1], "y_range": [-1, 1], "grid": 5,
+              "constants": constants}
+    issues = VF.check(None, **params)  # must not raise
+    assert [(i.path, i.code) for i in issues if i.severity == "error"] == [
+        ("/params/u", "invalid_expression")]
+    with pytest.raises(TemplateInputError) as e:
+        VF.build(None, **params)
+    assert [(i.path, i.code) for i in e.value.issues if i.severity == "error"] == [
+        ("/params/u", "invalid_expression")]
+
+
+def test_lambdify_failure_is_an_issue(monkeypatch):
+    import sympy
+
+    def broken(*a, **k):
+        raise KeyError("ComplexInfinity")
+
+    monkeypatch.setattr(sympy, "lambdify", broken)
+    params = {"u": "x", "v": "y", "x_range": [-1, 1], "y_range": [-1, 1], "grid": 5}
+    with pytest.raises(TemplateInputError) as e:
+        VF.build(None, **params)
+    assert {(i.path, i.code) for i in e.value.issues} == {
+        ("/params/u", "invalid_expression"), ("/params/v", "invalid_expression")}
+
