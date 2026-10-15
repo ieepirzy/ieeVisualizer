@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,8 @@ SOURCE_REPO = "ieepirzy/ieeVisualizer"
 # which covers the manifests and code in the skills.
 MIRROR_DIRS = ("skills", ".claude-plugin")
 MIRROR_FILES = ("LICENSE",)
+# Whole-string match; re.fullmatch, unlike "$", does not accept a trailing newline.
+TARGET_RE = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 SKIP_PARTS = {"__pycache__", ".pytest_cache", ".DS_Store"}
 
 
@@ -213,6 +216,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--target-repo", required=True,
                     help="owner/name of the mirror repository, for the README's install line")
     args = ap.parse_args(argv)
+    if not TARGET_RE.fullmatch(args.target_repo):
+        print("error: --target-repo must be owner/name (letters, digits, '-', '.', '_')",
+              file=sys.stderr)
+        return 2
     if len(args.sha) != 40 or any(c not in "0123456789abcdef" for c in args.sha):
         print(f"error: --sha must be a full 40-character lowercase commit SHA, got {args.sha!r}",
               file=sys.stderr)

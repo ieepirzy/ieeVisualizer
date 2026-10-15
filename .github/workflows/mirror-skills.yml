@@ -68,8 +68,10 @@ jobs:
         env:
           DEPLOY_KEY: ${{ secrets.SKILLS_MIRROR_DEPLOY_KEY }}
         run: |
-          if ! printf '%s' "$TARGET_REPO" | grep -Eq '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$'; then
-            echo "::error title=SKILLS_MIRROR_TARGET not set::Set the repository variable SKILLS_MIRROR_TARGET to the private mirror repository as owner/name (got '${TARGET_REPO}'). See docs/SKILLS_MIRROR.md."
+          # Whole-string match ([[ =~ ]], not grep, which matches per line).
+          # The value is never echoed: it could carry ::workflow commands.
+          if ! [[ "$TARGET_REPO" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]]; then
+            echo "::error title=SKILLS_MIRROR_TARGET not set::Set the repository variable SKILLS_MIRROR_TARGET to the private mirror repository as owner/name (letters, digits, '-', '.', '_'; the current value is missing or invalid). See docs/SKILLS_MIRROR.md."
             exit 1
           fi
           if [ -z "$DEPLOY_KEY" ]; then
@@ -117,7 +119,8 @@ jobs:
           # target's history and commit the difference.
           mv "$RUNNER_TEMP/target/.git" "$RUNNER_TEMP/mirror/.git"
           cd "$RUNNER_TEMP/mirror"
-          git add -A
+          # --force: a .gitignore inside the mirrored tree must not drop files.
+          git add -A --force
           if git diff --cached --quiet; then
             echo "Mirror already matches ${GITHUB_REPOSITORY}@${GITHUB_SHA}; nothing to commit."
             exit 0

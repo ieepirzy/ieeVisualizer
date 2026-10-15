@@ -195,3 +195,39 @@ def test_malformed_manifest_is_a_clean_error(tmp_path, which, capsys):
     src = make_source(tmp_path, "./")
     (src / ".claude-plugin" / which).write_text('{"plugins": [', encoding="utf-8")
     assert_refused(mirror, src, tmp_path / "mirror", capsys, "not valid JSON")
+
+
+@pytest.mark.parametrize("bad", ["example-org/skills\n$(id)", "example-org/skills\n",
+                                 "not a repo", "owner/name/extra", ""])
+def test_rejects_bad_target_repo(tmp_path, bad, capsys):
+    mirror = load()
+    dest = tmp_path / "m"
+    assert mirror.main(["--dest", str(dest), "--sha", SHA, "--target-repo", bad]) == 2
+    assert "--target-repo" in capsys.readouterr().err
+    assert not dest.exists()
+
+
+def test_git_index_symlink_check_alone(tmp_path):
+    """The git-mode check on its own: source_files() refuses a tracked
+    symlink before any file is copied."""
+    mirror = load()
+    src = make_source(tmp_path, "./")
+    os.symlink("../../LICENSE", src / "skills" / "figure-is-a-claim" / "leak.md")
+    git(src, "init", "-q")
+    git(src, "add", "-A")
+    git(src, "commit", "-q", "-m", "tracked symlink")
+    with pytest.raises(mirror.MirrorError, match="symlink"):
+        mirror.source_files(src)
+
+
+def test_symlink_swapped_in_after_commit_is_refused(tmp_path, capsys):
+    """The copy-time check on its own: git's index says regular file, but the
+    file on disk was replaced by a symlink after the commit."""
+    mirror = load()
+    src = make_git_source(tmp_path)
+    (tmp_path / "outside-secret.txt").write_text("SECRET")
+    victim = src / "skills" / "figure-is-a-claim" / "SOURCES.md"
+    victim.unlink()
+    os.symlink(tmp_path / "outside-secret.txt", victim)
+    assert "skills/figure-is-a-claim/SOURCES.md" in mirror.source_files(src)  # index: regular
+    assert_refused(mirror, src, tmp_path / "mirror", capsys, "symlink")
