@@ -138,5 +138,5 @@
  "metadata": {},
  "title": "Weekly revenue",
  "caption": "Forecast is a model output, not a measurement. Two weeks have no data.",
- "theme": "muutto365-report-light"
+ "theme": "report-light"
 }

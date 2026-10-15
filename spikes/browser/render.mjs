@@ -22,7 +22,7 @@ import { figureSpecToVegaLite } from './adapters/vegalite.js';
 
 const W = 800, H = 500;
 const sha = (s) => createHash('sha256').update(s).digest('hex').slice(0, 16);
-const theme = JSON.parse(readFileSync('specs/theme.muutto365-report-light.json', 'utf8'));
+const theme = JSON.parse(readFileSync('specs/theme.report-light.json', 'utf8'));
 const names = readdirSync('specs').filter((f) => !f.startsWith('theme.') && !f.endsWith('.schema.json') && f.endsWith('.json')).map((f) => f.slice(0, -5)).sort();
 for (const d of ['echarts', 'vegalite', 'plotly', 'compare']) mkdirSync(`out/${d}`, { recursive: true });
 

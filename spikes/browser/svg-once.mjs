@@ -9,7 +9,7 @@ import { figureSpecToECharts } from './adapters/echarts.js';
 import { figureSpecToVegaLite } from './adapters/vegalite.js';
 
 const [engine, name] = process.argv.slice(2);
-const theme = JSON.parse(readFileSync('specs/theme.muutto365-report-light.json', 'utf8'));
+const theme = JSON.parse(readFileSync('specs/theme.report-light.json', 'utf8'));
 const spec = JSON.parse(readFileSync(`specs/${name}.json`, 'utf8'));
 if (engine === 'echarts') {
   const c = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 800, height: 500 });
