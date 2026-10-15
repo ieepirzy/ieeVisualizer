@@ -15,14 +15,27 @@ grouped by test id::
 
 The comparison reports, per test, the hashes that appear in only one run.
 Run it from the repository root with the repository on ``PYTHONPATH``.
+
+Take both runs in the same environment (same machine, same numpy and sympy).
+Specs whose data comes from transcendental numpy functions (``np.exp``,
+``np.sin``, the seeded normal generator, lambdified SymPy) are not
+bit-portable: numpy picks a SIMD kernel per CPU at run time, and the AVX-512
+and AVX2 ``exp`` differ by 1 ulp on some inputs, which changes the hash. Each
+capture records :func:`tools.spec_hashes.environment` under
+``"__environment__"`` and the comparison warns when the two differ; a
+difference it then reports may be the machine, not the change.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any
+
+ENV_KEY = "__environment__"
 
 _captured: dict[str, set[str]] = {}
 _current = ["<collection>"]
@@ -82,8 +95,18 @@ def pytest_runtest_setup(item: Any) -> None:
 def pytest_unconfigure(config: Any) -> None:
     path = os.environ.get("SPEC_HASH_CAPTURE")
     if path:
+        out: dict[str, Any] = {ENV_KEY: _environment()}
+        out.update({k: sorted(v) for k, v in sorted(_captured.items())})
         with open(path, "w", encoding="utf-8") as f:
-            json.dump({k: sorted(v) for k, v in sorted(_captured.items())}, f, indent=1)
+            json.dump(out, f, indent=1)
+
+
+def _environment() -> dict[str, Any]:
+    path = Path(__file__).resolve().parent / "spec_hashes.py"
+    spec = importlib.util.spec_from_file_location("_capture_spec_hashes_env", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.environment()
 
 
 def compare(before: dict[str, list[str]], after: dict[str, list[str]]) -> list[str]:
@@ -100,6 +123,11 @@ def compare(before: dict[str, list[str]], after: dict[str, list[str]]) -> list[s
 
 if __name__ == "__main__":
     a, b = (json.load(open(p, encoding="utf-8")) for p in sys.argv[1:3])
+    env_a, env_b = a.pop(ENV_KEY, None), b.pop(ENV_KEY, None)
+    if env_a != env_b:
+        print(f"WARNING: the runs come from different environments ({env_a} vs {env_b}); "
+              "specs built from transcendental numpy functions can differ in the last bit "
+              "between them, so a difference below may be the environment, not the change.")
     diffs = compare(a, b)
     n_hashes = len({h for v in a.values() for h in v})
     n_after = len({h for k, v in b.items() if k in a for h in v})
