@@ -24,6 +24,7 @@ inline SVG or ``data:`` image, so this output differs from ``render_view(...,
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -36,7 +37,6 @@ from .draw import Group, Rect, esc, to_png
 from .flow import flow_outline
 from .html import markdown_html
 from .layout import (
-    FLOW_MIN_FONT,
     KPI_SMALL_SIZES,
     KPI_VALUE_SIZES,
     TEXT_STYLES,
@@ -48,12 +48,13 @@ from .layout import (
 )
 from .limits import MAX_PNG_PIXELS, MAX_PNG_SIDE_PX
 from .model import Card, FigureComponent, Flow, Grid, Kpi, Node, Note, Stack, Table, Text, ViewSpec
+from .render import view_glyphs
 from .text import NO_DATA, NULL_CELL
-from .validate import errors, view_hash
+from .validate import errors
 
 #: A language tag (BCP 47 shape: letters, then ``-`` subtags); no spaces or CR/LF.
 _LANG = re.compile(r"[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8}){0,6}")
-#: SMTP lines may not exceed 998 characters; HTML is broken at spaces before that.
+#: SMTP lines may not exceed 998 bytes; HTML is broken at spaces before that.
 MAX_LINE = 900
 
 #: Content column (CSS px) on a wide screen, and the gutters around it.
@@ -72,9 +73,14 @@ INK, MUTED, LINE, PANEL = "#1f2328", "#57606a", "#d0d7de", "#f6f8fa"
 #: which would otherwise widen the whole email past a phone's screen.
 FONT = ("font-family:'DejaVu Sans',Verdana,Arial,sans-serif;overflow-wrap:anywhere;"
         "word-break:break-word;")
-#: Presentation tables keep the width they are given, whatever they hold.
+#: The font without the word breaking, for values that must stay whole.
+PLAIN = "font-family:'DejaVu Sans',Verdana,Arial,sans-serif;"
+#: Extra room a table must leave before its columns are trusted to fit.
+TABLE_SLACK = 1.2
+#: A presentation table as wide as its slot. (No ``table-layout:fixed``: the
+#: text inside already wraps, and the browser tests pass without it.)
 TABLE = ('role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-         'style="width:100%;table-layout:fixed;')
+         'style="width:100%;')
 #: Smallest slot (CSS px) a component may get on the narrowest screen.
 MIN_EMAIL_SLOT = 120.0
 
@@ -96,7 +102,6 @@ class _Email:
         self.images: dict[str, bytes] = {}
         self.warnings: list[RenderWarning] = []
         self.min = profile.min_html_text_px
-        self.token = view_hash(view).split(":")[-1][:12]  # same view, same names
 
     def px(self, size: float) -> float:
         return max(size, self.min)
@@ -166,7 +171,10 @@ class _Email:
         return f'<div style="font-size:0;line-height:0">{boxes}</div>'
 
     def image(self, name: str, content: bytes, width: float, alt: str) -> str:
-        name = name.replace(".png", f".{self.token}.png@ieevisualizer")  # Content-ID form
+        # Content-ID form; the token is the image's own hash, so a name changes
+        # whenever the picture does (other data behind the same view included)
+        digest = hashlib.sha256(content).hexdigest()[:12]
+        name = name.replace(".png", f".{digest}.png@ieevisualizer")
         self.images[name] = content
         return (f'<img src="{esc(self.src(name))}" width="{int(width)}" alt="{esc(alt)}" '
                 f'style="display:block;width:100%;max-width:{int(width)}px;height:auto;'
@@ -187,7 +195,8 @@ class _Email:
                 f"the figure is drawn with the dark theme {theme.get('name')!r} in an email that "
                 "declares a light colour scheme; it shows as a dark block on a light page. Use "
                 "a light theme for email.", pointer + "/theme"))
-        alt = ". ".join(x for x in (spec.title or "Figure", figure_summary(spec)) if x)
+        alt = ". ".join(x for x in (spec.title or "Figure", figure_summary(spec, self.resolver))
+                        if x)
         return self.image(f"figure-{len(self.images)}.png", result.content, hi, alt)
 
     def kpi(self, n: Kpi, lo: float) -> str:
@@ -231,11 +240,15 @@ class _Email:
         names, heads, rows, total = table_cells(n, ds, path)
         size = self.px(13)
         num = [ds.columns[c].dtype in ("int", "float") for c in names]
-        # headers wrap at spaces, so a column needs only its longest header word
+        # A cell value is never split: numbers, dates and ids would read as
+        # other values. Data cells do not wrap (white-space:nowrap); a table is
+        # used only when every column fits its widest value whole (and its
+        # longest header word: headers wrap at spaces), with TABLE_SLACK room
+        # for a client's substitute font. Otherwise one card per row.
         want = sum(max([text_width(w[:200], size, True) for w in h.split(" ")]
                        + [text_width(r[i][:200], size) for r in rows]) + 16
-                   for i, h in enumerate(heads)) * FONT_SLACK
-        cell = f"{FONT}font-size:{size:g}px;padding:4px 8px;"
+                   for i, h in enumerate(heads)) * TABLE_SLACK
+        cell = f"{PLAIN}font-size:{size:g}px;padding:4px 8px;"
         cap = (f'<div style="{FONT}font-size:{self.px(15):g}px;font-weight:bold;color:{INK};'
                f'margin:0 0 6px 0">{esc(n.title)}</div>' if n.title else "")
         parts = [cap]
@@ -245,7 +258,8 @@ class _Email:
                          for i, h in enumerate(heads))
             trs = "".join(
                 f'<tr style="background:{PANEL if k % 2 else "#ffffff"}">' + "".join(
-                    f'<td align="{"right" if num[i] else "left"}" style="{cell}color:'
+                    f'<td align="{"right" if num[i] else "left"}" style="{cell}'
+                    f'white-space:nowrap;color:'
                     f'{MUTED if s == NULL_CELL else INK}">{esc(s)}</td>'
                     for i, s in enumerate(r)) + "</tr>\n" for k, r in enumerate(rows))
             parts.append(f'<table role="presentation" width="100%" cellpadding="0" '
@@ -256,12 +270,16 @@ class _Email:
                          f'margin:0 0 6px 0">One card per row: the {len(heads)} columns do not '
                          f"fit side by side on a {lo:.0f} px wide screen.</div>")
             cards = []
+            # in a card a text value may wrap (a long URL); numbers, dates and
+            # booleans stay whole
+            whole = [ds.columns[c].dtype != "str" for c in names]
             for r in rows:
                 fields = "".join(
                     f'<div style="{FONT}font-size:{self.min:g}px;color:{MUTED}">{esc(h)}</div>'
-                    f'<div style="{FONT}font-size:{size:g}px;color:'
+                    f'<div style="{PLAIN if whole[i] else FONT}font-size:{size:g}px;color:'
                     f'{MUTED if s == NULL_CELL else INK};margin:0 0 6px 0;'
-                    f'word-break:break-word">{esc(s)}</div>' for h, s in zip(heads, r))
+                    f'{"white-space:nowrap;" if whole[i] else ""}">{esc(s)}</div>'
+                    for i, (h, s) in enumerate(zip(heads, r)))
                 cards.append(f'<div style="display:inline-block;vertical-align:top;width:100%;'
                              f'max-width:{COLUMN // 2}px"><div style="border:1px solid {LINE};'
                              f'border-radius:6px;padding:8px 10px;margin:0 8px 8px 0;'
@@ -275,11 +293,8 @@ class _Email:
     def flow(self, f: Flow, path: str, lo: float) -> str:
         f2, items, gw, gh, order, s = fit_flow(f, lo, self.p.min_text_px, path, self.warnings)
         w, h = max(gw * s, 1.0), max(gh * s, 1.0)
-        if FLOW_MIN_FONT * s < self.p.min_text_px - 1e-9:
-            self.warnings.append(RenderWarning(
-                "legibility_text_too_small",
-                f"the flow's smallest labels are {FLOW_MIN_FONT * s:.1f} CSS px on a "
-                f"{lo:.0f} px wide screen (minimum {self.p.min_text_px:g}).", path))
+        # flow_text_too_small (from fit_flow) already reports small labels
+        self.warnings += [RenderWarning(x.code, x.message, path) for x in view_glyphs(items)]
         px_w, px_h = round(w * self.p.scale), round(h * self.p.scale)
         if max(px_w, px_h) > MAX_PNG_SIDE_PX or px_w * px_h > MAX_PNG_PIXELS:
             from ..render import RenderError
@@ -358,14 +373,14 @@ def render_email(view: ViewSpec, profile: str = "email-phone", *,
 
 
 def _short_lines(line: str) -> str:
-    """``line`` broken into lines of at most :data:`MAX_LINE` characters at
+    """``line`` broken into lines of at most :data:`MAX_LINE` UTF-8 bytes at
     spaces where a line break means the same: in text, or between a tag's
     attributes - never inside a quoted attribute value (a break inside
     ``style="font-family:'DejaVu Sans'"`` would invalidate the style). A
     longer run with no such space stays, for the transfer encoding to fold."""
-    if len(line) <= MAX_LINE:
+    if len(line.encode("utf-8")) <= MAX_LINE:
         return line
-    breaks, in_tag, quote = [], False, ""
+    out, start, size, last, in_tag, quote = [], 0, 0, -1, False, ""
     for k, ch in enumerate(line):
         if quote:
             quote = "" if ch == quote else quote
@@ -376,12 +391,13 @@ def _short_lines(line: str) -> str:
         elif ch == ">":
             in_tag = False
         elif ch == " ":
-            breaks.append(k)
-    out, start = [], 0
-    for a, b in zip(breaks, breaks[1:] + [len(line)]):
-        if b - start > MAX_LINE and a > start:
-            out.append(line[start:a])
-            start = a + 1
+            last = k
+        size += len(ch.encode("utf-8"))
+        if size > MAX_LINE and last >= start:
+            out.append(line[start:last])
+            start = last + 1
+            size = len(line[start:k + 1].encode("utf-8"))
+            last = -1
     return "\n".join(out + [line[start:]])
 
 
@@ -393,27 +409,48 @@ def _dark(theme_name: str | None) -> bool:
     return theme.background is not None and relative_luminance(theme.background) < 0.2
 
 
-def figure_summary(spec: Any, limit: int = 400) -> str:
-    """A text alternative carrying the figure's numbers (for an email whose
-    images are blocked): per layer, its name, how many values and their range
-    with the unit. Inline data only; ``""`` when there is none."""
+def figure_summary(spec: Any, resolver: Resolver | None = None, limit: int = 400) -> str:
+    """A text alternative carrying the figure's measured values (for an email
+    whose images are blocked): per layer, its name, how many values and their
+    range with the unit. Only value channels are summarised - y (x for
+    horizontal bars), the samples of a histogram, a heatmap's colour, a
+    quiver's vector magnitude - never positions. References are resolved
+    with ``resolver`` first; ``""`` when nothing can be summarised."""
+    import math
+
+    from ..render import prepare
     from .text import format_number
 
+    try:
+        spec = prepare(spec, resolver).spec
+    except Exception:  # noqa: BLE001 - the render itself reports why
+        return ""
     parts = []
     for m in spec.layers:
         snap = spec.datasets.get(m.data) if isinstance(m.data, str) else None
+        cols = getattr(snap, "columns", None)
         enc = getattr(m, "encoding", {}) or {}
-        ch = "x" if getattr(m, "orientation", None) == "horizontal" else "y"
-        cols = getattr(snap, "columns", None)  # a DatasetRef has none until resolved
-        col = cols.get(enc[ch].field) if cols is not None and ch in enc else None
-        if col is None or col.dtype not in ("int", "float"):
+        if cols is None:
             continue
-        vals = [v for v in col.values if v is not None]
+        what = ""
+        if m.type == "quiver" and "u" in enc and "v" in enc:
+            u, v = cols[enc["u"].field], cols[enc["v"].field]
+            vals = [math.hypot(a, b) for a, b in zip(u.values, v.values)
+                    if a is not None and b is not None]
+            unit, what, label = u.unit, "vector magnitude, ", "vectors"
+        else:
+            ch = {"histogram": "x", "heatmap": "color"}.get(
+                m.type, "x" if getattr(m, "orientation", None) == "horizontal" else "y")
+            col = cols.get(enc[ch].field) if ch in enc else None
+            if col is None or col.dtype not in ("int", "float"):
+                continue
+            vals, unit = [x for x in col.values if x is not None], col.unit
+            label = enc[ch].title or enc[ch].field
         if not vals:
             continue
-        unit = f" {col.unit}" if col.unit else ""
-        name = m.name or enc[ch].title or enc[ch].field
-        parts.append(f"{name}: {len(vals)} values from {format_number(min(vals))} to "
+        name = m.name or label
+        unit = f" {unit}" if unit else ""
+        parts.append(f"{name}: {what}{len(vals)} values from {format_number(min(vals))} to "
                      f"{format_number(max(vals))}{unit}")
     text = "; ".join(parts)
     return text if len(text) <= limit else text[:limit - 1] + "…"

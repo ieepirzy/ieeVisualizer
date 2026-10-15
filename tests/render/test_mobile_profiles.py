@@ -10,6 +10,7 @@ Sizes are converted to the reading device: an image ``W`` px wide shown
 
 from __future__ import annotations
 
+import os
 import struct
 from pathlib import Path
 
@@ -279,6 +280,9 @@ def test_no_profile_renders_keep_mains_bytes():
     recorded = json.loads((data / "main_render_hashes.json").read_text())
     expected = recorded.get(matplotlib.__version__)
     if expected is None:
+        if os.environ.get("IEEV_REQUIRE_MAIN_HASHES", "").lower() in ("1", "true"):
+            pytest.fail(f"no main hashes recorded for matplotlib {matplotlib.__version__}; "
+                        "re-record them as tests/render/data/record_main_hashes.py says")
         pytest.skip(f"no hashes recorded for matplotlib {matplotlib.__version__} "
                     f"(have {', '.join(sorted(recorded))})")
     got = {name: hashlib.sha256(make()).hexdigest() for name, make in module.CASES.items()}

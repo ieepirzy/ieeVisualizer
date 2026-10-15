@@ -72,7 +72,7 @@ def browser():
             manager.stop()
             why = f"Chromium cannot be launched ({str(exc).splitlines()[0]})"
     if why is not None:
-        if os.environ.get("IEEV_REQUIRE_BROWSER"):
+        if os.environ.get("IEEV_REQUIRE_BROWSER", "").lower() in ("1", "true"):
             pytest.fail(f"browser layout tests are required here but {why}")
         pytest.skip(why)
     yield b
@@ -141,3 +141,60 @@ def test_email_kpi_tiles_stack_on_phones_and_pair_on_tablets(browser, tmp_path, 
     assert len(tiles) == 3
     rows = len({round(top) for _, top in tiles})
     assert rows == (3 if width <= 430 else 2)
+
+
+#: Line boxes of every table value (``<td>``, and the card values that must
+#: stay whole): a value split over two lines reads as two values.
+VALUE_LINES = """() => {
+  const out = [];
+  for (const el of document.querySelectorAll('td, div[style*="white-space:nowrap"]')) {
+    const t = el.firstChild;
+    if (!t || t.nodeType !== 3 || !t.data.trim()) continue;
+    const r = document.createRange(); r.selectNodeContents(t);
+    const tops = new Set([...r.getClientRects()].map(b => Math.round(b.top)));
+    out.push([t.data, tops.size]);
+  }
+  return out;
+}"""
+
+
+def revenue() -> ViewSpec:
+    return ViewSpec(datasets={"t": DataSnapshot.from_columns({
+        "Revenue this week": [12345678.0, 23456789.5, 345678.25],
+        "Revenue previous week": [11345678.0, 22456789.5, 335678.25],
+        "Change vs last": [1000000.0, 1000000.0, 10000.0]})},
+        root=Stack(children=[Table(data="t", title="Revenue")]))
+
+
+def long_headers() -> ViewSpec:
+    return ViewSpec(datasets={"t": DataSnapshot.from_columns(
+        {"bookings this week": [41, 44], "quotes this week": [96, 101],
+         "conversion this week": [0.43, 0.44]})},
+        root=Stack(children=[Table(data="t")]))
+
+
+@pytest.mark.parametrize("width", WIDTHS)
+@pytest.mark.parametrize("build", [weekly_briefing, revenue, long_headers])
+def test_no_table_value_is_split_across_lines(browser, tmp_path, build, width):
+    view = build()
+    email = render_email(view, image_src=lambda name: name)
+    for name, content in email.images.items():
+        (tmp_path / name).write_bytes(content)
+    page = tmp_path / "email.html"
+    page.write_text(email.html, encoding="utf-8")
+    p = browser.new_page(viewport={"width": width, "height": 900})
+    try:
+        p.goto(page.as_uri())
+        values = p.evaluate(VALUE_LINES)
+        scroll, inner = p.evaluate("[document.documentElement.scrollWidth, innerWidth]")
+    finally:
+        p.close()
+    assert values, "no table values found"
+    assert [v for v, lines in values if lines != 1] == []
+    assert scroll <= inner
+
+
+def test_a_short_table_with_long_headers_is_a_table_on_a_phone():
+    """Headers wrap at spaces, so three short columns stay a table at 320 px."""
+    html = render_email(long_headers()).html
+    assert "One card per row" not in html and "<td" in html

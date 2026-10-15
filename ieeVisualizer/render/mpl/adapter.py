@@ -291,9 +291,10 @@ class MatplotlibAdapter:
 
 def _audit(built: BuiltFigure, request: RenderRequest) -> None:
     """Profile renders: append the legibility audit of the figure as drawn."""
-    from .legibility import annotations_outside, audit
+    from .legibility import annotations_outside, audit, missing_glyphs
 
     built.warnings.extend(annotations_outside(built))
+    built.warnings.extend(missing_glyphs(built.figure))
     profile = request.render_profile
     if profile is not None:
         built.warnings.extend(audit(built.figure, profile, request.display_width, built.axes))

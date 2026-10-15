@@ -160,11 +160,14 @@ could not be laid out - `value_labels_omitted`, `value_label_outside_axes`,
 `flow_text_too_small`, `kpi_value_compacted`, `labels_abbreviated` /
 `labels_skipped` / `matrix_labels_omitted` (networks),
 `annotation_outside_view`, `annotation_skipped`, `layout_collapsed`,
-`email_clipped_by_gmail`, `email_not_phone_safe`. A pipeline that must not
+`email_clipped_by_gmail`, `email_not_phone_safe`, and `glyph_missing` (a
+character the font has no glyph for, drawn as an empty box: figure text,
+and in PNG views and email flows every label is checked against DejaVu
+Sans). A pipeline that must not
 send an illegible or incomplete report calls it on every output. The tests
-check the property it protects: for every figure template, each word a
-desktop render draws outside the tick labels is on the phone render, or the
-phone render fails the gate.
+check the property it protects: for every template at every profile, each
+word a desktop render draws outside the tick labels is drawn outside the
+tick labels of the profile render too, or that render fails the gate.
 
 ## Email HTML
 
@@ -176,14 +179,21 @@ KPI tiles and table cards as fluid `inline-block` boxes; each flow followed
 by its text version (shown, since `<details>` is not dependable in mail).
 Delivery (MIME assembly) stays out of scope.
 
-- Every text container has `overflow-wrap:anywhere; word-break:break-word`
-  and layout tables `table-layout:fixed`, so a URL or id longer than the
-  screen wraps instead of widening the email.
-- Image names are Content-IDs, `figure-<n>.<12 hex of the view hash>.png@ieevisualizer`:
-  unique per view, the same for the same view. A figure's `alt` carries its
-  numbers (per layer: values, range, unit) for clients that block images.
+- Every text container has `overflow-wrap:anywhere; word-break:break-word`,
+  so a URL or id longer than the screen wraps instead of widening the email.
+  Table values never wrap (`white-space:nowrap`): a number or date split over
+  two lines reads as two values. A table is used only when every column fits
+  its widest value whole and its longest header word, with 20 % to spare for
+  a substitute font; otherwise one card per row, where only text values may
+  wrap.
+- Image names are Content-IDs, `figure-<n>.<12 hex of the PNG's SHA-256>.png@ieevisualizer`:
+  the same picture keeps its name, other data gives another. A figure's
+  `alt` summarises its measured values (references resolved first) for
+  clients that block images: per layer the count and range of the value
+  channel - y (x for horizontal bars), a histogram's samples, a heatmap's
+  colour, a quiver's vector magnitude - never positions.
 - Lines break at spaces outside quoted attributes so none exceeds 900
-  characters (SMTP's limit is 998); `lang` must be a language tag.
+  UTF-8 bytes (SMTP's limit is 998 bytes); `lang` must be a language tag.
 - A slot narrower than 120 px on the phone (deep nesting) is refused with a
   `too_narrow` issue and its pointer; a flow image larger than the view PNG
   limits (`MAX_PNG_SIDE_PX`, `MAX_PNG_PIXELS`) is refused (`view_too_large`)
@@ -196,9 +206,16 @@ Delivery (MIME assembly) stays out of scope.
 in headless Chromium (Playwright) at 320, 360, 430 and 768 px and assert: no
 horizontal overflow, no two text boxes overlapping, no computed font below
 13 px, images inside the screen, KPI tiles one per row up to 430 px and two
-across at 768 px; also for a view with 140-character URLs in every text
-field. CI installs Chromium and sets `IEEV_REQUIRE_BROWSER=1`, so they run
+across at 768 px, and every table value on one line (weekly briefing, a
+revenue table with 23 456 789.5-style values, a short table with long
+headers); also for a view with 140-character URLs in every text field. CI installs Chromium and sets `IEEV_REQUIRE_BROWSER=1`, so they run
 there; locally they skip with the reason when no browser is available.
+
+**Renders without a profile** are compared with SHA-256 hashes recorded from
+a `git archive` of main per matplotlib version
+(`tests/render/data/record_main_hashes.py`, which says how to re-record). CI
+sets `IEEV_REQUIRE_MAIN_HASHES=1`, so an unrecorded matplotlib version fails
+there instead of skipping.
 
 ## Measured in this slice
 
@@ -206,7 +223,8 @@ there; locally they skip with the reason when no browser is available.
 email profiles and writes, per file, every warning the gate refuses
 (`legibility.json`). Pass the gate at both: timeseries, vector field, the
 briefing email and both views as tablet PNG. Refused, with the reason
-(follow-ups below): bar comparison on a phone (value labels left out),
+(follow-ups below): the three network templates at **every** profile,
+desktop included (their own 7.5 pt labels), bar comparison on a phone (value labels left out),
 funnel on a phone (rate column over the first value label), the network
 templates (their own 7.5 pt labels), the pipeline flow on a phone (77 %
 scale even top to bottom), the briefing table cut in the phone PNG.
@@ -215,8 +233,8 @@ scale even top to bottom), the briefing table cut in the phone PNG.
 
 These are layout improvements; the gate already refuses each case.
 
-1. Network renderer: font floors for its explicit sizes, label placement at
-   phone width.
+1. Network renderer: font floors for its explicit sizes and label placement;
+   until then the gate refuses all three network templates at every profile.
 2. Funnel template: put the stage-to-stage rate in the stage label or a
    measured column instead of a fixed data-coordinate position.
 3. Profile-aware figure height: rows x minimum line height for horizontal
@@ -232,7 +250,9 @@ These are layout improvements; the gate already refuses each case.
    Email on Acid) before relying on the email layout in production.
 8. A text summary visible under each figure (not only `alt`), for clients
    that block images and do not show `alt`.
-9. Vector (SVG/PDF) audits draw the figure once more instead of measuring
+9. Font fallback (DejaVu Sans plus an installed CJK font) so `glyph_missing`
+   becomes rarer; the gate keeps refusing whatever is still missing.
+10. Vector (SVG/PDF) audits draw the figure once more instead of measuring
    the saved draw; an exact audit needs a hook in those backends.
 
 ## Sources (accessed 2026-10-15)

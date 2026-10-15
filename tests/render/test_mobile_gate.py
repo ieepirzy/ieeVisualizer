@@ -8,7 +8,7 @@ import pytest
 from test_mobile_profiles import example, gate_refuses, measure, problems
 
 from ieeVisualizer import templates
-from ieeVisualizer.render import RenderRequest, get_profile, render
+from ieeVisualizer.render import RenderRequest, get_profile, list_profiles, render
 from ieeVisualizer.render.mpl.adapter import build_figure
 from ieeVisualizer.spec import (
     Axis,
@@ -26,22 +26,23 @@ def words(texts, ticks=False) -> set:
     return {w for t in texts if ticks or not t["tick"] for w in t["text"].split()}
 
 
-FIGURES = [e["name"] for e in templates.list_templates()
-           if isinstance(example(e["name"]), FigureSpec)]
+TEMPLATES = [e["name"] for e in templates.list_templates()]
 
 
-@pytest.mark.parametrize("name", FIGURES)
-def test_phone_never_shows_less_than_desktop_unless_refused(monkeypatch, name):
-    """Every word a desktop render draws outside the tick labels (titles,
-    labels, legend, value labels, notes, annotations) is on the phone render
-    too, or the phone render fails the gate."""
+@pytest.mark.parametrize("profile", [p.name for p in list_profiles()])
+@pytest.mark.parametrize("name", TEMPLATES)
+def test_a_profile_never_shows_less_than_desktop_unless_refused(monkeypatch, name, profile):
+    """Every word a plain desktop render draws outside the tick labels
+    (titles, labels, legend, value labels, notes, annotations) is drawn
+    outside the tick labels of every profile render too, or that render
+    fails the gate."""
     spec = example(name)
     _, desk, _ = measure(monkeypatch, spec, RenderRequest(format="png", width=1920, height=1152,
                                                           units="px", dpi=192), css=960)
-    phone, texts, _ = measure(monkeypatch, spec, PHONE.figure_request("png"))
-    missing = words(desk) - words(texts, ticks=True)
+    result, texts, _ = measure(monkeypatch, spec, get_profile(profile).figure_request("png"))
+    missing = words(desk) - words(texts)
     if missing:
-        assert gate_refuses(phone), sorted(missing)
+        assert gate_refuses(result), sorted(missing)
 
 
 def test_value_labels_left_out_on_a_phone_fail_the_gate():

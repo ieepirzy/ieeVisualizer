@@ -51,7 +51,7 @@ def test_narrow_profile_stacks_kpi_tiles():
 def test_flow_on_a_phone_turns_top_to_bottom_and_reports_what_is_still_small():
     result = render_view(reporting_pipeline(), "png", profile="email-phone")
     codes = {w.code for w in result.warnings}
-    assert {"flow_text_too_small", "legibility_text_too_small"} <= codes
+    assert "flow_text_too_small" in codes and "legibility_text_too_small" not in codes
     tablet = render_view(reporting_pipeline(), "png", profile="email-tablet")
     assert not [w for w in tablet.warnings if w.code.startswith(("legibility", "flow_"))]
 

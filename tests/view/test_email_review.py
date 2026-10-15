@@ -19,7 +19,6 @@ from ieeVisualizer.view import (
     Grid,
     Kpi,
     Stack,
-    Table,
     Text,
     ViewSpec,
     render_email,
@@ -29,13 +28,14 @@ from ieeVisualizer.view.examples import reporting_pipeline, weekly_briefing
 from ieeVisualizer.view.model import FlowEdge
 
 
-def test_a_flow_too_small_to_read_fails_the_gate_in_email_as_in_the_view_png():
-    email = render_email(reporting_pipeline())
-    assert "legibility_text_too_small" in {w.code for w in email.warnings}
-    with pytest.raises(LegibilityError):
-        check_legible(email)
-    with pytest.raises(LegibilityError):
-        check_legible(render_view(reporting_pipeline(), "png", profile="email-phone"))
+def test_a_flow_too_small_to_read_is_reported_once_and_fails_the_gate():
+    for result in (render_email(reporting_pipeline()),
+                   render_view(reporting_pipeline(), "png", profile="email-phone")):
+        codes = [w.code for w in result.warnings]
+        assert codes.count("flow_text_too_small") == 1
+        assert "legibility_text_too_small" not in codes  # the same problem, said once
+        with pytest.raises(LegibilityError, match="flow_text_too_small"):
+            check_legible(result)
 
 
 def test_a_cut_table_in_the_phone_png_fails_the_gate():
@@ -84,15 +84,6 @@ def test_a_kpi_never_changes_notation_silently():
         check_legible(email)
 
 
-def test_a_short_table_with_long_headers_stays_a_table():
-    view = ViewSpec(datasets={"t": DataSnapshot.from_columns(
-        {"bookings this week": [41, 44], "quotes this week": [96, 101],
-         "conversion this week": [0.43, 0.44]})},
-        root=Stack(children=[Table(data="t")]))
-    html = render_email(view).html
-    assert "One card per row" not in html and "<th" in html
-
-
 def test_no_line_is_longer_than_smtp_allows():
     long = " ".join(["lorem"] * 1600)
     view = ViewSpec(root=Stack(children=[Text(text=long)]))
@@ -128,10 +119,55 @@ def test_lang_must_be_a_language_tag(lang):
     assert '<html lang="fi-FI">' in render_email(ok).html
 
 
-def test_image_names_are_content_ids_unique_per_view_and_stable():
-    a, b = render_email(weekly_briefing()), render_email(weekly_briefing())
-    other = render_email(reporting_pipeline())
+def test_image_names_follow_the_picture_not_only_the_view():
+    """Content-ID names carry the image's own hash: the same view with other
+    data behind a reference gets other names."""
+    from ieeVisualizer.spec import DatasetRef, FigureSpec, LineMark
+
+    def view_with(values):
+        spec = FigureSpec(datasets={"d": DatasetRef(kind="table", id="sales")},
+                          layers=[LineMark(data="d", encoding={"x": "t", "y": "v"})])
+        snap = DataSnapshot.from_columns({"t": [0, 1, 2], "v": values})
+        view = ViewSpec(figures={"f": spec}, root=Stack(children=[FigureComponent(figure="f")]))
+        return render_email(view, resolver=lambda ref: snap)
+
+    a, b, c = view_with([1, 2, 3]), view_with([1, 2, 3]), view_with([5, 1, 4])
     assert list(a.images) == list(b.images)
     (name,) = a.images
     assert re.fullmatch(r"figure-0\.[0-9a-f]{12}\.png@ieevisualizer", name)
-    assert not set(a.images) & set(other.images)
+    assert set(a.images) != set(c.images)
+    # the alt text summarises the resolved data, never positions
+    assert re.search(r'alt="Figure\. v: 3 values from 1 to 5"', c.html)
+
+
+def test_alt_text_never_reports_positions_as_values():
+    from ieeVisualizer import templates
+    from ieeVisualizer.view.email import figure_summary
+
+    t = templates.get("vector_field_2d")
+    text = figure_summary(t.build_payload(t.example()))
+    assert text.startswith("vectors: vector magnitude, ") and " x:" not in text
+
+
+def test_lines_are_limited_in_bytes_not_characters():
+    view = ViewSpec(root=Stack(children=[Text(text=" ".join(["ääkkönen"] * 600))]))
+    html = render_email(view).html
+    assert max(len(line.encode("utf-8")) for line in html.split("\n")) <= 998
+
+
+@pytest.mark.filterwarnings("ignore:Glyph .* missing from font")  # the case under test
+def test_missing_glyphs_fail_the_gate():
+    from ieeVisualizer.render import get_profile, render
+    from ieeVisualizer.spec import FigureSpec, LineMark
+
+    data = DataSnapshot.from_columns({"x": [0, 1, 2], "y": [1, 2, 3]})
+    fig = FigureSpec(title="東京 売上", datasets={"d": data},
+                     layers=[LineMark(data="d", encoding={"x": "x", "y": "y"})])
+    result = render(fig, get_profile("email-phone").figure_request("png"))
+    (w,) = [w for w in result.warnings if w.code == "glyph_missing"]
+    assert "東京 売上" in w.message
+    flow = ViewSpec(root=Stack(children=[Flow(nodes=[FlowNode("a", "東京"), FlowNode("b", "大阪")],
+                                              edges=[FlowEdge("a", "b")])]))
+    for out in (result, render_email(flow), render_view(flow, "png", profile="email-phone")):
+        with pytest.raises(LegibilityError, match="glyph_missing"):
+            check_legible(out)

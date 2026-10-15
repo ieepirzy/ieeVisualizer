@@ -203,6 +203,8 @@ def render_view(view: ViewSpec, format: str = "svg", *, width: float | None = No
         items, height, _ = layout_view(view, width, prof, layout_warnings)
         if prof is not None:
             layout_warnings += small_text(items, prof)
+        if format == "png":  # SVG text falls back to the reader's fonts; PNG cannot
+            layout_warnings += view_glyphs(items)
         if format == "svg":
             content = to_svg(items, width, height, figs.nested_svg, view.title).encode("utf-8")
         else:
@@ -226,15 +228,40 @@ def render_view(view: ViewSpec, format: str = "svg", *, width: float | None = No
                         warnings=layout_warnings + list(figs.warnings))
 
 
+def view_glyphs(items: list) -> list[RenderWarning]:
+    """``glyph_missing`` for view text the PNG draws in DejaVu Sans without a
+    glyph (flows included)."""
+    from matplotlib.font_manager import FontProperties
+
+    from ..render.mpl.legibility import glyph_warning, missing_chars
+
+    found: list[tuple[str, str]] = []
+
+    def walk(its: list) -> None:
+        for it in its:
+            if isinstance(it, Group):
+                walk(it.items)
+            elif isinstance(it, Label) and it.text.strip():
+                fam = "DejaVu Sans Mono" if it.mono else "DejaVu Sans"
+                m = missing_chars(it.text, FontProperties(family=fam))
+                if m:
+                    found.append((it.text, m))
+
+    walk(items)
+    return glyph_warning(found)
+
+
 def small_text(items: list, profile: Any) -> list[RenderWarning]:
-    """``legibility_text_too_small`` for view text (own display list; scaled
-    flows count at their scale) below the profile's minimum."""
+    """``legibility_text_too_small`` for view text (own display list) below
+    the profile's minimum. Flows are left out: ``flow_text_too_small`` reports
+    a flow scaled below it, once, with what to do."""
     found: list[tuple[float, str]] = []
 
     def walk(its: list, k: float) -> None:
         for it in its:
             if isinstance(it, Group):
-                walk(it.items, k * it.scale)
+                if "data-flow" not in it.attrs:
+                    walk(it.items, k * it.scale)
             elif isinstance(it, Label) and it.text.strip() and it.size * k < \
                     profile.min_text_px - 1e-9:
                 found.append((it.size * k, it.text))

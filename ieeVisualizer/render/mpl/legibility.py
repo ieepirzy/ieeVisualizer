@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from ..base import RenderWarning
@@ -406,3 +407,48 @@ def annotations_outside(built: Any) -> list[RenderWarning]:
                 f"annotation {a.get_text()!r} is anchored outside the axes' limits and is not "
                 "drawn; widen the limits or move the annotation.", ""))
     return out
+
+
+@lru_cache(maxsize=32)
+def _charmap(path: str) -> frozenset:
+    from matplotlib.font_manager import get_font
+
+    return frozenset(get_font(path).get_charmap())
+
+
+def missing_chars(text: str, prop: Any) -> str:
+    """The characters of ``text`` the font ``prop`` resolves to has no glyph
+    for (drawn as empty boxes), in order, without repeats."""
+    from matplotlib.font_manager import findfont
+
+    have = _charmap(findfont(prop, fallback_to_default=True))
+    out = []
+    for ch in text:
+        if not ch.isspace() and ord(ch) not in have and ch not in out:
+            out.append(ch)
+    return "".join(out)
+
+
+def glyph_warning(found: list[tuple[str, str]], path: str = "") -> list[RenderWarning]:
+    """``glyph_missing`` for ``[(text, missing characters), ...]``."""
+    if not found:
+        return []
+    shown = "; ".join(f"{t[:40]!r} lacks {m[:10]!r}" for t, m in found[:_MAX_EXAMPLES])
+    return [RenderWarning(
+        "glyph_missing",
+        f"{len(found)} text(s) use characters the font has no glyph for, drawn as empty "
+        f"boxes: {shown}. Install and select a font that covers them.", path)]
+
+
+def missing_glyphs(fig: Any) -> list[RenderWarning]:
+    """``glyph_missing`` for the figure's visible text (mathtext excluded)."""
+    from matplotlib.text import Text
+
+    found = []
+    for t in fig.findobj(Text):
+        s = t.get_text()
+        if t.get_visible() and s.strip() and "$" not in s:
+            m = missing_chars(s, t.get_fontproperties())
+            if m:
+                found.append((s, m))
+    return glyph_warning(found)
