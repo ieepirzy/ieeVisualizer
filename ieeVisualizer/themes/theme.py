@@ -31,6 +31,9 @@ from .locale import NumberLocale
 _NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _VERSION = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 FORECAST_LINESTYLES = ("dashed", "dotted", "dashdot")
+#: A forecast line is drawn at this fraction of its requested opacity unless
+#: the theme sets ``roles.forecast_line_alpha``.
+DEFAULT_FORECAST_LINE_ALPHA = 0.75
 SPINES = ("left", "right", "top", "bottom")
 
 
@@ -92,13 +95,16 @@ class RoleStyle:
     """How forecast and reference layers differ from observations.
 
     A forecast line is never solid (``forecast_linestyle`` is dashed, dotted
-    or dashdot); forecast bars/areas are hatched. ``reference_*`` styles
+    or dashdot) and is drawn at ``forecast_line_alpha`` times its requested
+    opacity (None: :data:`DEFAULT_FORECAST_LINE_ALPHA`); forecast bars/areas
+    are hatched, filled at ``forecast_fill_alpha``. ``reference_*`` styles
     reference lines and the reference role (lighter, neutral colour).
     """
 
     forecast_linestyle: str | None = None
     forecast_hatch: str | None = None
     forecast_fill_alpha: float | None = None
+    forecast_line_alpha: float | None = None
     reference_color: str | None = None
     reference_alpha: float | None = None
     reference_fill_alpha: float | None = None
@@ -372,6 +378,7 @@ def structure_issues(theme: Theme) -> list[ValidationIssue]:
             err(f"/{k}", f"{k} must be a positive number, got {v!r}.")
     for k, v in (("grid_alpha", theme.grid_alpha),
                  ("roles/forecast_fill_alpha", theme.roles.forecast_fill_alpha),
+                 ("roles/forecast_line_alpha", theme.roles.forecast_line_alpha),
                  ("roles/reference_alpha", theme.roles.reference_alpha),
                  ("roles/reference_fill_alpha", theme.roles.reference_fill_alpha)):
         if v is not None and not (_num(v) and 0 < v <= 1):

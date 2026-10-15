@@ -198,7 +198,7 @@ def apply_legend(ctx: DrawContext) -> None:
     spec = ctx.spec
     if not spec.legend.show:
         return
-    handles, labels = _dedupe(*ctx.ax.get_legend_handles_labels())
+    handles, labels = _in_bar_order(ctx, *_dedupe(*ctx.ax.get_legend_handles_labels()))
     if not handles:
         return
     labelled_roles = any(m.role != "observed" for m in spec.layers)
@@ -214,6 +214,24 @@ def apply_legend(ctx: DrawContext) -> None:
         from .legend_layout import place_auto_legend
 
         place_auto_legend(ctx, legend, handles, labels, {"title": spec.legend.title})
+
+
+def _in_bar_order(ctx: DrawContext, handles: list[Any],
+                  labels: list[str]) -> tuple[list[Any], list[str]]:
+    """Dodged horizontal bars are laid out upwards: the first layer (group)
+    of a category is the lowest bar. Listed in layer order, their legend
+    entries would read top-down in the opposite order to the bars, so their
+    entries are reversed among themselves (other entries keep their place)
+    unless the y axis is inverted. Reordering the handles here, rather than
+    ``legend(reverse=True)`` (matplotlib >= 3.7), leaves other entries in
+    place and works with every matplotlib version."""
+    idx = [k for k, h in enumerate(handles) if id(h) in ctx.dodged_horizontal]
+    if len(idx) < 2 or ctx.ax.yaxis_inverted():
+        return handles, labels
+    h, lab = list(handles), list(labels)
+    for k, j in zip(idx, reversed(idx)):
+        h[k], lab[k] = handles[j], labels[j]
+    return h, lab
 
 
 def _dedupe(handles: list[Any], labels: list[str]) -> tuple[list[Any], list[str]]:

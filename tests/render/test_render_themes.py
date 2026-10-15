@@ -77,7 +77,10 @@ def test_more_series_than_palette_colours_warns():
         LineMark(data="d", encoding={"x": "t", "y": c}, name=c) for c in "abcd"])
     built = build_figure(spec)
     assert [w.code for w in built.warnings].count("colour_cycle_wrapped") == 1
-    assert "palette_exhausted" not in [w.code for w in built.warnings]
+    # the fourth line repeats the first colour and is told apart by its dashes
+    lines = [built.layer_artists[i][0] for i in range(4)]
+    assert hexes(lines) == list(themes.get(DARK).palette) + [hexes(lines)[0]]
+    assert [ln.get_linestyle() for ln in lines] == ["-", "-", "-", "--"]
     assert "colour_cycle_wrapped" not in [
         w.code for w in build_figure(three_lines(DARK)).warnings]
 
@@ -137,6 +140,59 @@ def test_explicit_bar_placement_takes_a_layer_out_of_dodging():
     np.testing.assert_allclose(centres[1], [0.45, 1.45])
     np.testing.assert_allclose([p.get_width() for p in built.layer_artists[1][0].patches],
                                [0.1, 0.1])
+    # it only touches the dodged bars (0.4 = 0.45 - 0.1 / 2): no overlap
+    assert "bars_overlap" not in [w.code for w in built.warnings]
+
+
+def test_an_explicit_layer_overlapping_dodged_layers_is_reported():
+    data = DataSnapshot.from_columns({"k": ["a", "b", "c"], "v1": [3.0, 4.0, 5.0],
+                                      "v2": [2.0, 3.0, 4.0], "v3": [1.0, 2.0, 6.0]})
+    spec = FigureSpec(datasets={"d": data}, layers=[
+        BarMark(data="d", encoding={"x": "k", "y": "v1"}, name="v1"),
+        BarMark(data="d", encoding={"x": "k", "y": "v2"}, name="v2"),
+        # centred at +0.25, 0.3 wide: covers the right half of v2's bars
+        BarMark(data="d", encoding={"x": "k", "y": "v3"}, name="v3",
+                style={"bar_offset": 0.25, "bar_width": 0.3})])
+    built = build_figure(spec)
+    (w,) = [w for w in built.warnings if w.code == "bars_overlap"]
+    assert w.path == "/layers/2/style" and "[1]" in w.message and "3 of its bars" in w.message
+    # with value labels, the omission is put down to the overlap, not to narrow bars
+    for m in spec.layers:
+        m.style = {**m.style, "value_labels": True}
+    built = build_figure(spec)
+    (w,) = [w for w in built.warnings if w.code == "value_labels_omitted"]
+    assert "bars_overlap" in w.message and "too narrow" not in w.message
+    # without the overlap the labels fit
+    spec.layers[2].style = {"bar_offset": 0.45, "bar_width": 0.1, "value_labels": True}
+    codes = [w.code for w in build_figure(spec).warnings]
+    assert "bars_overlap" not in codes and "value_labels_omitted" not in codes
+
+
+def test_bar_layers_sharing_no_category_are_not_dodged():
+    d1 = DataSnapshot.from_columns({"k": ["a", "b"], "v": [3.0, 4.0], "w": [2.0, 5.0]})
+    d2 = DataSnapshot.from_columns({"k": ["c", "d"], "u": [1.0, 2.0]})
+    spec = FigureSpec(datasets={"d1": d1, "d2": d2}, layers=[
+        BarMark(data="d1", encoding={"x": "k", "y": "v"}, name="v"),
+        BarMark(data="d1", encoding={"x": "k", "y": "w"}, name="w"),
+        BarMark(data="d2", encoding={"x": "k", "y": "u"}, name="u")])
+    built = build_figure(spec)
+    bars = {i: built.layer_artists[i][0].patches for i in range(3)}
+    centre = {i: [p.get_x() + p.get_width() / 2 for p in ps] for i, ps in bars.items()}
+    # v and w share a and b: dodged; u shares nothing: a single layer at c and d
+    np.testing.assert_allclose(centre[0], [-0.2, 0.8])
+    np.testing.assert_allclose(centre[1], [0.2, 1.2])
+    np.testing.assert_allclose(centre[2], [2.0, 3.0])
+    np.testing.assert_allclose([p.get_width() for p in bars[2]], [0.8, 0.8])
+    # and nobody gets a "no data" note for a category it never had
+    assert not [a for arts in built.layer_artists.values() for a in arts
+                if hasattr(a, "get_text") and a.get_text() == "no data"]
+    # a layer linking the two groups dodges all four together
+    d3 = DataSnapshot.from_columns({"k": ["b", "c"], "x": [1.0, 1.0]})
+    spec.datasets["d3"] = d3
+    spec.layers.append(BarMark(data="d3", encoding={"x": "k", "y": "x"}, name="x"))
+    built = build_figure(spec)
+    assert {round(p.get_width(), 6) for i in range(4)
+            for p in built.layer_artists[i][0].patches} == {0.2}
 
 
 def forecast_dashes_default(linestyle):
@@ -283,11 +339,11 @@ def test_default_theme_keeps_matplotlibs_tick_locator():
 
 
 def _value_label_boxes(built):
+    # measured as build_figure laid the figure out (as render() does); not
+    # drawn again outside the theme's render context
     from matplotlib.backends.backend_agg import FigureCanvasAgg
 
-    canvas = FigureCanvasAgg(built.figure)
-    canvas.draw()
-    r = canvas.get_renderer()
+    r = FigureCanvasAgg(built.figure).get_renderer()
     labels = [a for arts in built.layer_artists.values() for a in arts
               if hasattr(a, "get_text") and a.get_text() not in ("", "no data")]
     return ([(a.get_text(), a.get_window_extent(r)) for a in labels],
@@ -322,8 +378,7 @@ def test_a_value_label_past_a_fixed_axis_limit_is_reported():
     spec = bars([18450.5, 900.0])
     spec.axes["y"] = Axis(limits=[0, 18500])
     request = themes.get(LIGHT).request("email")
-    built = build_figure(spec, request)
-    built.figure.draw_without_rendering()  # labels are fitted when drawn
+    built = build_figure(spec, request)  # laid out as render() lays it out
     assert built.axes.get_ylim()[1] == 18500  # the spec's limit is kept
     assert "value_label_outside_axes" in [w.code for w in built.warnings]
     assert [w.code for w in render(spec, request).warnings].count(

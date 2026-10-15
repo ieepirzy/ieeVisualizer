@@ -64,6 +64,11 @@ class DrawContext:
     no_data_notes: list[NoDataNote] = field(default_factory=list)
     #: Category-axis centres of every bar and bar-less slot, by value channel.
     bar_centres: dict[str, np.ndarray] = field(default_factory=dict)
+    #: Every drawn bar group (:func:`report_bar_overlaps`), the layers found
+    #: to overlap, and the legend handles of dodged horizontal bars.
+    bar_spans: list[Any] = field(default_factory=list)
+    overlapping_bar_layers: set = field(default_factory=set)
+    dodged_horizontal: set = field(default_factory=set)
     #: The resolved :class:`~ieeVisualizer.themes.Theme` (None = adapter defaults).
     theme: Any = None
     _color_i: int = 0
@@ -535,13 +540,18 @@ def _bar_slots(ctx: DrawContext, i: int, m: Mark, style: dict[str, Any], cat_ch:
                polar: bool) -> tuple[int, int, float, np.ndarray, float]:
     """Where layer ``i``'s bars go among all bar layers of the same orientation.
 
-    Returns ``(first_slot, slots, width, positions, shift)``: when two or
-    more such layers share a category position they are dodged side by side
-    in layer order (each layer's groups in their own order), across a slot
+    Returns ``(first_slot, slots, width, positions, shift)``. Bar layers
+    without explicit placement are dodged in *dodge groups*: layers linked
+    by a shared category position, directly or through another layer of the
+    group (A shares a category with B, B one with C: A, B and C are one
+    group). A group's layers sit side by side in layer order (each layer's
+    groups in their own order) at every position of the group, across a slot
     width computed from all their positions, and ``positions`` (every slot
-    any of them draws at) is where a missing bar is labelled. A layer that
-    shares no position with another bar layer is laid out on its own
-    exactly as a single bar layer is.
+    any of them draws at) is where a missing bar is labelled "no data". A
+    layer that shares no position with another is a group of its own and is
+    laid out exactly as a single bar layer, with no slot (and no "no data"
+    note) at the positions of other groups. Grouping transitively keeps the
+    slot count of every member the same, so no two members' bars overlap.
 
     A layer with ``bar_width``/``bar_offset`` is placed explicitly instead:
     its groups fill ``bar_width`` (default 0.8) of the category slot,
@@ -560,15 +570,29 @@ def _bar_slots(ctx: DrawContext, i: int, m: Mark, style: dict[str, Any], cat_ch:
              and (k == i or not _raw_explicit(b))]
     pos = {k: (own if k == i else np.asarray(_pos(ctx, b, cat_ch).compressed()))
            for k, b in peers}
-    shared = any(np.intersect1d(pos[a], pos[b]).size
-                 for x, (a, _) in enumerate(peers) for (b, _) in peers[x + 1:])
-    if not shared:
+    group = _dodge_group(i, [k for k, _ in peers], pos)
+    if len(group) == 1:
         n = _bar_group_count(ctx, m, len(_col(ctx, m, cat_ch).values))
         return 0, n, _width(own, info, polar), np.unique(own), 0.0
-    counts = {k: _bar_group_count(ctx, b, len(_col(ctx, b, cat_ch).values)) for k, b in peers}
+    layers = dict(peers)
+    counts = {k: _bar_group_count(ctx, layers[k], len(_col(ctx, layers[k], cat_ch).values))
+              for k in group}
     first = sum(c for k, c in counts.items() if k < i)
-    union = np.concatenate(list(pos.values()))
+    union = np.concatenate([pos[k] for k in group])
     return first, sum(counts.values()), _width(union, info, polar), np.unique(union), 0.0
+
+
+def _dodge_group(i: int, keys: list[int], pos: dict[int, np.ndarray]) -> list[int]:
+    """Layers (in layer order) linked to layer ``i`` by shared positions,
+    directly or through other layers; ``[i]`` when it shares none."""
+    group, todo = {i}, [i]
+    while todo:
+        a = todo.pop()
+        for b in keys:
+            if b not in group and np.intersect1d(pos[a], pos[b]).size:
+                group.add(b)
+                todo.append(b)
+    return sorted(group)
 
 
 def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
@@ -586,6 +610,14 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     polar = ctx.spec.coordinate_system == "polar"
     first, slots, total, everywhere, shift = _bar_slots(ctx, i, m, style, cat_ch, polar)
     each = total / slots
+    labelled = bool(style.get("value_labels"))
+    if labelled and (polar or ctx.three_d):
+        labelled = False
+        ctx.warn("style_key_ignored",
+                 f"value_labels are drawn on 2D cartesian bars only; in "
+                 f"{ctx.spec.coordinate_system} they could not be kept clear of the fill and "
+                 "the axis labels, so they were not drawn. Read the values from the axis.",
+                 f"/layers/{i}/style/value_labels")
     artists = []
     for g, (group, idx) in enumerate(grp):
         p, v = pos[idx], val[idx]
@@ -603,8 +635,12 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
             artists.append(ctx.ax.barh(pp, vv, height=each, **kw))
         else:
             artists.append(ctx.ax.bar(pp, vv, width=each, **kw))
+        ctx.bar_spans.append(_BarSpans(i, _explicit_placement(style), _orientation(m), pp,
+                                       float(each), vv))
+        if horizontal and slots > 1 and not _explicit_placement(style):
+            ctx.dodged_horizontal.add(id(artists[-1]))
         _record_centres(ctx, val_ch, pp)
-        if style.get("value_labels"):
+        if labelled:
             labels = _value_labels(ctx, m, val_ch, pp, vv, horizontal)
             ctx.value_labels += [ValueLabel(a, val_ch, i, float(q), float(each), bool(v < 0),
                                             float(a.get_fontsize()))
@@ -617,12 +653,15 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         missing = ~np.ma.getmaskarray(p) & np.ma.getmaskarray(v)
         absent = np.setdiff1d(everywhere, np.asarray(p.compressed()))
         # On a log value axis 0 is not a position; anchor the note to the
-        # edge of the plot instead, or it is silently not drawn.
+        # edge of the plot instead, or it is silently not drawn. (A linear
+        # axis whose limits exclude 0 is re-anchored after layout, when the
+        # final limits are known: value_labels.py.)
         val_axis = ctx.spec.axes.get(val_ch)
         log = val_axis is not None and val_axis.scale == "log"
         coords = "data" if not log else (("axes fraction", "data") if horizontal
                                          else ("data", "axes fraction"))
-        slots_without_bar = np.concatenate([np.asarray(p[missing].filled(np.nan)), absent]) + off
+        cats = np.concatenate([np.asarray(p[missing].filled(np.nan)), absent])
+        slots_without_bar = cats + off
         if slots_without_bar.size:
             # Keep those slots in view: with no bar there, an edge slot would
             # otherwise fall outside the autoscaled limits and its note be
@@ -632,18 +671,76 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                                   updatex=not horizontal, updatey=horizontal)
             ctx.ax.autoscale_view()
         _record_centres(ctx, val_ch, slots_without_bar)
-        for q in slots_without_bar:
+        for c, q in zip(cats, slots_without_bar):
             xy = (0.0, q) if horizontal else (q, 0.0)
             # drawn on the positive side of zero; moved to the negative side
-            # after layout when only that side has room (value_labels.py)
+            # (or to the plot edge, or along the angle in polar) after layout
+            # (value_labels.py)
             note = ctx.ax.annotate(
                 "no data", xy, xycoords=coords, xytext=(3, 0) if horizontal else (0, 3),
                 textcoords="offset points", ha="left" if horizontal else "center",
                 va="center" if horizontal else "bottom", rotation=0 if horizontal else 90,
                 fontsize="x-small", color=ctx.muted("0.4"), style="italic")
-            ctx.no_data_notes.append(NoDataNote(note, val_ch))
+            ctx.no_data_notes.append(NoDataNote(note, val_ch, i, float(q), float(each),
+                                                _where(ctx, cat_ch, float(c))))
             artists.append(note)
     return artists
+
+
+@dataclass
+class _BarSpans:
+    """The bars one group of a bar layer drew: category-axis ``centres``,
+    common ``width`` and the bar ``values`` (each bar runs from 0)."""
+
+    layer: int
+    explicit: bool
+    orientation: str
+    centres: np.ndarray
+    width: float
+    values: np.ndarray
+
+
+def report_bar_overlaps(ctx: DrawContext) -> None:
+    """``bars_overlap``: a layer placed with ``bar_width``/``bar_offset``
+    whose bars cover bars of automatically dodged layers (one warning per
+    explicit layer, naming the layers it covers). Explicitly placed layers
+    overlapping each other are left alone: a narrow bar drawn inside a
+    wide one is a deliberate design (e.g. target vs actual)."""
+    by_layer: dict[int, tuple[set, int]] = {}
+    for e in ctx.bar_spans:
+        if not e.explicit:
+            continue
+        for d in ctx.bar_spans:
+            if d.explicit or d.layer == e.layer or d.orientation != e.orientation:
+                continue
+            across = np.abs(e.centres[:, None] - d.centres[None, :]) \
+                < (e.width + d.width) / 2.0 - 1e-9
+            lo = np.maximum(np.minimum(e.values, 0)[:, None], np.minimum(d.values, 0)[None, :])
+            hi = np.minimum(np.maximum(e.values, 0)[:, None], np.maximum(d.values, 0)[None, :])
+            n = int((across & (hi > lo)).any(axis=1).sum())
+            if n:
+                layers, count = by_layer.get(e.layer, (set(), 0))
+                by_layer[e.layer] = (layers | {d.layer}, count + n)
+    for i, (layers, n) in sorted(by_layer.items()):
+        ctx.overlapping_bar_layers |= layers | {i}
+        ctx.warn("bars_overlap",
+                 f"layer {i} is placed with bar_width/bar_offset and {n} of its bars overlap "
+                 f"bars of the automatically dodged layer(s) {sorted(layers)}, so part of a bar "
+                 "is hidden behind another. Give every one of these layers bar_width/"
+                 f"bar_offset so they sit apart, or remove both from layer {i} so it is dodged "
+                 "with the others.", f"/layers/{i}/style")
+
+
+def _where(ctx: DrawContext, cat_ch: str, c: float) -> str:
+    """A category-axis position as the data names it (for warnings)."""
+    info = ctx.axes[cat_ch]
+    if info.kind == "category":
+        names = {v: k for k, v in info.categories.items()}
+        if c in names:
+            return repr(names[c])
+    if info.degrees:
+        c = float(np.degrees(c))
+    return f"{c:g}"
 
 
 def _record_centres(ctx: DrawContext, val_ch: str, centres: np.ndarray) -> None:

@@ -111,7 +111,8 @@ REPORT_LIGHT = Theme(
     line_width=1.8, grid_show=True, grid_alpha=1.0, grid_width=0.6, grid_below=True,
     spines=("left", "bottom"),
     roles=RoleStyle(forecast_linestyle="dashed", forecast_hatch="///",
-                    forecast_fill_alpha=0.85, reference_color="#545454", reference_alpha=0.8,
+                    forecast_fill_alpha=0.85, forecast_line_alpha=0.85,
+                    reference_color="#545454", reference_alpha=0.8,
                     reference_fill_alpha=0.7, reference_linewidth=1.2),
     locale=FI_FI, targets=dict(TARGETS),
     pending=("palette", "signal", "semantic", "typography.family"),
@@ -131,6 +132,8 @@ REPORT_LIGHT = Theme(
         "semantic": "admin --green / --red hues darkened to 4.5:1, signal as attention",
         "sequential": "matplotlib viridis sampled on [0, 0.82] (high end visible on white)",
         "diverging": "palette ends with --ink at 20 % as the neutral midpoint",
+        "roles": "forecast lines at 85 % opacity: at the renderer's default 75 % the "
+                 "purple series colour is 2.92:1 on white, below 3:1 for graphics",
         "fonts": _FONT_NOTE,
         "locale": "fi-FI",
         "pending": "replace the pending slots with the official brand palette when one "

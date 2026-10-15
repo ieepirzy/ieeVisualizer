@@ -49,7 +49,7 @@ checked for) what it declares. `default` declares nothing.
 | `semantic` | status colours by meaning (`positive`, `negative`, `attention`); data for callers, not series colours |
 | `typography` | font family list and sizes (`size`, `title`, `label`, `tick`, `legend`, `caption`) |
 | `line_width`, `grid_show`, `grid_alpha`, `grid_width`, `grid_below`, `spines` | strokes and frame |
-| `roles` | `forecast_linestyle` (dashed/dotted/dashdot, never solid), `forecast_hatch`, `forecast_fill_alpha`, `reference_color`, `reference_alpha`, `reference_fill_alpha`, `reference_linewidth` |
+| `roles` | `forecast_linestyle` (dashed/dotted/dashdot, never solid), `forecast_hatch`, `forecast_fill_alpha`, `forecast_line_alpha` (a forecast line's opacity factor, default 0.75), `reference_color`, `reference_alpha`, `reference_fill_alpha`, `reference_linewidth` |
 | `locale` | `NumberLocale`: decimal and group separators, minus sign, percent and currency layout, six concise date patterns |
 | `targets` | `{"email": FigureTarget(width, height, dpi), "slide": ...}` |
 | `provenance`, `pending` | where every value came from; slots still awaiting an official source |
@@ -88,7 +88,7 @@ the background first, i.e. checked as seen.
 | Code | Rule | Severity |
 |---|---|---|
 | `text_contrast` | foreground and muted vs background >= 4.5:1 (WCAG 2.x 1.4.3) | error |
-| `mark_contrast` | palette, signal, semantic, reference (line and fill opacity) and forecast fills vs background >= 3:1 (WCAG 2.x 1.4.11) | error |
+| `mark_contrast` | palette, signal, semantic, reference (line and fill opacity) and forecast colours (each palette colour at the forecast fill opacity and at the forecast line opacity, default 0.75) vs background >= 3:1 (WCAG 2.x 1.4.11) | error |
 | `palette_indistinct` | every palette pair CIEDE2000 >= 15 | error |
 | `palette_cvd_indistinct` | every pair >= 8 after protanopia and deuteranopia simulation (Machado et al. 2009, severity 1) | error |
 | `palette_tritan_close` | same under tritanopia | warning |
@@ -174,10 +174,15 @@ cell (halfway to the neighbouring bars): on vertical bars, labels wider than
 their cell are all turned 90 degrees, reading upwards from the bar end;
 labels still too thick are shrunk to one common size down to 6 pt, and if
 even that does not fit they are left out with a `value_labels_omitted`
-warning rather than drawn over each other. Then the value axis is widened
+warning rather than drawn over each other (the warning says whether the bars
+are too narrow or bars of a `bars_overlap` warning cover each other). The
+warnings describe the layout actually saved: each draw withdraws the
+previous draw's. Then the value axis is widened
 just enough that every label lies inside the plot; an end fixed by
 `axes.<ch>.limits` is kept and a label that does not fit is a
 `value_label_outside_axes` warning (`ieeVisualizer/render/mpl/value_labels.py`).
+Value labels are drawn on 2D cartesian bars only; in `polar` the key gives a
+`style_key_ignored` warning.
 Bar layers sharing categories are dodged side by side by the renderer
 (RENDERING.md, "Bars"); `bar_width` (0-1) and `bar_offset` (-0.5-0.5) are
 explicit overrides that place one layer's bars as fractions of the category

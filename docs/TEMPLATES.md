@@ -116,8 +116,9 @@ in layer order, so the template sets no `bar_width`/`bar_offset`).
   `conflicting_parameters`) adds a bar left of (horizontal: below) the
   current one, role `reference` (lighter, the theme's neutral colour), named
   `"<measure>, <previous_label>"` in the legend. It is the first layer (that
-  is what puts it left/below), so it is also listed first in the legend. It is observed data; the
-  role only changes how it is drawn.
+  is what puts it left/below), so the legend lists it first for vertical
+  bars and last for horizontal ones, in the order the bars are read. It is
+  observed data; the role only changes how it is drawn.
 - **Order:** rows as given, or `sort` `ascending`/`descending` by the first
   measure (a null sorts last). `orientation` `auto` turns horizontal for a
   label over 12 characters or over 12 categories; horizontal lists the first

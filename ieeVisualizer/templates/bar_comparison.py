@@ -6,7 +6,8 @@ grouped bars, optionally next to the previous period's value.
   layer order, so the template sets no ``bar_width``/``bar_offset`` (those
   are explicit overrides for hand-written specs). ``previous_column`` (one
   measure only) adds a bar for the previous period to the left of (below)
-  the current one - the first layer, so also first in the legend - drawn
+  the current one - the first layer, so listed in the legend in the order
+  the bars are read (first for vertical, last for horizontal bars) - drawn
   with role ``reference`` (lighter, the theme's neutral colour) and named in
   the legend, so it cannot be mistaken for the current value. It is
   observed data; the role only changes how it is drawn.

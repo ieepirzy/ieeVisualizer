@@ -12,7 +12,13 @@ drawn:
    the zero line, on the side where the axes have room for it -- the
    positive side when it fits there (as before), else the negative side, so
    on an all-negative value axis (whose zero line is the axes' edge) the
-   note is inside the plot instead of above it, near the title.
+   note is inside the plot instead of above it, near the title. When the
+   value axis' final limits exclude zero (``axes.<ch>.limits`` of
+   ``[50, 100]`` or ``[-100, -50]``) the note starts at the plot edge
+   nearest to zero instead, so it is drawn inside the axes rather than
+   clipped away (an empty slot must not read as "below 50"). In ``polar``
+   the notes are placed along their slot's angle instead
+   (:mod:`.polar_notes`).
 2. **Arranges value labels** (:func:`_arrange`) so no two overlap and each
    is attributable to its bar: a label must stay inside its bar's *cell*,
    the stretch of the category axis halfway to the neighbouring bar centres
@@ -21,9 +27,11 @@ drawn:
    upwards, still centred on their bar); labels still thicker than their
    cell (vertical) or than their row (horizontal bars) are all shrunk to one
    common size, down to :data:`MIN_LABEL_PT`. If even that does not fit,
-   or labels of explicitly overlapping layers would still intersect, the
-   value labels are left out with a ``value_labels_omitted`` warning rather
-   than drawn on top of each other.
+   or labels would still intersect, the value labels are left out with a
+   ``value_labels_omitted`` warning rather than drawn on top of each other.
+   The warning names the cause: bars too narrow for their labels, or -- when
+   a label that does not fit belongs to a layer of a ``bars_overlap``
+   warning -- bars drawn over each other.
 3. **Widens the value axis** (:func:`_fit_axis`) until every value label lies
    inside the axes; an end the spec fixed with ``axes.<ch>.limits`` is kept
    and a label that still does not fit is a ``value_label_outside_axes``
@@ -32,7 +40,14 @@ drawn:
 Each step starts from the labels as drawn, so repeated draws (the legend
 pass measures the figure before it is saved) reach the same result. When
 nothing needs to change, the layout runs exactly once, so the output is
-unchanged byte for byte.
+unchanged byte for byte. The warnings these steps give
+(``value_labels_omitted``, ``value_label_outside_axes``,
+``no_data_unplaceable``) describe the most recent draw only: each draw
+withdraws the previous draw's and gives its own, so the warnings of a render
+match the figure it saved, not an intermediate layout.
+
+Value labels are drawn on 2D cartesian bars only (``polar`` and 3D give a
+``style_key_ignored`` warning; see :func:`ieeVisualizer.render.mpl.marks.draw_bar`).
 """
 
 from __future__ import annotations
@@ -67,17 +82,24 @@ class ValueLabel:
 
 @dataclass
 class NoDataNote:
-    """A "no data" note at a slot without a bar; ``ch`` is the value channel."""
+    """A "no data" note of layer ``layer`` at a slot without a bar; ``ch``
+    is the value channel, ``slot`` the slot's centre on the category axis
+    (the angle in polar), ``width`` the slot's width and ``where`` the slot
+    as the data names it (for warnings)."""
 
     text: Any
     ch: str
+    layer: int = 0
+    slot: float = 0.0
+    width: float = 0.0
+    where: str = ""
 
 
 def fit_value_labels(ctx: Any, rounds: int = 4) -> None:
     """Install the layout engine described in the module docstring when the
-    figure has bar value labels or "no data" notes (2D cartesian only)."""
-    if not (ctx.value_labels or ctx.no_data_notes) or ctx.three_d \
-            or ctx.spec.coordinate_system == "polar":
+    figure has bar value labels or "no data" notes (2D cartesian; in polar
+    only the notes, see :mod:`.polar_notes`)."""
+    if not (ctx.value_labels or ctx.no_data_notes) or ctx.three_d:
         return
     from matplotlib.layout_engine import ConstrainedLayoutEngine
 
@@ -85,13 +107,20 @@ def fit_value_labels(ctx: Any, rounds: int = 4) -> None:
     old = fig.get_layout_engine()
     if not isinstance(old, ConstrainedLayoutEngine):
         return
-    reported: set = set()
+    issued: list = []  # the warnings the latest draw gave
+    polar = ctx.spec.coordinate_system == "polar"
 
     class ValueLabelLayout(ConstrainedLayoutEngine):
         def execute(self, figure: Any) -> Any:
             out = super().execute(figure)
+            if polar:
+                from .polar_notes import place_polar_notes
+
+                _sync(ctx, issued, place_polar_notes(ctx))
+                return out
+            status: dict = {}
             changed = _place_notes(ctx)
-            changed |= _arrange(ctx, reported)
+            changed |= _arrange(ctx, status)
             if changed:
                 out = super().execute(figure)
             pad = VALUE_LABEL_PAD_PT * figure.dpi / 72.0
@@ -103,9 +132,10 @@ def fit_value_labels(ctx: Any, rounds: int = 4) -> None:
                 if not moved:
                     break
                 out = super().execute(figure)
-                if _place_notes(ctx) | _arrange(ctx, reported):
+                if _place_notes(ctx) | _arrange(ctx, status):
                     out = super().execute(figure)
-            _report_unfitted(ctx, reported)
+            found = [status["omitted"]] if status.get("omitted") else []
+            _sync(ctx, issued, found + _unfitted(ctx))
             return out
 
     new = ValueLabelLayout()
@@ -113,19 +143,30 @@ def fit_value_labels(ctx: Any, rounds: int = 4) -> None:
     fig.set_layout_engine(new)
 
 
+def _sync(ctx: Any, issued: list, found: list) -> None:
+    """Withdraw the warnings the previous draw gave (``issued``) and give
+    ``found``, this draw's."""
+    keep = [w for w in ctx.warnings if not any(w is old for old in issued)]
+    ctx.warnings[:] = keep + found
+    issued[:] = found
+
+
 # ---------------------------------------------------------------- notes
 
 
 def _place_notes(ctx: Any) -> bool:
     """Point each "no data" note to the side of the zero line where it fits
-    inside the axes (positive side preferred); returns whether one changed."""
+    inside the axes (positive side preferred), starting at the plot edge
+    nearest to zero when the axis limits exclude it; returns whether one
+    changed."""
     box = ctx.ax.get_window_extent()
     pad = VALUE_LABEL_PAD_PT * ctx.fig.dpi / 72.0
     changed = False
     for note in ctx.no_data_notes:
         a = note.text
         vertical = note.ch == "y"
-        before = (tuple(a.xyann), a.get_ha(), a.get_va())
+        before = (tuple(a.xyann), a.get_ha(), a.get_va(), a.xy, a.xycoords)
+        _anchor(ctx, note)
         _note_side(a, vertical, positive=True)
         ext = a.get_window_extent()
         if vertical:
@@ -138,8 +179,31 @@ def _place_notes(ctx: Any) -> bool:
             room_pos, room_neg = box.x1 - anchor, anchor - box.x0
         if length + pad > room_pos and (length + pad <= room_neg or room_neg > room_pos):
             _note_side(a, vertical, positive=False)
-        changed |= (tuple(a.xyann), a.get_ha(), a.get_va()) != before
+        changed |= (tuple(a.xyann), a.get_ha(), a.get_va(), a.xy, a.xycoords) != before
     return changed
+
+
+def _anchor(ctx: Any, note: NoDataNote) -> None:
+    """Start ``note`` at the zero line when it is in view, else at the edge
+    of the plot nearest to zero (in axes-fraction coordinates on the value
+    axis). A note on a log value axis is anchored at the edge already."""
+    vertical = note.ch == "y"
+    axis = ctx.spec.axes.get(note.ch)
+    if axis is not None and axis.scale == "log":
+        return
+    a = note.text
+    lo, hi = ctx.ax.get_ylim() if vertical else ctx.ax.get_xlim()
+    if min(lo, hi) <= 0.0 <= max(lo, hi):
+        if a.xycoords != "data":  # moved to an edge by an earlier draw
+            a.xycoords = "data"
+            a.xy = (note.slot, 0.0) if vertical else (0.0, note.slot)
+        return
+    below = 0.0 < min(lo, hi)  # zero lies past the lower limit
+    f = 0.0 if below == (lo < hi) else 1.0
+    if vertical:
+        a.xycoords, a.xy = ("data", "axes fraction"), (note.slot, f)
+    else:
+        a.xycoords, a.xy = ("axes fraction", "data"), (f, note.slot)
 
 
 def _note_side(a: Any, vertical: bool, positive: bool) -> None:
@@ -155,9 +219,11 @@ def _note_side(a: Any, vertical: bool, positive: bool) -> None:
 # --------------------------------------------------------- value labels
 
 
-def _arrange(ctx: Any, reported: set) -> bool:
+def _arrange(ctx: Any, status: dict) -> bool:
     """Rotate / shrink / omit value labels so none overlaps another or
-    leaves its bar's cell; returns whether anything changed."""
+    leaves its bar's cell; returns whether anything changed. Sets
+    ``status["omitted"]`` to the ``value_labels_omitted`` warning when the
+    labels were left out, else to None."""
     labels = ctx.value_labels
     if not labels:
         return False
@@ -173,29 +239,54 @@ def _arrange(ctx: Any, reported: set) -> bool:
             if lab.ch == "y":
                 _set_rotation(lab, 90)
     scale = min((r - gap) / max(_thickness(lab), 1e-9) for lab, r in zip(labels, room))
-    ok = True
+    culprits: list = []  # labels that cannot fit (or overlap) at the smallest size
     if scale < 1.0:
-        size = min(lab.fontsize for lab in labels) * scale * 0.98
-        if size < MIN_LABEL_PT:
-            ok = False
-        else:
+        smallest = min(lab.fontsize for lab in labels)
+        size = smallest * scale * 0.98
+        # the labels whose own room would need a size below the minimum
+        culprits = [lab for lab, r in zip(labels, room)
+                    if (r - gap) / max(_thickness(lab), 1e-9) * smallest * 0.98 < MIN_LABEL_PT]
+        if size >= MIN_LABEL_PT:
             for lab in labels:
                 lab.text.set_fontsize(min(lab.fontsize, size))
-            ok = all(_thickness(lab) <= r - gap for lab, r in zip(labels, room))
-    if ok:
-        ok = not _any_overlap([lab.text.get_window_extent() for lab in labels])
-    if not ok:
+            culprits = [lab for lab, r in zip(labels, room) if _thickness(lab) > r - gap]
+    if not culprits:
+        culprits = _overlapping(labels)
+    status["omitted"] = None
+    if culprits:
         for lab in labels:
             lab.text.set_visible(False)
-        if "omitted" not in reported:
-            reported.add("omitted")
-            layers = sorted({lab.layer for lab in labels})
-            ctx.warn("value_labels_omitted",
-                     "the bars are too narrow for their value labels to sit beside each "
-                     f"other legibly (at least {MIN_LABEL_PT:g} pt); the value labels of "
-                     f"layer(s) {layers} were left out. Read the values from the axis, use "
-                     "horizontal bars or a larger figure.", f"/layers/{layers[0]}/style")
+        status["omitted"] = _omitted_warning(ctx, labels, culprits)
     return [_state(lab.text) for lab in labels] != before
+
+
+def _omitted_warning(ctx: Any, labels: list, culprits: list) -> Any:
+    from ..base import RenderWarning
+
+    layers = sorted({lab.layer for lab in labels})
+    overlapping = sorted({lab.layer for lab in culprits} & ctx.overlapping_bar_layers)
+    if overlapping:
+        why = (f"bars of layer(s) {overlapping} overlap each other (see the bars_overlap "
+               "warning), so their value labels cannot sit apart")
+        fix = "Place the layers so their bars do not overlap."
+    else:
+        why = ("the bars are too narrow for their value labels to sit beside each other "
+               f"legibly (at least {MIN_LABEL_PT:g} pt)")
+        fix = "Read the values from the axis, use horizontal bars or a larger figure."
+    return RenderWarning("value_labels_omitted",
+                         f"{why}; the value labels of layer(s) {layers} were left out. {fix}",
+                         f"/layers/{layers[0]}/style")
+
+
+def _overlapping(labels: list) -> list:
+    boxes = [lab.text.get_window_extent() for lab in labels]
+    out = []
+    for k, a in enumerate(boxes):
+        for j in range(k + 1, len(boxes)):
+            b = boxes[j]
+            if a.x0 < b.x1 and b.x0 < a.x1 and a.y0 < b.y1 and b.y0 < a.y1:
+                out += [labels[k], labels[j]]
+    return out
 
 
 def _state(a: Any) -> tuple:
@@ -243,31 +334,29 @@ def _cat_px(ax: Any, val_ch: str, values: list[float]) -> list[float]:
     return [float(tr.transform((0.5, v))[1]) for v in values]
 
 
-def _any_overlap(boxes: list[Any]) -> bool:
-    for k, a in enumerate(boxes):
-        for b in boxes[k + 1:]:
-            if a.x0 < b.x1 and b.x0 < a.x1 and a.y0 < b.y1 and b.y0 < a.y1:
-                return True
-    return False
-
-
 # ------------------------------------------------------- value-axis fit
 
 
-def _report_unfitted(ctx: Any, reported: set) -> None:
+def _unfitted(ctx: Any) -> list:
+    """A ``value_label_outside_axes`` warning per visible label that does
+    not lie inside the axes."""
+    from ..base import RenderWarning
+
     box = ctx.ax.get_window_extent()
+    out = []
     for lab in ctx.value_labels:
         a = lab.text
-        if not a.get_visible() or id(a) in reported:
+        if not a.get_visible():
             continue
         b = a.get_window_extent()
         if b.x0 < box.x0 - 0.5 or b.x1 > box.x1 + 0.5 or b.y0 < box.y0 - 0.5 \
                 or b.y1 > box.y1 + 0.5:
-            reported.add(id(a))
-            ctx.warn("value_label_outside_axes",
-                     f"the value label {a.get_text()!r} of layer {lab.layer} does not fit inside "
-                     "the plot (fixed axis limits or a very small figure).",
-                     f"/layers/{lab.layer}/style")
+            out.append(RenderWarning(
+                "value_label_outside_axes",
+                f"the value label {a.get_text()!r} of layer {lab.layer} does not fit inside "
+                "the plot (fixed axis limits or a very small figure).",
+                f"/layers/{lab.layer}/style"))
+    return out
 
 
 def _fit_axis(ctx: Any, ch: str, labels: list[Any], pad: float) -> bool:

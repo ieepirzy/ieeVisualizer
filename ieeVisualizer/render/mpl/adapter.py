@@ -141,7 +141,14 @@ class MatplotlibAdapter:
         *,
         resolver: Resolver | None = None,
     ) -> BuiltFigure:
-        """Validate, resolve and draw ``spec`` into a new Figure (no export)."""
+        """Validate, resolve and draw ``spec`` into a new Figure (no export).
+
+        The figure is laid out once more at the end, inside the same theme
+        context, exactly as :meth:`render` lays it out when it saves: the
+        artists' positions, the value-label arrangement and the layout
+        warnings are those a render at this request ships. Drawing it again
+        outside that context (with other rcParams) may lay it out
+        differently."""
         request = request or RenderRequest()
         prepared = prepare(spec, resolver)
         self._check_capabilities(prepared.spec, request)
@@ -150,6 +157,7 @@ class MatplotlibAdapter:
         with render_context(theme), _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
             built = self._draw(prepared, request, warnings, theme)
+            built.figure.draw_without_rendering()
         _backend_warnings(caught, built.warnings)
         built.warnings[:] = _dedupe(built.warnings)  # same list: draw-time warnings land here
         return built
@@ -212,7 +220,7 @@ class MatplotlibAdapter:
 
         from .data import infer_axes
         from .decorate import apply_annotations, apply_axes, apply_caption, apply_legend
-        from .marks import DRAW, DrawContext, fit_value_labels
+        from .marks import DRAW, DrawContext, fit_value_labels, report_bar_overlaps
 
         spec = prepared.spec
         axes_info = infer_axes(spec, warnings)
@@ -224,6 +232,7 @@ class MatplotlibAdapter:
                           theme=theme)
         for i, mark in enumerate(spec.layers):
             ctx.layer_artists[i] = DRAW[mark.type](ctx, i, mark)
+        report_bar_overlaps(ctx)
         apply_axes(ctx)
         ann = apply_annotations(ctx)
         _label_locale(spec, theme, warnings)

@@ -15,6 +15,8 @@ def base(**kw):
     kw.setdefault("background", "#ffffff")
     kw.setdefault("foreground", "#111111")
     kw.setdefault("palette", ("#007c47", "#2f4380", "#9262b6"))
+    # at the default forecast line opacity (0.75) #9262b6 is 2.92:1 on white
+    kw.setdefault("roles", RoleStyle(forecast_line_alpha=0.85))
     return Theme(**kw)
 
 
@@ -42,6 +44,10 @@ def test_a_good_theme_passes_and_registers():
      ("/roles/reference_fill_alpha", "mark_contrast")),
     ({"roles": RoleStyle(forecast_fill_alpha=0.3)}, ("/roles/forecast_fill_alpha",
                                                       "mark_contrast")),
+    # a forecast line is translucent even when the theme says nothing about it
+    ({"roles": RoleStyle()}, ("/roles/forecast_line_alpha", "mark_contrast")),
+    ({"roles": RoleStyle(forecast_line_alpha=0.5)}, ("/roles/forecast_line_alpha",
+                                                     "mark_contrast")),
     ({"diverging": ("#d62728", "#eeeeee", "#2ca02c")}, ("/diverging",
                                                         "diverging_cvd_indistinct")),
 ])

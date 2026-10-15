@@ -69,6 +69,27 @@ def test_muutto_themes_pass_every_check(name):
     assert t.locale.tag == "fi-FI" and set(t.targets) == {"email", "slide"}
 
 
+@pytest.mark.parametrize("name", ["muutto365-admin-dark", "muutto365-report-light"])
+def test_forecast_lines_keep_graphics_contrast(name):
+    # measured on the line actually drawn, not on the theme's declaration
+    from matplotlib import colors as mcolors
+
+    from ieeVisualizer.render import build_figure
+    from ieeVisualizer.spec import DataSnapshot, FigureSpec, LineMark
+
+    t = themes.get(name)
+    data = DataSnapshot.from_columns({"x": [0.0, 1.0], **{f"y{k}": [1.0, 2.0] for k in
+                                                          range(len(t.palette))}})
+    spec = FigureSpec(datasets={"d": data}, theme=name, layers=[
+        LineMark(data="d", encoding={"x": "x", "y": f"y{k}"}, name=f"y{k}", role="forecast")
+        for k in range(len(t.palette))])
+    built = build_figure(spec)
+    for k in range(len(t.palette)):
+        line = built.layer_artists[k][0]
+        seen = to_hex(blend(mcolors.to_hex(line.get_color()), t.background, line.get_alpha()))
+        assert contrast_ratio(seen, t.background) >= 3.0, (line.get_color(), line.get_alpha())
+
+
 def test_presets_map_to_the_former_rcparams_exactly():
     # the matplotlib adapter's THEMES dict before themes were data
     assert theme_rc(themes.get("default")) == {}

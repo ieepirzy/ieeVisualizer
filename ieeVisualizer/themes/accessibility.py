@@ -9,8 +9,10 @@ check                       rule                                    severity
 ``text_contrast``           foreground and muted text vs background  error
                             >= 4.5:1 (WCAG 2.x SC 1.4.3, normal text)
 ``mark_contrast``           palette, signal, semantic, reference     error
-                            and forecast-fill colours vs background
-                            >= 3:1 (WCAG 2.x SC 1.4.11, graphics)
+                            and forecast colours (palette at the
+                            forecast fill and forecast line opacity)
+                            vs background >= 3:1 (WCAG 2.x SC 1.4.11,
+                            graphics)
 ``palette_indistinct``      every palette pair CIEDE2000 >= 15       error
 ``palette_cvd_indistinct``  every pair still >= 8 after protanopia   error
                             and deuteranopia simulation
@@ -35,7 +37,7 @@ from itertools import combinations
 
 from ..spec import ValidationIssue
 from .color import blend, contrast_ratio, delta_e2000, simulate_cvd, to_hex
-from .theme import Theme
+from .theme import DEFAULT_FORECAST_LINE_ALPHA, Theme
 
 TEXT_MIN = 4.5
 MARK_MIN = 3.0
@@ -84,6 +86,13 @@ def check_theme(theme: Theme) -> list[ValidationIssue]:
             seen = to_hex(blend(c, bg, ro.forecast_fill_alpha))
             marks.append(("/roles/forecast_fill_alpha", f"forecast fill of {c} at opacity "
                           f"{ro.forecast_fill_alpha}", seen))
+    # A forecast line is always drawn translucent (the theme's opacity, else
+    # the renderer default), so it is checked even when the theme sets none.
+    line_alpha = ro.forecast_line_alpha
+    for c in theme.palette or ():
+        a = line_alpha if line_alpha is not None else DEFAULT_FORECAST_LINE_ALPHA
+        marks.append(("/roles/forecast_line_alpha", f"forecast line of {c} at opacity {a}",
+                      to_hex(blend(c, bg, a))))
     for path, what, seen in marks:
         r = contrast_ratio(seen, bg)
         if r < MARK_MIN:

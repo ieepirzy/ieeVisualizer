@@ -25,10 +25,10 @@ Roles:
   it asks for. A forecast line's dash pattern is the requested pattern
   (``solid``/unspecified count as the theme's forecast linestyle, dashed by
   default) with every gap doubled -- a pattern no observed ``linestyle``
-  produces -- and it is drawn at :data:`FORECAST_ALPHA` times the requested
-  opacity. Markers are hollow, fills hatched, and the legend label says
-  "forecast". A style asking a forecast for a solid line is overridden with
-  a warning.
+  produces -- and it is drawn at the theme's ``roles.forecast_line_alpha``
+  (default :data:`FORECAST_ALPHA`) times the requested opacity. Markers are
+  hollow, fills hatched, and the legend label says "forecast". A style
+  asking a forecast for a solid line is overridden with a warning.
 * ``reference`` is drawn lighter (reduced opacity, thinner, the theme's
   reference colour - grey by default - unless a colour is given).
 """
@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ...themes import Theme, resolve_for_render
+from ...themes.theme import DEFAULT_FORECAST_LINE_ALPHA
 from ..base import RenderWarning
 
 KNOWN_STYLE_KEYS = ("color", "colormap", "linewidth", "linestyle", "marker", "opacity",
@@ -62,8 +63,9 @@ _LINESTYLES = {
     "dashdot": "-.", "-.": "-.",
 }
 FORECAST_LINESTYLE = "--"
-#: Forecast lines are drawn at this fraction of the requested opacity.
-FORECAST_ALPHA = 0.75
+#: Forecast lines are drawn at this fraction of the requested opacity
+#: (unless the theme sets ``roles.forecast_line_alpha``).
+FORECAST_ALPHA = DEFAULT_FORECAST_LINE_ALPHA
 _DASH_RC = {"--": "lines.dashed_pattern", ":": "lines.dotted_pattern",
             "-.": "lines.dashdot_pattern"}
 FORECAST_HATCH = "///"
@@ -83,6 +85,7 @@ class Roles:
     forecast_linestyle: str = FORECAST_LINESTYLE
     forecast_hatch: str = FORECAST_HATCH
     forecast_alpha: float = 0.6
+    forecast_line_alpha: float = FORECAST_ALPHA
     reference_color: str = REFERENCE_COLOR
     reference_alpha: float = REFERENCE_ALPHA
     reference_fill_alpha: float = REFERENCE_ALPHA * 0.6
@@ -112,6 +115,7 @@ def roles_for(theme: Theme | None) -> Roles:
         kw["forecast_linestyle"] = _LINESTYLES[r.forecast_linestyle]
     for src, dst in (("forecast_hatch", "forecast_hatch"),
                      ("forecast_fill_alpha", "forecast_alpha"),
+                     ("forecast_line_alpha", "forecast_line_alpha"),
                      ("reference_color", "reference_color"),
                      ("reference_alpha", "reference_alpha"),
                      ("reference_fill_alpha", "reference_fill_alpha"),
@@ -277,7 +281,7 @@ def line_kwargs(style: dict[str, Any], role: str, path: str,
                 "they cannot be mistaken for observations.", path + "/style/linestyle"))
             kw["linestyle"] = roles.forecast_linestyle
         kw["linestyle"] = forecast_dashes(kw.get("linestyle", roles.forecast_linestyle))
-        kw["alpha"] = kw.get("alpha", 1.0) * FORECAST_ALPHA
+        kw["alpha"] = kw.get("alpha", 1.0) * roles.forecast_line_alpha
         if "marker" in kw:
             kw["markerfacecolor"] = "none"
     elif role == "reference":
