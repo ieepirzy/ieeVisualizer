@@ -36,7 +36,17 @@ diagrams, Manim and reporting integrations come after it and reuse its spec.
 Merge order is the numbering. Each branch is a reviewable unit; branches
 marked *stacked* are cut from the branch they depend on.
 
+Status as of 2026-10-14: all five branches are implemented and pushed;
+none is merged to `main` yet. Branch 5 contains 1-4 (merged into it as its
+base), so its test suite covers the whole slice.
+
 ### 1. `claude/phase0-baseline` — working legacy API, tests, CI
+
+**Status: done.** `visualize()` (line / surface) and `visualize_vf()` (2D
+quiver + optional streamlines, 3D quiver coloured by magnitude) from
+callables or SymPy, shared domain/evaluation helpers (non-finite points
+masked with a warning, all-non-finite is an error), pyproject with `dev`
+extras, CI on 3.9 and 3.12 with a wheel-install smoke test, two examples.
 
 Closes #2 and #3.
 
@@ -52,6 +62,12 @@ Closes #2 and #3.
 - `examples/` with a function plot and a vector field script.
 
 ### 2. `claude/figurespec-core` — typed declarative spec (parallel with 1)
+
+**Status: done.** `ieeVisualizer.spec`: snapshots/refs with units and
+provenance and a content hash, all eight marks, axes/legend/annotations,
+`validate()` with JSON-pointer issues, canonical JSON (`spec_hash`),
+`apply_patch`, `json_schema()`; numbers and datetimes canonicalised so equal
+specs hash equally. Reference: docs/SPEC.md.
 
 Pure data model, **no matplotlib import**.
 
@@ -70,6 +86,13 @@ Pure data model, **no matplotlib import**.
 
 ### 3. `claude/matplotlib-adapter` — render + export with provenance (stacked on 2)
 
+**Status: done (in review).** `ieeVisualizer.render`: adapter protocol,
+capability-based selection, `MatplotlibAdapter` for every mark in
+cartesian2d/3d/polar to PNG/SVG/PDF with fidelity warnings and
+byte-identical SVG/PDF; `ieeVisualizer.artifacts.export()` with a
+`VisualizationArtifact` manifest and pluggable writers. Reference:
+docs/RENDERING.md.
+
 - `RendererAdapter` protocol and `Capabilities` (3d, vector_export,
   animation, interactive, max_points, …); adapter registry and
   capability-based selection that fails loudly when nothing matches.
@@ -84,6 +107,11 @@ Pure data model, **no matplotlib import**.
 
 ### 4. `claude/template-registry` — two concrete templates (stacked on 2)
 
+**Status: done (in review).** `ieeVisualizer.templates`: versioned
+`ComponentTemplate`, registry with `list_templates`/`get`/`describe`/
+`catalog`, structured input checks, and the `timeseries` and
+`vector_field_2d` templates. Reference: docs/TEMPLATES.md.
+
 - `ComponentTemplate`: name, version, input schema (required columns, unit
   expectations, parameters with defaults), `build(data, **params) ->
   FigureSpec`, example payload.
@@ -94,6 +122,20 @@ Pure data model, **no matplotlib import**.
   bands) and `vector_field_2d` (function or sampled field → quiver figure).
 
 ### 5. `claude/legacy-bridge-and-gallery` — tie it together (after 1, 3, 4)
+
+**Status: done.** `Visualizer.to_spec(fn, dim=, kind="function" |
+"vector_field")` builds the spec from the same samples the legacy calls
+draw (snapshot provenance: input expression / callable name, domain, `n`,
+sampling mode, seed) and `Visualizer.export()` writes PNG/SVG + manifest.
+`visualize()`/`visualize_vf()` still draw directly (they must honour `ax=`,
+`style=`, streamlines and 3D magnitude colours, which the spec cannot
+express); tests assert both routes draw the same data instead. The adapter
+gained a surface for sampled 3D functions, a default 2D quiver scale that
+keeps arrows inside the plot (on complete grids over linear axes), and a
+visible "no data" note on log axes.
+`examples/gallery.py` exports every mark and template; README quick start
+covers the three entry points; `tests/test_end_to_end.py` covers the slice
+sentence clause by clause.
 
 - `Visualizer.visualize()` / `visualize_vf()` build a `FigureSpec` internally
   and render via the adapter, keeping their public signatures.

@@ -22,6 +22,13 @@ def as_rng(rng: RngLike) -> np.random.Generator:
     return np.random.default_rng(rng)
 
 
+def int_seed(rng: RngLike) -> Optional[int]:
+    """The seed when ``rng`` is an int (not a bool), else None."""
+    if isinstance(rng, (int, np.integer)) and not isinstance(rng, bool):
+        return int(rng)
+    return None
+
+
 def normalize_bounds(domain, n_axes: int) -> tuple[Bounds, ...]:
     """Expand ``domain`` into one ``(lo, hi)`` pair per axis and validate it.
 
