@@ -87,6 +87,10 @@ checked: exponents at most 1000 in magnitude, no number beyond about
 10^+-330 (outside float64's range anyway), `gamma` arguments within
 +-1000, at most 1000 characters, 500 terms and 100 levels of nesting.
 Anything else is an `expression_too_large` error, raised immediately.
+A sub-expression that evaluates to an undefined or infinite constant
+(`1/0`, `tan(pi/2)`, `log(0)`, `gamma(0)`, a parameter making a
+denominator zero) is an `invalid_expression` error: it is not a function
+that can be sampled, so it is refused rather than drawn as a gap.
 
 **Determinism.** Rendering runs under matplotlib's default style plus a fixed
 `rc_context` (`svg.hashsalt`, `svg.fonttype="path"`), with dates stripped
