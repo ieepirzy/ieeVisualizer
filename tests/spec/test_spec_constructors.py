@@ -162,17 +162,36 @@ def test_bad_calls_raise_the_stdlib_type_error(call, message):
     with pytest.raises(TypeError) as e:
         call()
     assert type(e.value) is TypeError
-    # CPython names the class from 3.10 on and adds "Did you mean ...?" from 3.12.
+    # CPython names the class in these messages from 3.10 on.
     text = str(e.value)
     assert text.startswith(message) or text.startswith(message.split(".", 1)[1]), text
 
 
-@pytest.mark.skipif(sys.version_info < (3, 12), reason="CPython suggests names from 3.12")
-def test_an_unknown_keyword_gets_cpythons_suggestion():
-    with pytest.raises(TypeError) as e:
-        FigureSpec(tittle="x")
-    assert str(e.value) == ("FigureSpec.__init__() got an unexpected keyword argument "
-                            "'tittle'. Did you mean 'title'?")
+def _stdlib_twin(cls):
+    """A plain stdlib dataclass with ``cls``'s name and ``__init__`` fields:
+    what the class was before the migration, as far as binding a call goes."""
+    fields = [(f.name, object, dataclasses.field(default=None))
+              for f in dataclasses.fields(cls) if f.init]
+    return dataclasses.make_dataclass(cls.__name__, fields)
+
+
+@pytest.mark.parametrize("cls, kwargs", [
+    (FigureSpec, {"tittle": "x"}),
+    (LineMark, {"dta": "d"}),
+    (Encoding, {"feld": "x"}),
+    (RenderRequest, {"widht": 3}),
+    (Parameter, {"name": "p", "type": "string", "description": "d", "alowed": ["a"]}),
+])
+def test_an_unknown_keyword_reads_as_on_this_python_before(cls, kwargs):
+    """Word for word what the stdlib dataclass says on the running Python:
+    CPython 3.13 appends "Did you mean 'title'?", earlier versions do not."""
+    with pytest.raises(TypeError) as got:
+        cls(**kwargs)
+    with pytest.raises(TypeError) as want:
+        _stdlib_twin(cls)(**kwargs)
+    assert str(got.value) == str(want.value)
+    if sys.version_info >= (3, 13):
+        assert "Did you mean" in str(got.value)
 
 
 def test_an_argument_error_wins_over_a_value_error():

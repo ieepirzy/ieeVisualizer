@@ -205,7 +205,7 @@ order and defaults), which does three things the stdlib dataclass did:
   field declared `init=False`, such as a mark's or annotation's `type`, and
   shift every argument by one;
 * a missing, unexpected, duplicate or surplus argument raises CPython's own
-  `TypeError`, with the same text as before (from 3.12 including
+  `TypeError`, with the same text as before on the same Python (from 3.13 including
   `Did you mean 'title'?`), whatever other problems the call has;
 * `inspect.signature(cls)` is the `__init__` signature
   (`(data=None, encoding=<factory>, ...)`), not pydantic's.
