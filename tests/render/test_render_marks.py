@@ -22,7 +22,7 @@ from render_examples import (
 )
 
 from ieeVisualizer.render import RenderError, build_figure
-from ieeVisualizer.spec import Axis, BarMark, LineMark, ScatterMark
+from ieeVisualizer.spec import Axis, BarMark, LineMark, ScatterMark, SpecValidationError
 
 
 def _dates(strings):
@@ -343,13 +343,24 @@ def test_bad_datetime_and_duplicate_heatmap_cell_are_errors():
         one_layer(LineMark(encoding={"x": "t", "y": "v"}),
                   {"t": ["2026-10-14", "next tuesday"], "v": [1.0, 2.0]},
                   dtypes={"t": "datetime"})
-    # ... and the renderer still refuses one set after construction.
+    # ... and one set after construction is refused before anything is drawn:
+    # validate() re-normalises columns, so the error is the validator's
+    # structured issue (raised by prepare()), not a renderer failure.
     spec = one_layer(LineMark(encoding={"x": "t", "y": "v"}),
                      {"t": ["2026-10-14", "2026-10-15"], "v": [1.0, 2.0]},
                      dtypes={"t": "datetime"})
     spec.datasets["d"].columns["t"].values[1] = "next tuesday"
-    with pytest.raises(RenderError) as e:
+    with pytest.raises(SpecValidationError) as e:
         build_figure(spec)
+    assert [(i.code, i.path, i.severity) for i in e.value.issues] == [
+        ("invalid_values", "/datasets/d/columns/t/values", "error")]
+    assert "index 1" in e.value.issues[0].message
+    assert "not an ISO-8601" in e.value.issues[0].message
+    # The renderer keeps its own check as defence in depth (e.g. a column
+    # reached without validation); it reports the exact element.
+    from ieeVisualizer.render.mpl.data import _datetimes_to_num
+    with pytest.raises(RenderError) as e:
+        _datetimes_to_num(["2026-10-14", "next tuesday"], "/datasets/d/columns/t")
     assert e.value.issues[0].code == "invalid_datetime"
     assert e.value.issues[0].path == "/datasets/d/columns/t/values/1"
     spec = one_layer(HeatmapMark(encoding={"x": "a", "y": "b", "color": "c"}),
