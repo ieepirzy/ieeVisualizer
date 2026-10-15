@@ -551,3 +551,29 @@ def test_ten_series_do_not_wrap_and_explicit_linestyle_wins():
     built = build_figure(_many_series(LineMark(encoding={"x": "t", "y": "v", "series": "g"},
                                                style={"linestyle": "dotted"}), 12))
     assert {ln.get_linestyle() for ln in built.layer_artists[0]} == {":"}
+
+
+@pytest.mark.parametrize("big", [10 ** 400, -(10 ** 400)], ids=["positive", "negative"])
+def test_integer_beyond_float64_is_a_validation_error_not_overflow(big):
+    from ieeVisualizer.spec import validate
+
+    spec = one_layer(ScatterMark(encoding={"x": "a", "y": "b", "size": "s"}),
+                     {"a": [1, 2], "b": [1, 2], "s": [1, big]})
+    issues = [(i.path, i.code, i.severity) for i in validate(spec)]
+    assert ("/datasets/d/columns/s/values/1", "number_out_of_range", "error") in issues
+    with pytest.raises(SpecValidationError) as e:
+        build_figure(spec)
+    assert e.value.issues[0].code == "number_out_of_range"
+    # 10**300 fits a float64 and is drawn
+    ok = one_layer(LineMark(encoding={"x": "a", "y": "b"}), {"a": [1, 2], "b": [1, 10 ** 300]})
+    build_figure(ok)
+
+
+def test_renderer_refuses_out_of_range_numbers_structurally():
+    from ieeVisualizer.render.mpl.data import numbers
+    from ieeVisualizer.spec import Column
+
+    with pytest.raises(RenderError) as e:
+        numbers(Column([1, 10 ** 400], dtype="int"), "/datasets/d/columns/v")
+    assert [(i.path, i.code) for i in e.value.issues] == [
+        ("/datasets/d/columns/v/values/1", "value_out_of_range")]

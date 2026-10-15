@@ -67,6 +67,13 @@ with no value says "no data"; null heatmap cells stay blank. Each case adds a
 `null_values_omitted` warning. A layer or series with no complete row is a
 `RenderError` (`empty_series`).
 
+**Huge numbers.** The spec stores exact integers of any size, but a column
+value beyond the float64 range (e.g. `10**400`) cannot be drawn: `validate()`
+reports it as a `number_out_of_range` error, so a render refuses it with
+`SpecValidationError` (and the renderer itself raises a structured
+`value_out_of_range` `RenderError`, never a raw `OverflowError`, should such a
+column reach it unvalidated).
+
 **Bars.** Bar groups of one layer (`series`/categorical `color`) sit side by
 side in each slot. Bar layers of the same orientation that share a category
 (or position) are dodged the same way, in layer order, instead of being

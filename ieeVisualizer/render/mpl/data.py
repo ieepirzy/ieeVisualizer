@@ -24,6 +24,7 @@ not be read anyway.
 from __future__ import annotations
 
 import datetime as _dt
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -116,8 +117,38 @@ def numbers(col: Column, path: str) -> np.ma.MaskedArray:
     if col.dtype not in (None, "float", "int", "bool"):
         raise RenderError([issue(path, "unsupported_dtype",
                                  f"this channel needs numbers but the column is {col.dtype}.")])
-    vals = np.array([np.nan if v is None else float(v) for v in col.values], dtype=float)
+    vals = np.full(len(col.values), np.nan)
+    for i, v in enumerate(col.values):
+        if v is not None:
+            vals[i] = to_float(v, f"{path}/values/{i}")
     return np.ma.masked_array(vals, mask=np.array([v is None for v in col.values], dtype=bool))
+
+
+def to_float(value: Any, path: str) -> float:
+    """``float(value)``, refusing a number float64 cannot hold.
+
+    The spec allows exact integers of any size (JSON has no limit), so
+    ``10**400`` passes validation; it cannot be drawn, which is a structured
+    ``value_out_of_range`` render error rather than a raw ``OverflowError``.
+    """
+    try:
+        out = float(value)
+    except OverflowError:
+        out = math.inf
+    if math.isinf(out):
+        raise RenderError([issue(path, "value_out_of_range",
+                                 f"{_short_number(value)} is outside the range a float64 can "
+                                 "draw (about +-1.8e308); rescale it (e.g. change the unit) "
+                                 "upstream.")])
+    return out
+
+
+def _short_number(value: Any) -> str:
+    try:
+        s = str(value)
+    except ValueError:  # an int beyond Python's str() digit limit
+        return "a number"
+    return s if len(s) <= 24 else f"{s[:12]}...({len(s)} digits)"
 
 
 def positions(col: Column, info: AxisInfo, path: str) -> np.ma.MaskedArray:
