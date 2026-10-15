@@ -514,3 +514,40 @@ def test_null_value_bar_is_labelled_once():
                       "v": [5.0, 6.0, None, 7.0]})
     built = build_figure(spec)
     assert [a.xy[0] for a in _no_data(built, 0)] == [pytest.approx(0.8)]
+
+
+def _many_series(mark, n):
+    return one_layer(mark, {"t": [float(k % 3) for k in range(3 * n)],
+                            "v": [float(k) for k in range(3 * n)],
+                            "g": [f"s{k // 3:02d}" for k in range(3 * n)]})
+
+
+def test_wrapped_colour_cycle_varies_linestyle_and_warns_once():
+    from matplotlib.colors import to_hex
+
+    built = build_figure(_many_series(LineMark(encoding={"x": "t", "y": "v", "series": "g"}),
+                                      12))
+    lines = built.layer_artists[0]
+    looks = [(to_hex(ln.get_color()), ln.get_linestyle()) for ln in lines]
+    assert len(set(looks)) == 12  # every series distinguishable
+    assert [ls for _, ls in looks] == ["-"] * 10 + ["--", "--"]
+    assert looks[10][0] == looks[0][0]
+    assert [w.path for w in built.warnings if w.code == "colour_cycle_wrapped"] == ["/layers/0"]
+
+
+def test_wrapped_colour_cycle_varies_scatter_markers():
+    built = build_figure(_many_series(
+        ScatterMark(encoding={"x": "t", "y": "v", "series": "g"}), 11))
+    markers = [c.get_paths()[0].vertices.tobytes() for c in built.layer_artists[0]]
+    assert markers[10] != markers[0]
+    assert any(w.code == "colour_cycle_wrapped" for w in built.warnings)
+
+
+def test_ten_series_do_not_wrap_and_explicit_linestyle_wins():
+    built = build_figure(_many_series(LineMark(encoding={"x": "t", "y": "v", "series": "g"}),
+                                      10))
+    assert {ln.get_linestyle() for ln in built.layer_artists[0]} == {"-"}
+    assert not [w for w in built.warnings if w.code == "colour_cycle_wrapped"]
+    built = build_figure(_many_series(LineMark(encoding={"x": "t", "y": "v", "series": "g"},
+                                               style={"linestyle": "dotted"}), 12))
+    assert {ln.get_linestyle() for ln in built.layer_artists[0]} == {":"}

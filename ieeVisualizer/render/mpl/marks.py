@@ -43,6 +43,7 @@ class _Series:
     field: str
     group: str | None
     paired: bool = False  # already shares its colour across observed/forecast
+    cycle_round: int = 0  # how often the colour cycle had wrapped when assigned
 
 
 @dataclass
@@ -56,20 +57,38 @@ class DrawContext:
     _color_i: int = 0
     _series: dict[tuple, _Series] = field(default_factory=dict)
     _color_of: dict[int, int | None] = field(default_factory=dict)
+    #: Colour-cycle round of the series last returned by :meth:`layer_color`
+    #: (0 = first pass through the cycle).
+    last_round: int = 0
+    _wrap_warned: bool = False
+    _next_round: int = 0
 
     @property
     def three_d(self) -> bool:
         return self.spec.coordinate_system == "cartesian3d"
 
-    def next_color(self) -> str:
+    def next_color(self, path: str = "") -> str:
+        """Next colour of the categorical cycle. When the cycle wraps,
+        colours repeat; that is reported once (``colour_cycle_wrapped``) and
+        lines and scatter points of later rounds are told apart by
+        linestyle / marker (see :func:`_wrap_variant`)."""
         from matplotlib import rcParams
 
         cycle = rcParams["axes.prop_cycle"].by_key().get("color", ["C0"])
         c = cycle[self._color_i % len(cycle)]
+        self._next_round = self._color_i // len(cycle)
         self._color_i += 1
+        if self._next_round and not self._wrap_warned:
+            self._wrap_warned = True
+            self.warn("colour_cycle_wrapped",
+                      f"the figure has more than {len(cycle)} series, so series colours repeat; "
+                      "lines of later rounds are dashed/dotted and scatter markers change "
+                      "shape, other marks repeat colours. Give explicit colours or split the "
+                      "figure.", path)
         return c
 
-    def series_color(self, m: Mark, fld: str, group: str | None, explicit: str | None) -> str:
+    def series_color(self, m: Mark, fld: str, group: str | None, explicit: str | None,
+                     path: str = "") -> str:
         """Colour of one series: a layer (or one group of it).
 
         A series is identified by the layer's ``name`` if set, else by its
@@ -87,6 +106,7 @@ class DrawContext:
         ident = m.name if m.name else f"{m.data}/{fld}"
         key = (ident, group, forecast)
         if key in self._series:
+            self.last_round = 0 if explicit is not None else self._series[key].cycle_round
             if explicit is not None:
                 return explicit
             return self._series[key].color
@@ -97,9 +117,17 @@ class DrawContext:
             partner = cands[0] if len(cands) == 1 else None
         if partner is not None:
             partner.paired = True
-        color = explicit if explicit is not None else (
-            partner.color if partner is not None else self.next_color())
-        self._series[key] = _Series(color, fld, group, paired=partner is not None)
+        rnd = 0
+        if explicit is not None:
+            color = explicit
+        elif partner is not None:
+            color, rnd = partner.color, partner.cycle_round
+        else:
+            color = self.next_color(path)
+            rnd = self._next_round
+        self._series[key] = _Series(color, fld, group, paired=partner is not None,
+                                    cycle_round=rnd)
+        self.last_round = rnd
         return color
 
     def layer_color(self, i: int, m: Mark, group: str | None, style: dict[str, Any],
@@ -109,12 +137,12 @@ class DrawContext:
         with the same group (so a bound line matches the value it bounds)."""
         target = self._color_of_target(i, m, style, explicit)
         if target is None:
-            return self.series_color(m, _series_field(m), group, explicit)
+            return self.series_color(m, _series_field(m), group, explicit, f"/layers/{i}")
         t = self.spec.layers[target]
         tcolor = t.style.get("color")
         tcolor = tcolor if isinstance(tcolor, str) and _color_like(tcolor) else None
         tgroup = group if _group_channel(t) is not None else None
-        return self.series_color(t, _series_field(t), tgroup, tcolor)
+        return self.series_color(t, _series_field(t), tgroup, tcolor, f"/layers/{i}")
 
     def _color_of_target(self, i: int, m: Mark, style: dict[str, Any],
                          explicit: str | None) -> int | None:
@@ -149,6 +177,22 @@ class DrawContext:
 
 
 _SERIES_COLOURED = ("line", "scatter", "area", "bar", "histogram", "function")
+
+
+_WRAP_LINESTYLES = ("--", ":", "-.")
+_WRAP_MARKERS = ("s", "^", "D", "v", "P")
+
+
+def _wrap_variant(ctx: DrawContext, m: Mark, style: dict[str, Any], kw: dict[str, Any],
+                  key: str) -> None:
+    """A series whose colour came from a wrapped colour cycle (round > 0)
+    gets a linestyle (``key="linestyle"``) or marker (``key="marker"``) of its
+    round, unless the style chose one; forecasts keep their own pattern."""
+    rnd = ctx.last_round
+    if rnd <= 0 or key in style or m.role != "observed":
+        return
+    pool = _WRAP_LINESTYLES if key == "linestyle" else _WRAP_MARKERS
+    kw[key] = pool[(rnd - 1) % len(pool)]
 
 
 def _color_like(c: str) -> bool:
@@ -311,6 +355,7 @@ def draw_line(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         kw = line_kwargs(style, m.role, f"/layers/{i}", ctx.warnings)
         if m.role != "reference":
             kw["color"] = ctx.layer_color(i, m, group, style, kw.get("color"))
+            _wrap_variant(ctx, m, style, kw, "linestyle")
         kw["label"] = _label(m, group, _title(m, "y"))
         lone = _isolated(_mask(*sub))
         if lone and "marker" not in kw:
@@ -370,6 +415,7 @@ def draw_scatter(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                 kw.setdefault("alpha", REFERENCE_ALPHA)
             else:
                 color = ctx.layer_color(i, m, group, style, color)
+                _wrap_variant(ctx, m, style, kw, "marker")
             if m.role == "forecast":  # hollow markers
                 kw["facecolors"] = "none"
                 kw["edgecolors"] = color
@@ -631,7 +677,7 @@ def draw_quiver(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         if cvals is not None:
             ctx.warn("color_channel_ignored", "3D quiver arrows are drawn in one colour; the "
                      "color channel was ignored.", f"/layers/{i}/encoding/color")
-        kw["color"] = style.get("color", ctx.next_color())
+        kw["color"] = style.get("color", ctx.next_color(f"/layers/{i}"))
         length = m.scale if m.scale is not None else 1.0
         q = ctx.ax.quiver(a["x"], a["y"], a["z"], a["u"], a["v"], a["w"],
                           length=length, normalize=False, **kw)
@@ -648,7 +694,7 @@ def draw_quiver(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         args.append(np.asarray(cvals[valid], dtype=float))
         kw["cmap"] = style.get("colormap", "viridis")
     else:
-        kw["color"] = style.get("color", ctx.next_color())
+        kw["color"] = style.get("color", ctx.next_color(f"/layers/{i}"))
     q = ctx.ax.quiver(*args, **kw)
     if cvals is not None:
         _colorbar(ctx, q, m)
@@ -677,6 +723,7 @@ def draw_function(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     kw = line_kwargs(style, m.role, path, ctx.warnings)
     if m.role != "reference":
         kw["color"] = ctx.layer_color(i, m, None, style, kw.get("color"))
+        _wrap_variant(ctx, m, style, kw, "linestyle")
     kw["label"] = legend_label(m.name, m.expression, m.role)
     return ctx.ax.plot(inputs[0], out, **kw)
 

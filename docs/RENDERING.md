@@ -87,6 +87,12 @@ like a dotted observed bound. `reference` is lighter and thinner.
 `opacity`. Unknown keys (`unknown_style_key`), keys the mark does not use
 (`style_key_ignored`) and invalid values (`invalid_style_value`) are warnings.
 
+**Many series.** Series take colours from matplotlib's 10-colour cycle.
+When it wraps, a `colour_cycle_wrapped` warning is given once, and observed
+lines / scatter points of later rounds get a dashed, dotted, dash-dot
+linestyle or a different marker (unless the style chose one) so no two
+series look the same; bars, areas and histograms repeat colours.
+
 **Paired colours.** `color_of: "<layer name>"` (line, scatter, area, bar,
 histogram, function) draws each series group of the layer in the colour of
 the named layer's series with the same group, e.g. uncertainty-bound lines
