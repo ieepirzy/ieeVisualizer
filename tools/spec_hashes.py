@@ -234,9 +234,42 @@ def _canonical(obj: Any) -> str:
                       allow_nan=False)
 
 
-def _records(spec: Any) -> dict[str, Any]:
-    from ieeVisualizer.spec import DataSnapshot, from_json, spec_hash, to_json, validate
+def _network_records(spec: Any) -> dict[str, Any]:
+    """A :class:`~ieeVisualizer.network.NetworkSpec` (its own wire format)."""
+    from ieeVisualizer.network import network_from_json, network_hash, network_to_json
+    from ieeVisualizer.network.validate import validate_network
 
+    text = network_to_json(spec)
+    indent2 = network_to_json(spec, indent=2)
+    parsed = network_from_json(text)
+    reserialized = network_to_json(parsed)
+    issues = [[i.path, i.code, i.severity] for i in validate_network(spec)]
+    exact = {"spec_hash": network_hash(spec), "to_json": _sha(text), "indent2": _sha(indent2),
+             "round_trip": network_hash(parsed), "content_hashes": {}, "issues": issues}
+    portable = {
+        "to_json": portable_sha(text),
+        "indent2": portable_sha(indent2),
+        "round_trip": portable_sha(reserialized),
+        "content_hashes": {},
+        "issues": issues,
+        "consistent": {"spec_hash == sha(to_json)": exact["spec_hash"] == exact["to_json"],
+                       "round trip keeps the bytes": reserialized == text},
+    }
+    return {"exact": exact, "portable": portable}
+
+
+def _records(spec: Any) -> dict[str, Any]:
+    from ieeVisualizer.spec import (
+        DataSnapshot,
+        FigureSpec,
+        from_json,
+        spec_hash,
+        to_json,
+        validate,
+    )
+
+    if not isinstance(spec, FigureSpec):
+        return _network_records(spec)
     text = to_json(spec)
     indent2 = to_json(spec, indent=2)
     parsed = from_json(text)

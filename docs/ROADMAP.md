@@ -158,6 +158,98 @@ sentence clause by clause.
 - **Phase 4 — specialist adapters:** Manim, meshes/fields, economic scenario
   views, report composition templates.
 
+## Phase 2 onward: decided direction (2026-10-15)
+
+Ilari's direction after the first slice. Each item becomes one or more
+reviewable branches; order follows dependencies, not importance.
+
+### Foundation
+
+- **Pydantic models everywhere applicable.** Spec, view, animation, theme and
+  template schemas move from stdlib dataclasses to pydantic (v2, `pydantic.dataclasses`
+  where the dataclass shape is kept, `BaseModel` where it isn't). Hard
+  requirement: the JSON wire format, `schema_version` meaning and every
+  `spec_hash` stay byte-identical; the existing test suite is the oracle.
+  Validation issues keep their JSON-pointer paths and codes.
+- **Uncertainty is first-class.** A `band` mark (lower/upper), `errorbar`
+  mark, interval encodings on line/scatter/bar (`y_lower`, `y_upper`,
+  `interval_level`, `interval_kind`: confidence / credible / prediction /
+  min-max / quantile), an `ensemble` mark for many trajectories, and fan
+  charts from quantiles. The interval's level and kind are required metadata
+  and must appear in the legend or caption; an interval without a stated level
+  is a validation error. Never computed or widened by the renderer.
+
+### Statistical and mathematical content
+
+- **Arbitrary functions** (exists: expression strings through the bounded
+  SymPy parser; legacy callables) gain piecewise and parametric curves and
+  implicit plots.
+- **Distributions:** `distribution` template for named families (normal,
+  log-normal, beta, gamma, Poisson, binomial, Student t, …) via SymPy's
+  closed forms — PDF/PMF, CDF, shaded intervals, quantile markers, comparison
+  of several distributions. Densities from samples (histogram + KDE with the
+  bandwidth recorded), quantile dotplots, ECDF.
+- **Bayesian:** prior / likelihood / posterior template, credible intervals
+  (equal-tailed and HDI, labelled as such), posterior predictive bands,
+  prior→posterior update animation.
+- **Stochastic processes:** random walks, Brownian motion / GBM, Monte Carlo
+  ensembles with seed recorded, fan charts, hitting-time histograms.
+  Simulation helpers are small and seeded (plot-focused, like the RK4 helper
+  the vision allows); heavy simulation stays in ieeLabTools.
+- **Trajectory animations for non-technical audiences:** a model's projected
+  path with its uncertainty growing over time; scale changes shown explicitly
+  (linear vs log, doubling-time annotations).
+
+### Structure and composition
+
+- **Graphs and networks:** node-link diagrams with deterministic force and
+  layered layouts, adjacency matrices, weighted/directed edges, communities;
+  size limits like the view layer. Corporate uses (org charts, process and
+  dependency maps) share the machinery with #12's flow diagrams.
+- **Agent-contributed templates:** a declarative template format (pydantic
+  schema, no executable code) that agents can propose; a contribution harness
+  checks it builds, validates and renders its example under every theme,
+  passes the accessibility checks, and records author and provenance; humans
+  approve before registration. Code templates stay human-reviewed PRs.
+
+### Frontends
+
+- **Browser renderer evaluation** (Plotly vs ECharts vs Vega-Lite): export
+  fidelity vs the Matplotlib output, bundle size, licence, SSR/headless,
+  accessibility. Written decision first.
+- **Vue 3 components** that render FigureSpec / ViewSpec JSON with the chosen
+  engine and the same themes (tokens exported from `ieeVisualizer.themes`),
+  plus interaction state and static capture.
+
+### Domains
+
+- **AI research figures:** training curves with seed variance, scaling-law
+  log–log fits with fit uncertainty, calibration/reliability diagrams,
+  confusion matrices, attention heatmaps, embedding projections (labelled as
+  projections, never as distances).
+- **Corporate reporting with scientific rigour:** themes and business
+  templates exist (#13); report composition templates follow views (#12).
+
+### Skills and editorial voice
+
+- **Skills library** (`skills/` in this repo, SKILL.md format): rigorous
+  presentation ("when do the numbers lie": baselines, denominators, base
+  rates, truncated axes, dual axes, cherry-picked windows, survivorship,
+  Simpson's paradox, uncertainty display), chart choice, accessibility,
+  report writing. Adapted only from sources whose licence allows it, with
+  attribution; otherwise written from cited principles.
+- **Editorial voice** modelled on The Wall Street Journal's news style and
+  its graphics guide (principles, not copied text).
+
+### Backends
+
+- **ffmpeg** stays an optional system dependency, detected at runtime
+  (~35 MB of libraries). **Manim** stays an optional extra, never a default:
+  it adds ~340 MB to an environment (its own bundled ffmpeg, SciPy,
+  Cairo/Pango), needs system Pango headers to build, LaTeX for typeset maths,
+  and renders seconds per frame where Matplotlib takes tens of milliseconds.
+  If heavy renders become common, run them in a separate render container.
+
 ## Out of scope for every branch above
 
 Data authority, querying, statistics/numerical solving (ieeLabTools),

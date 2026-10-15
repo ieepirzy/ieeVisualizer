@@ -152,6 +152,9 @@ class RenderResult(SpecModel):
     adapter_version: str
     warnings: list[RenderWarning] = field(default_factory=list)
     request: Optional[RenderRequest] = None
+    #: ``{"name", "version", "sha256"}`` of the theme the adapter drew with
+    #: (``None`` for an adapter that does not report one).
+    theme: Optional[dict[str, str]] = None
 
     @property
     def sha256(self) -> str:
