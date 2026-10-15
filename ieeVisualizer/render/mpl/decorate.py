@@ -117,7 +117,11 @@ def apply_legend(ctx: DrawContext) -> None:
         kw.update(loc="center left", bbox_to_anchor=(1.02, 0.5))
     else:
         kw["loc"] = LEGEND_LOC[spec.legend.position]
-    ctx.ax.legend(handles, labels, **kw)
+    legend = ctx.ax.legend(handles, labels, **kw)
+    if spec.legend.position == "auto":
+        from .legend_layout import place_auto_legend
+
+        place_auto_legend(ctx, legend, handles, labels, {"title": spec.legend.title})
 
 
 def _dedupe(handles: list[Any], labels: list[str]) -> tuple[list[Any], list[str]]:

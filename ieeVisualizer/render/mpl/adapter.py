@@ -221,8 +221,8 @@ class MatplotlibAdapter:
             ctx.layer_artists[i] = DRAW[mark.type](ctx, i, mark)
         apply_axes(ctx)
         ann = apply_annotations(ctx)
-        apply_legend(ctx)
         caption = apply_caption(fig, spec.caption, figsize[1], figsize[0])
+        apply_legend(ctx)  # last: an "auto" legend is placed against the final layout
         return BuiltFigure(figure=fig, axes=ax, warnings=warnings,
                            layer_artists=ctx.layer_artists, annotation_artists=ann,
                            caption=caption)

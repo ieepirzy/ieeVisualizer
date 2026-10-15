@@ -110,6 +110,19 @@ explicit `color` wins (`style_key_ignored` on `color_of`). Legend entries
 with the same label that look identical (e.g. a lower and an upper bound
 line both named "range") are shown once.
 
+**Legend placement.** An explicit `legend.position` is used as given. For
+`"auto"`, matplotlib's `"best"` spot inside the axes is kept only when the
+legend has at most five entries and, at that spot, overlaps no plotted data
+(a line's drawn segments or markers, a bar or span, a filled area or an
+unfilled area's outline, a scatter or quiver point, a heatmap mesh, an
+annotation's text). Otherwise the legend goes outside the axes: to the
+right, or below in as many columns as fit for a figure at least 1.6 times as
+wide as tall, or when a right-hand legend would take more than 40% of the
+width. Constrained layout makes room for it, so neither the legend nor tick
+or axis labels are clipped. The choice is computed from the figure's own
+geometry, so it is deterministic; a figure whose legend stays inside renders
+byte-identically to before this rule.
+
 **Functions.** Expressions are checked before SymPy sees them: only numbers,
 `+ - * / ^ ( )`, the mark's variables and parameters, and an allow-list of
 math functions (`sin`, `exp`, `log`, `sqrt`, ...) and constants (`pi`, `E`).
