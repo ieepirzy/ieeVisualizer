@@ -34,7 +34,7 @@ def test_manifest_hashes_match_written_files(tmp_path):
     art = export(spec, ["png", "svg", "pdf"], LocalDirectoryWriter(tmp_path), clock=_clock())
     root = tmp_path / art.artifact_id
     assert sorted(os.listdir(root)) == ["figure.pdf", "figure.png", "figure.svg", MANIFEST_NAME,
-                                        "spec.json"]
+                                        "spec.json", "theme.json"]
     for v in art.variants:
         assert _sha(root / v.file.name) == (v.sha256, v.size_bytes)
         assert v.adapter_name == "matplotlib"
@@ -105,7 +105,7 @@ def test_resolved_reference_is_frozen_into_the_artifact():
     assert rec.content_hash == latency_snapshot(unit="s").content_hash()
     assert rec.provenance == {"source": "bookings-db", "query": "latency_v3"}
     files = {name for (_, name) in w.files}
-    assert files == {"figure.svg", "spec.json", "spec.resolved.json", MANIFEST_NAME}
+    assert files == {"figure.svg", "spec.json", "spec.resolved.json", "theme.json", MANIFEST_NAME}
     resolved = json.loads(w.files[(art.artifact_id, "spec.resolved.json")])
     assert resolved["datasets"]["lat"]["type"] == "snapshot"
     assert art.resolved_spec_file.sha256 == "sha256:" + hashlib.sha256(
@@ -164,7 +164,7 @@ def test_reexport_under_same_id_leaves_only_manifest_files(tmp_path):
     (root / "figure.svg").write_bytes(b"stale")  # e.g. left by an older export
     b = export(revenue_spec(), ["png", "pdf"], w, clock=_clock(15))
     assert b.artifact_id == a.artifact_id
-    listed = {v.file.name for v in b.variants} | {"spec.json", MANIFEST_NAME}
+    listed = {v.file.name for v in b.variants} | {"spec.json", "theme.json", MANIFEST_NAME}
     assert set(os.listdir(root)) == listed
     assert json.loads((root / MANIFEST_NAME).read_text()) == b.to_dict()
     assert sorted(os.listdir(tmp_path)) == [a.artifact_id]  # no staging dirs left behind
@@ -175,7 +175,7 @@ def test_memory_writer_reexport_replaces_artifact_files():
     a = export(revenue_spec(), ["svg"], w, clock=_clock())
     w.write(a.artifact_id, "stale.txt", b"x", "text/plain")
     export(revenue_spec(), ["svg"], w, clock=_clock())
-    assert {n for (_, n) in w.files} == {"figure.svg", "spec.json", MANIFEST_NAME}
+    assert {n for (_, n) in w.files} == {"figure.svg", "spec.json", "theme.json", MANIFEST_NAME}
 
 
 @pytest.mark.parametrize("bad", ["viz-abc\n", "figure.png\n", "a\nb"])

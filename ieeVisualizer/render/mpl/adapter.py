@@ -89,12 +89,15 @@ def _metadata(fmt: str) -> dict[str, str | None]:
 
 
 @contextlib.contextmanager
-def render_context(theme_rc: dict[str, Any]):
-    """matplotlib defaults + theme + determinism settings, restored on exit."""
+def render_context(theme: Any):
+    """matplotlib defaults + theme + determinism settings, restored on exit.
+    ``theme`` is a :class:`~ieeVisualizer.themes.Theme` or an rcParams dict."""
     import matplotlib
     import matplotlib.style
 
-    rc = dict(theme_rc)
+    from .style import theme_rc
+
+    rc = dict(theme) if isinstance(theme, dict) else theme_rc(theme)
     rc.update({"svg.hashsalt": SVG_HASHSALT, "svg.fonttype": "path"})
     with matplotlib.style.context("default"), matplotlib.rc_context(rc):
         yield
@@ -142,10 +145,10 @@ class MatplotlibAdapter:
         prepared = prepare(spec, resolver)
         self._check_capabilities(prepared.spec, request)
         warnings = list(prepared.warnings)
-        theme_rc = self._theme(prepared.spec, request, warnings)
-        with render_context(theme_rc), _warnings.catch_warnings(record=True) as caught:
+        theme = self._theme(prepared.spec, request, warnings)
+        with render_context(theme), _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
-            built = self._draw(prepared, request, warnings)
+            built = self._draw(prepared, request, warnings, theme)
         _backend_warnings(caught, built.warnings)
         built.warnings = _dedupe(built.warnings)
         return built
@@ -160,11 +163,11 @@ class MatplotlibAdapter:
         prepared = prepare(spec, resolver)
         self._check_capabilities(prepared.spec, request)
         warnings = list(prepared.warnings)
-        theme_rc = self._theme(prepared.spec, request, warnings)
+        theme = self._theme(prepared.spec, request, warnings)
         buf = io.BytesIO()
-        with render_context(theme_rc), _warnings.catch_warnings(record=True) as caught:
+        with render_context(theme), _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
-            built = self._draw(prepared, request, warnings)
+            built = self._draw(prepared, request, warnings, theme)
             built.figure.savefig(buf, format=request.format, dpi=request.dpi,
                                  metadata=_metadata(request.format))
         _backend_warnings(caught, built.warnings)
@@ -176,6 +179,7 @@ class MatplotlibAdapter:
             adapter_version=self.version,
             warnings=_dedupe(built.warnings),
             request=request,
+            theme=theme.record(),
         )
 
     # --------------------------------------------------------------- internals
@@ -202,7 +206,7 @@ class MatplotlibAdapter:
 
     @staticmethod
     def _draw(prepared: PreparedSpec, request: RenderRequest,
-              warnings: list[RenderWarning]) -> BuiltFigure:
+              warnings: list[RenderWarning], theme: Any = None) -> BuiltFigure:
         from matplotlib.figure import Figure
 
         from .data import infer_axes
@@ -215,16 +219,40 @@ class MatplotlibAdapter:
         fig = Figure(figsize=figsize, dpi=request.dpi, layout="constrained")
         projection = {"cartesian3d": "3d", "polar": "polar"}.get(spec.coordinate_system)
         ax = fig.add_subplot(projection=projection)
-        ctx = DrawContext(spec=spec, fig=fig, ax=ax, axes=axes_info, warnings=warnings)
+        ctx = DrawContext(spec=spec, fig=fig, ax=ax, axes=axes_info, warnings=warnings,
+                          theme=theme)
         for i, mark in enumerate(spec.layers):
             ctx.layer_artists[i] = DRAW[mark.type](ctx, i, mark)
         apply_axes(ctx)
         ann = apply_annotations(ctx)
         apply_legend(ctx)
-        caption = apply_caption(fig, spec.caption, figsize[1], figsize[0])
+        _label_locale(spec, theme, warnings)
+        cap: dict[str, Any] = {}
+        if theme is not None and theme.muted:
+            cap["color"] = theme.muted
+        if theme is not None and theme.typography.caption:
+            cap["fontsize"] = theme.typography.caption
+        caption = apply_caption(fig, spec.caption, figsize[1], figsize[0], **cap)
         return BuiltFigure(figure=fig, axes=ax, warnings=warnings,
                            layer_artists=ctx.layer_artists, annotation_artists=ann,
                            caption=caption)
+
+
+def _label_locale(spec: FigureSpec, theme: Any, warnings: list[RenderWarning]) -> None:
+    """A template that wrote numbers into text (e.g. funnel rates) records the
+    locale it used; say so when this render's theme writes numbers
+    differently, instead of silently mixing conventions."""
+    meta = spec.metadata.get("template") if isinstance(spec.metadata, dict) else None
+    used = meta.get("label_locale") if isinstance(meta, dict) else None
+    if used is None or theme is None:
+        return
+    have = theme.locale.tag if theme.locale is not None else "und"
+    if used != have:
+        warnings.append(RenderWarning(
+            "label_locale_mismatch",
+            f"text written by the template uses number locale {used!r} but theme "
+            f"{theme.name!r} formats numbers as {have!r}; rebuild the spec with "
+            f"theme={theme.name!r} so labels and axes agree.", "/metadata/template/label_locale"))
 
 
 def _backend_warnings(caught, out: list[RenderWarning]) -> None:

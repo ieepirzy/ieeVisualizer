@@ -32,7 +32,7 @@ def test_legacy_snippet(tmp_path, monkeypatch, capsys):
     assert formats == "['png', 'svg']"
     assert (tmp_path / "field.png").exists()
     assert sorted(os.listdir(tmp_path / "out" / artifact_id)) == [
-        "figure.png", "figure.svg", "manifest.json", "spec.json"]
+        "figure.png", "figure.svg", "manifest.json", "spec.json", "theme.json"]
 
 
 def test_spec_snippet(tmp_path, monkeypatch, capsys):
@@ -57,9 +57,9 @@ def test_spec_snippet_labels_carry_units(capsys):
 def test_template_snippet(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     names, artifact_id = _run(_snippets()[2], capsys)
-    assert names == "['timeseries', 'vector_field_2d']"
+    assert names == "['bar_comparison', 'funnel', 'timeseries', 'vector_field_2d']"
     assert sorted(os.listdir(tmp_path / "out" / artifact_id)) == [
-        "figure.png", "figure.svg", "manifest.json", "spec.json"]
+        "figure.png", "figure.svg", "manifest.json", "spec.json", "theme.json"]
 
 
 @pytest.mark.parametrize("doc", ["README.md"])

@@ -44,7 +44,7 @@ Codes: `unknown_parameter`, `missing_parameter`, `invalid_parameter`,
 `all_null_column`, `null_in_key_column`, `invalid_column_values`,
 `mixed_units`, `unit_override_conflict`, `invalid_expression`,
 `expression_too_large`, `unknown_symbol`; warnings `missing_unit`, `empty_series`,
-`no_forecast_rows`, `nonfinite_samples`. The full table is in the docstring
+`no_forecast_rows`, `non_monotone_counts`, `nonfinite_samples`. The full table is in the docstring
 of `ieeVisualizer/templates/base.py`. Registry errors (`TemplateRegistryError`)
 use `unknown_template`, `unknown_template_version`, `duplicate_template`,
 `invalid_version`, `invalid_name`.
@@ -95,6 +95,53 @@ format).
   an error because the row cannot be placed. Rows are ordered by time.
 - `target` adds a horizontal reference line; axis labels default to the
   columns' descriptions, else names.
+
+### `bar_comparison` 1.0.0
+
+Grouped bars: `category_column` x `value_columns` (one bar layer per
+measure, side by side via the `bar_width`/`bar_offset` style keys).
+
+- **Previous period:** `previous_column` (one measure only, else
+  `conflicting_parameters`) adds a bar left of (horizontal: below) the
+  current one, role `reference` (lighter, the theme's neutral colour), named
+  `"<measure>, <previous_label>"` in the legend. It is observed data; the
+  role only changes how it is drawn.
+- **Order:** rows as given, or `sort` `ascending`/`descending` by the first
+  measure (a null sorts last). `orientation` `auto` turns horizontal for a
+  label over 12 characters or over 12 categories; horizontal lists the first
+  category on top. `metadata["template"]["category_order"]` is the reading
+  order.
+- **Values:** a null stays null (the renderer writes "no data" in its slot);
+  negative values are drawn below a solid zero line. One row per category
+  (a repeat or a null category is an error). All drawn columns share one
+  unit (`mixed_units` otherwise); nothing is converted.
+- `value_labels` (default true) prints each value in the render theme's
+  locale (`1 234,50 €` for EUR under `muutto365-report-light`).
+
+### `funnel` 1.0.0
+
+Horizontal bars of `count_column` per `stage_column`, first stage on top,
+rows in funnel order.
+
+- **Derived values (transparent, not analytics):** step conversion
+  `count[i] / count[i-1] * 100` and overall `count[last] / count[first] *
+  100`. `metadata["template"]["derived"]` records the formulas and, per
+  step, numerator, denominator and rate; the dataset gains a
+  `step_conversion` column (unit `%`, `denominator` described). A zero
+  denominator gives a null rate, shown as "rate undefined", never 0 or
+  infinity.
+- A null count, a negative count, a repeated or null stage, or fewer than
+  two stages is an error. Rising counts are allowed with a
+  `non_monotone_counts` warning (stages may be counted over different
+  windows); rates above 100 % are shown as computed.
+- Rates are text annotations at the right; the overall rate is appended to
+  the caption. Text the template writes uses the `theme` parameter's locale
+  (`18,5 % of previous` for fi-FI) and records it as
+  `metadata["template"]["label_locale"]`; rendering under a theme with a
+  different locale adds a `label_locale_mismatch` warning.
+
+Both take `theme` (a registered theme name, else `invalid_parameter`),
+which becomes the spec's theme.
 
 ### `vector_field_2d` 1.0.0
 

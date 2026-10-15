@@ -25,6 +25,24 @@ LEGEND_LOC = {
 CAPTION_FONTSIZE = 8.0
 
 
+def locale_formatter(loc: Any) -> Any:
+    """A tick formatter writing numbers in ``loc``'s conventions (decimal
+    comma, grouped thousands, no offset text); positions are matplotlib's."""
+    from matplotlib.ticker import ScalarFormatter
+
+    from ...themes.locale import localize_decimal
+
+    class LocaleFormatter(ScalarFormatter):
+        def __init__(self) -> None:
+            super().__init__(useOffset=False)
+            self.set_powerlimits((-4, 9))  # business figures: no "1e6" multiplier
+
+        def __call__(self, x: float, pos: Any = None) -> str:
+            return localize_decimal(super().__call__(x, pos), loc)
+
+    return LocaleFormatter()
+
+
 def axis_label(spec: FigureSpec, info: AxisInfo) -> str | None:
     """"Label (unit)": the axis' own label/unit first, then the first bound
     column's title/name and unit."""
@@ -55,6 +73,7 @@ def apply_axes(ctx: DrawContext) -> None:
             getattr(ax, f"set_{key}label")(label)
         axis = spec.axes.get(key)
         scale = axis.scale if axis is not None else None
+        loc = ctx.locale
         if info.kind == "numeric" and scale in ("log", "symlog"):
             if ctx.three_d or (polar and key == "x"):
                 raise RenderError([issue(f"/axes/{key}/scale", "unsupported_scale",
@@ -62,13 +81,20 @@ def apply_axes(ctx: DrawContext) -> None:
                                          f"the {spec.coordinate_system} {key} axis faithfully; "
                                          "use a linear scale or a 2D figure.")])
             getattr(ax, f"set_{key}scale")(scale)
+        elif info.kind == "numeric" and loc is not None and not polar:
+            _axis_obj(ax, key).set_major_formatter(locale_formatter(loc))
         elif info.kind == "time":
             from matplotlib import dates as mdates
 
             locator = mdates.AutoDateLocator(tz=info.tz)
             obj = _axis_obj(ax, key)
             obj.set_major_locator(locator)
-            obj.set_major_formatter(mdates.ConciseDateFormatter(locator, tz=info.tz))
+            fmt: dict[str, Any] = {}
+            if loc is not None and loc.date_formats is not None:
+                fmt = {"formats": list(loc.date_formats),
+                       "zero_formats": list(loc.date_zero_formats or loc.date_formats),
+                       "offset_formats": list(loc.date_offset_formats or loc.date_formats)}
+            obj.set_major_formatter(mdates.ConciseDateFormatter(locator, tz=info.tz, **fmt))
         elif info.kind == "category":
             names = list(info.categories)
             getattr(ax, f"set_{key}ticks")(range(len(names)))
@@ -143,7 +169,7 @@ def _text(ctx: DrawContext, p: str, a: TextAnnotation, style: dict) -> Any:
                           f"{ctx.axes[k].kind} {k} axis.")
             return None
         coords.append(pos)
-    kw = {"color": style.get("color", "0.15"), "fontsize": "small"}
+    kw = {"color": style.get("color", ctx.muted("0.15")), "fontsize": "small"}
     if "opacity" in style:
         kw["alpha"] = style["opacity"]
     if ctx.three_d:
@@ -156,7 +182,9 @@ def _reference(ctx: DrawContext, p: str, a: Any, style: dict) -> Any:
         _skip(ctx, p, f"{a.type} is not supported in cartesian3d by the matplotlib adapter.")
         return None
     info = ctx.axes[a.axis]
-    kw: dict[str, Any] = {"color": style.get("color", "0.35")}
+    kw: dict[str, Any] = {"color": style.get("color", ctx.roles.reference_color
+                                              if ctx.theme is not None
+                                              and ctx.theme.roles.reference_color else "0.35")}
     if a.label is not None:
         kw["label"] = a.label
     if isinstance(a, ReferenceLine):
@@ -179,15 +207,16 @@ def _reference(ctx: DrawContext, p: str, a: Any, style: dict) -> Any:
     return (ctx.ax.axhspan if a.axis == "y" else ctx.ax.axvspan)(lo, hi, **kw)
 
 
-def apply_caption(fig: Any, caption: str | None, height_in: float, width_in: float) -> Any:
+def apply_caption(fig: Any, caption: str | None, height_in: float, width_in: float,
+                  color: str = "0.25", fontsize: float = CAPTION_FONTSIZE) -> Any:
     """Caption under the axes. The constrained-layout rect is shrunk so the
     caption never overlaps tick labels."""
     if not caption:
         return None
-    chars = max(20, int(width_in * 72 / (CAPTION_FONTSIZE * 0.55)))
+    chars = max(20, int(width_in * 72 / (fontsize * 0.55)))
     text = "\n".join(textwrap.fill(par, chars) for par in caption.splitlines() or [""])
     lines = text.count("\n") + 1
-    frac = min(0.4, (lines * CAPTION_FONTSIZE * 1.35 + 8) / (height_in * 72))
+    frac = min(0.4, (lines * fontsize * 1.35 + 8) / (height_in * 72))
     fig.get_layout_engine().set(rect=(0, frac, 1, 1 - frac))
-    return fig.text(0.01, frac / 2, text, ha="left", va="center", fontsize=CAPTION_FONTSIZE,
-                    style="italic", color="0.25")
+    return fig.text(0.01, frac / 2, text, ha="left", va="center", fontsize=fontsize,
+                    style="italic", color=color)

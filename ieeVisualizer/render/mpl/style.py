@@ -2,33 +2,43 @@
 
 Style keys understood (``ieeVisualizer.spec.marks`` lists them as the
 renderer-neutral vocabulary): ``color``, ``colormap``, ``linewidth``,
-``linestyle``, ``marker``, ``opacity``. Any other key, a key the mark cannot
+``linestyle``, ``marker``, ``opacity``; bars also ``value_labels``,
+``bar_width`` and ``bar_offset``. A ``colormap`` of ``"sequential"`` or
+``"diverging"`` names the theme's map. Any other key, a key the mark cannot
 use, or a value matplotlib would reject becomes a :class:`RenderWarning`
 and is ignored; nothing is dropped silently.
+
+Themes are :class:`ieeVisualizer.themes.Theme` records: :func:`theme_rc`
+turns what a theme declares into rcParams (``default`` declares nothing, so
+its renders are the plain matplotlib ``default`` style), and
+:func:`roles_for` gives the role styling below with the theme's values.
 
 Roles:
 
 * ``forecast`` is always distinguishable from observed data: dashed lines,
   hollow markers, hatched fills, and the legend label says "forecast". A
   style asking a forecast for a solid line is overridden with a warning.
-* ``reference`` is drawn lighter (reduced opacity, thinner, grey unless a
-  colour is given).
+* ``reference`` is drawn lighter (reduced opacity, thinner, the theme's
+  reference colour - grey by default - unless a colour is given).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
+from ...themes import Theme, resolve_for_render
 from ..base import RenderWarning
 
-KNOWN_STYLE_KEYS = ("color", "colormap", "linewidth", "linestyle", "marker", "opacity")
+KNOWN_STYLE_KEYS = ("color", "colormap", "linewidth", "linestyle", "marker", "opacity",
+                    "value_labels", "bar_width", "bar_offset")
 #: Which style keys each mark type can honour.
 APPLICABLE = {
     "line": {"color", "linewidth", "linestyle", "marker", "opacity"},
     "function": {"color", "linewidth", "linestyle", "marker", "opacity", "colormap"},
     "scatter": {"color", "colormap", "marker", "opacity"},
     "area": {"color", "linewidth", "linestyle", "opacity"},
-    "bar": {"color", "linewidth", "opacity"},
+    "bar": {"color", "linewidth", "opacity", "value_labels", "bar_width", "bar_offset"},
     "histogram": {"color", "linewidth", "opacity"},
     "heatmap": {"colormap", "opacity"},
     "quiver": {"color", "colormap", "opacity"},
@@ -45,37 +55,117 @@ REFERENCE_ALPHA = 0.55
 REFERENCE_COLOR = "0.45"
 FORECAST_SUFFIX = " (forecast)"
 
-#: Built-in themes: rcParams applied on top of matplotlib's defaults.
-THEMES: dict[str, dict[str, Any]] = {
-    "default": {},
-    "minimal": {
-        "axes.spines.top": False,
-        "axes.spines.right": False,
-        "axes.grid": True,
-        "grid.alpha": 0.3,
-        "grid.linewidth": 0.6,
-    },
-    "presentation": {
-        "font.size": 13,
-        "axes.titlesize": 16,
-        "axes.labelsize": 14,
-        "lines.linewidth": 2.2,
-        "axes.spines.top": False,
-        "axes.spines.right": False,
-    },
-}
+#: Colormap names that refer to the active theme's maps.
+THEME_COLORMAPS = ("sequential", "diverging")
+DEFAULT_COLORMAP = "viridis"
 
 
-def resolve_theme(name: str | None, path: str, warnings: list[RenderWarning]) -> dict:
-    if name is None:
-        return THEMES["default"]
-    if name not in THEMES:
+@dataclass(frozen=True)
+class Roles:
+    """Effective role styling (theme values, else the adapter's defaults)."""
+
+    forecast_linestyle: str = FORECAST_LINESTYLE
+    forecast_hatch: str = FORECAST_HATCH
+    forecast_alpha: float = 0.6
+    reference_color: str = REFERENCE_COLOR
+    reference_alpha: float = REFERENCE_ALPHA
+    reference_fill_alpha: float = REFERENCE_ALPHA * 0.6
+    reference_linewidth: float = 1.0
+
+
+DEFAULT_ROLES = Roles()
+
+
+def resolve_theme(name: str | None, path: str, warnings: list[RenderWarning]) -> Theme:
+    """The registered theme ``name`` names (``name`` or ``name@version``);
+    an unknown name renders with ``default`` and an ``unknown_theme``
+    warning."""
+    theme, problem = resolve_for_render(name)
+    if problem is not None:
         warnings.append(RenderWarning(
-            "unknown_theme",
-            f"theme {name!r} is not known to the matplotlib adapter (known: "
-            f"{', '.join(THEMES)}); the default theme was used.", path))
-        return THEMES["default"]
-    return THEMES[name]
+            "unknown_theme", f"{problem} The default theme was used.", path))
+    return theme
+
+
+def roles_for(theme: Theme | None) -> Roles:
+    if theme is None:
+        return DEFAULT_ROLES
+    r = theme.roles
+    kw: dict[str, Any] = {}
+    if r.forecast_linestyle is not None:
+        kw["forecast_linestyle"] = _LINESTYLES[r.forecast_linestyle]
+    for src, dst in (("forecast_hatch", "forecast_hatch"),
+                     ("forecast_fill_alpha", "forecast_alpha"),
+                     ("reference_color", "reference_color"),
+                     ("reference_alpha", "reference_alpha"),
+                     ("reference_fill_alpha", "reference_fill_alpha"),
+                     ("reference_linewidth", "reference_linewidth")):
+        if getattr(r, src) is not None:
+            kw[dst] = getattr(r, src)
+    return Roles(**kw)
+
+
+def theme_rc(theme: Theme) -> dict[str, Any]:
+    """rcParams for ``theme``: only what it declares (``default`` -> {})."""
+    rc: dict[str, Any] = {}
+    if theme.palette is not None:
+        from cycler import cycler
+
+        rc["axes.prop_cycle"] = cycler(color=list(theme.palette))
+    if theme.background is not None:
+        for k in ("figure.facecolor", "axes.facecolor", "savefig.facecolor",
+                  "legend.facecolor"):
+            rc[k] = theme.background
+    if theme.foreground is not None:
+        for k in ("text.color", "axes.labelcolor", "xtick.color", "ytick.color"):
+            rc[k] = theme.foreground
+    edge = theme.muted or theme.foreground
+    if edge is not None:
+        rc["axes.edgecolor"] = edge
+    if theme.grid is not None:
+        rc["grid.color"] = theme.grid
+        rc["legend.edgecolor"] = theme.grid
+    t = theme.typography
+    if t.family is not None:
+        rc["font.family"] = list(t.family)
+    for attr, keys in (("size", ("font.size",)), ("title", ("axes.titlesize",)),
+                       ("label", ("axes.labelsize",)),
+                       ("tick", ("xtick.labelsize", "ytick.labelsize")),
+                       ("legend", ("legend.fontsize",))):
+        if getattr(t, attr) is not None:
+            for k in keys:
+                rc[k] = getattr(t, attr)
+    if theme.line_width is not None:
+        rc["lines.linewidth"] = theme.line_width
+    if theme.grid_show is not None:
+        rc["axes.grid"] = theme.grid_show
+    if theme.grid_alpha is not None:
+        rc["grid.alpha"] = theme.grid_alpha
+    if theme.grid_width is not None:
+        rc["grid.linewidth"] = theme.grid_width
+    if theme.grid_below is not None:
+        rc["axes.axisbelow"] = theme.grid_below
+    if theme.spines is not None:
+        for side in ("top", "right", "left", "bottom"):
+            if side not in theme.spines:
+                rc[f"axes.spines.{side}"] = False
+    return rc
+
+
+def colormap(name: Any, theme: Theme | None) -> Any:
+    """A matplotlib colormap (or name) for a style's ``colormap`` value:
+    ``"sequential"``/``"diverging"`` (or no value) use the theme's maps."""
+    if name is not None and name not in THEME_COLORMAPS:
+        return name
+    which = name or "sequential"
+    value = getattr(theme, which, None) if theme is not None else None
+    if value is None:
+        return DEFAULT_COLORMAP if which == "sequential" else "RdBu_r"
+    if isinstance(value, str):
+        return value
+    from matplotlib.colors import LinearSegmentedColormap
+
+    return LinearSegmentedColormap.from_list(f"{theme.name}-{which}", list(value))
 
 
 def parse_style(
@@ -105,7 +195,7 @@ def parse_style(
         if key == "color":
             ok = isinstance(value, str) and mcolors.is_color_like(value)
         elif key == "colormap":
-            ok = isinstance(value, str) and value in colormaps
+            ok = isinstance(value, str) and (value in colormaps or value in THEME_COLORMAPS)
         elif key == "linestyle":
             ok = isinstance(value, str) and value in _LINESTYLES
             value = _LINESTYLES.get(value, value) if ok else value
@@ -118,6 +208,12 @@ def parse_style(
             ok = _num(value) and value >= 0
         elif key == "opacity":
             ok = _num(value) and 0 <= value <= 1
+        elif key == "value_labels":
+            ok = isinstance(value, bool)
+        elif key == "bar_width":
+            ok = _num(value) and 0 < value <= 1
+        elif key == "bar_offset":
+            ok = _num(value) and -0.5 <= value <= 0.5
         if not ok:
             warnings.append(RenderWarning(
                 "invalid_style_value", f"style {key}={value!r} is not a valid value; it was "
@@ -143,7 +239,7 @@ def legend_label(name: str | None, fallback: str | None, role: str) -> str | Non
 
 
 def line_kwargs(style: dict[str, Any], role: str, path: str,
-                warnings: list[RenderWarning]) -> dict[str, Any]:
+                warnings: list[RenderWarning], roles: Roles = DEFAULT_ROLES) -> dict[str, Any]:
     kw: dict[str, Any] = {}
     if "color" in style:
         kw["color"] = style["color"]
@@ -156,21 +252,21 @@ def line_kwargs(style: dict[str, Any], role: str, path: str,
     if "opacity" in style:
         kw["alpha"] = style["opacity"]
     if role == "forecast":
-        if kw.get("linestyle", FORECAST_LINESTYLE) == "-":
+        if kw.get("linestyle", roles.forecast_linestyle) == "-":
             warnings.append(RenderWarning(
                 "forecast_style_overridden",
                 "a forecast layer asked for a solid line; forecasts are always drawn dashed so "
                 "they cannot be mistaken for observations.", path + "/style/linestyle"))
-            kw["linestyle"] = FORECAST_LINESTYLE
-        kw.setdefault("linestyle", FORECAST_LINESTYLE)
+            kw["linestyle"] = roles.forecast_linestyle
+        kw.setdefault("linestyle", roles.forecast_linestyle)
     elif role == "reference":
-        kw.setdefault("alpha", REFERENCE_ALPHA)
-        kw.setdefault("color", REFERENCE_COLOR)
-        kw.setdefault("linewidth", 1.0)
+        kw.setdefault("alpha", roles.reference_alpha)
+        kw.setdefault("color", roles.reference_color)
+        kw.setdefault("linewidth", roles.reference_linewidth)
     return kw
 
 
-def fill_kwargs(style: dict[str, Any], role: str) -> dict[str, Any]:
+def fill_kwargs(style: dict[str, Any], role: str, roles: Roles = DEFAULT_ROLES) -> dict[str, Any]:
     """For bars, areas and histograms."""
     kw: dict[str, Any] = {}
     if "color" in style:
@@ -182,9 +278,9 @@ def fill_kwargs(style: dict[str, Any], role: str) -> dict[str, Any]:
     if "opacity" in style:
         kw["alpha"] = style["opacity"]
     if role == "forecast":
-        kw["hatch"] = FORECAST_HATCH
-        kw.setdefault("alpha", 0.6)
+        kw["hatch"] = roles.forecast_hatch
+        kw.setdefault("alpha", roles.forecast_alpha)
     elif role == "reference":
-        kw.setdefault("alpha", REFERENCE_ALPHA * 0.6)
-        kw.setdefault("color", REFERENCE_COLOR)
+        kw.setdefault("alpha", roles.reference_fill_alpha)
+        kw.setdefault("color", roles.reference_color)
     return kw

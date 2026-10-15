@@ -28,12 +28,15 @@ from . import function as fn_mod
 from .data import AxisInfo, column_path, groups, null_group_rows, numbers, positions
 from .style import (
     APPLICABLE,
+    DEFAULT_ROLES,
     FORECAST_SUFFIX,
-    REFERENCE_ALPHA,
+    Roles,
+    colormap,
     fill_kwargs,
     legend_label,
     line_kwargs,
     parse_style,
+    roles_for,
 )
 
 
@@ -53,6 +56,8 @@ class DrawContext:
     axes: dict[str, AxisInfo]
     warnings: list[RenderWarning]
     layer_artists: dict[int, list[Any]] = field(default_factory=dict)
+    #: The resolved :class:`~ieeVisualizer.themes.Theme` (None = adapter defaults).
+    theme: Any = None
     _color_i: int = 0
     _series: dict[tuple, _Series] = field(default_factory=dict)
 
@@ -60,10 +65,30 @@ class DrawContext:
     def three_d(self) -> bool:
         return self.spec.coordinate_system == "cartesian3d"
 
+    @property
+    def roles(self) -> Roles:
+        return roles_for(self.theme) if self.theme is not None else DEFAULT_ROLES
+
+    @property
+    def locale(self) -> Any:
+        return getattr(self.theme, "locale", None)
+
+    def muted(self, fallback: str) -> str:
+        """Secondary text colour: the theme's, else the adapter's ``fallback``."""
+        return getattr(self.theme, "muted", None) or fallback
+
+    def cmap(self, style: dict[str, Any]) -> Any:
+        return colormap(style.get("colormap"), self.theme)
+
     def next_color(self) -> str:
         from matplotlib import rcParams
 
         cycle = rcParams["axes.prop_cycle"].by_key().get("color", ["C0"])
+        if self._color_i == len(cycle):
+            self.warn("palette_exhausted",
+                      f"the figure has more series than the theme's {len(cycle)} series "
+                      "colours; colours repeat from here on, so the legend (not the colour) "
+                      "tells these series apart. Split the figure or use fewer series.", "")
         c = cycle[self._color_i % len(cycle)]
         self._color_i += 1
         return c
@@ -214,7 +239,8 @@ def _isolated(valid: np.ndarray) -> list[int]:
 
 def _approximate_role(ctx: DrawContext, i: int, m: Mark, kw: dict[str, Any]) -> None:
     if m.role in ("forecast", "reference"):
-        kw.setdefault("alpha", 0.6 if m.role == "forecast" else REFERENCE_ALPHA)
+        kw.setdefault("alpha", ctx.roles.forecast_alpha if m.role == "forecast"
+                      else ctx.roles.reference_alpha)
         if m.role == "forecast":
             ctx.warn("role_style_approximate",
                      f"a forecast {m.type} can only be distinguished by transparency (and the "
@@ -227,7 +253,11 @@ def _colorbar(ctx: DrawContext, mappable: Any, m: Mark, ch: str = "color") -> No
     label = _title(m, ch) or ""
     if col is not None and col.unit:
         label = f"{label} ({col.unit})"
-    ctx.fig.colorbar(mappable, ax=ctx.ax, label=label)
+    cb = ctx.fig.colorbar(mappable, ax=ctx.ax, label=label)
+    if ctx.locale is not None:
+        from .decorate import locale_formatter
+
+        cb.ax.yaxis.set_major_formatter(locale_formatter(ctx.locale))
 
 
 # --------------------------------------------------------------------------
@@ -245,7 +275,7 @@ def draw_line(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     for group, idx in _groups(ctx, i, m, len(x)):
         sub = [a[idx] for a in chans]
         _require(_mask(*sub), i, m, group)
-        kw = line_kwargs(style, m.role, f"/layers/{i}", ctx.warnings)
+        kw = line_kwargs(style, m.role, f"/layers/{i}", ctx.warnings, ctx.roles)
         if m.role != "reference":
             kw["color"] = ctx.series_color(m, m.encoding["y"].field, group, kw.get("color"))
         kw["label"] = _label(m, group, _title(m, "y"))
@@ -295,14 +325,14 @@ def draw_scatter(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
             kw["s"] = np.asarray(s_all[rows])
         if cont:
             kw["c"] = np.asarray(cvals[rows])
-            kw["cmap"] = style.get("colormap", "viridis")
+            kw["cmap"] = ctx.cmap(style)
             if m.role != "observed":
                 _approximate_role(ctx, i, m, kw)
         else:
             color = style.get("color")
             if m.role == "reference":
-                color = color or "0.45"
-                kw.setdefault("alpha", REFERENCE_ALPHA)
+                color = color or ctx.roles.reference_color
+                kw.setdefault("alpha", ctx.roles.reference_alpha)
             else:
                 color = ctx.series_color(m, m.encoding["y"].field, group, color)
             if m.role == "forecast":  # hollow markers
@@ -329,7 +359,7 @@ def draw_area(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         xs, ys = x[idx], y[idx]
         valid = _mask(xs, ys)
         _require(valid, i, m, group)
-        kw = fill_kwargs(style, m.role)
+        kw = fill_kwargs(style, m.role, ctx.roles)
         if m.role != "reference":
             kw["color"] = ctx.series_color(m, m.encoding["y"].field, group, kw.get("color"))
         if m.role == "forecast":
@@ -374,14 +404,21 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     grp = _groups(ctx, i, m, len(pos))
     polar = ctx.spec.coordinate_system == "polar"
     total = _width(np.asarray(pos.compressed()), ctx.axes[cat_ch], polar)
+    shift = 0.0
+    if "bar_width" in style or "bar_offset" in style:
+        # explicit placement in fractions of the category slot (the default
+        # bar group fills 0.8 of it), e.g. side-by-side layers
+        slot = total / 0.8
+        total = slot * style.get("bar_width", 0.8)
+        shift = slot * style.get("bar_offset", 0.0)
     each = total / len(grp)
     artists = []
     for g, (group, idx) in enumerate(grp):
         p, v = pos[idx], val[idx]
         valid = _mask(p, v)
         _require(valid, i, m, group)
-        off = (g - (len(grp) - 1) / 2.0) * each
-        kw = fill_kwargs(style, m.role)
+        off = (g - (len(grp) - 1) / 2.0) * each + shift
+        kw = fill_kwargs(style, m.role, ctx.roles)
         if m.role != "reference":
             kw["color"] = ctx.series_color(m, m.encoding[val_ch].field, group,
                                            kw.get("color"))
@@ -393,6 +430,9 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
             artists.append(ctx.ax.barh(pp, vv, height=each, **kw))
         else:
             artists.append(ctx.ax.bar(pp, vv, width=each, **kw))
+        if style.get("value_labels"):
+            artists += _value_labels(ctx, m, val_ch, pp, vv, horizontal)
+            ctx.ax.margins(**{val_ch: 0.12})  # room for the labels inside the axes
         # A labelled slot with no bar reads as zero; say "no data" there.
         missing = ~np.ma.getmaskarray(p) & np.ma.getmaskarray(v)
         # On a log value axis 0 is not a position; anchor the note to the
@@ -407,8 +447,33 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                 "no data", xy, xycoords=coords, xytext=(3, 0) if horizontal else (0, 3),
                 textcoords="offset points", ha="left" if horizontal else "center",
                 va="center" if horizontal else "bottom", rotation=0 if horizontal else 90,
-                fontsize="x-small", color="0.4", style="italic"))
+                fontsize="x-small", color=ctx.muted("0.4"), style="italic"))
     return artists
+
+
+def _value_labels(ctx: DrawContext, m: Mark, val_ch: str, pos: np.ndarray,
+                  vals: np.ndarray, horizontal: bool) -> list[Any]:
+    """Each drawn bar's value at its end (outside, so it never sits on the
+    fill colour), formatted with the theme's locale; currency and percent
+    keep their symbol, other units are on the axis label."""
+    from ...themes import NEUTRAL, format_quantity
+
+    unit = _col(ctx, m, val_ch).unit
+    out = []
+    for q, v in zip(pos, vals):
+        text = format_quantity(float(v), unit, ctx.locale or NEUTRAL)
+        neg = v < 0
+        if horizontal:
+            kw = {"xytext": (-3 if neg else 3, 0), "ha": "right" if neg else "left",
+                  "va": "center"}
+            xy = (float(v), float(q))
+        else:
+            kw = {"xytext": (0, -3 if neg else 3), "ha": "center",
+                  "va": "top" if neg else "bottom"}
+            xy = (float(q), float(v))
+        out.append(ctx.ax.annotate(text, xy, textcoords="offset points", fontsize="small",
+                                   color=ctx.muted("0.25"), **kw))
+    return out
 
 
 def draw_histogram(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
@@ -442,7 +507,7 @@ def draw_histogram(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                  "not counted.", f"/layers/{i}/bin_edges")
     artists = []
     for group, d in data:
-        kw = fill_kwargs(style, m.role)
+        kw = fill_kwargs(style, m.role, ctx.roles)
         if m.role != "reference":
             kw["color"] = ctx.series_color(m, m.encoding["x"].field, group, kw.get("color"))
         if m.role == "forecast":
@@ -493,7 +558,7 @@ def draw_heatmap(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         ctx.warn("null_values_omitted",
                  f"{blank} cell(s) of layer {i} have no value (null or absent); they are left "
                  "blank, not coloured as 0.", f"/layers/{i}")
-    kw: dict[str, Any] = {"cmap": style.get("colormap", "viridis")}
+    kw: dict[str, Any] = {"cmap": ctx.cmap(style)}
     if "opacity" in style:
         kw["alpha"] = style["opacity"]
     _approximate_role(ctx, i, m, kw)
@@ -565,7 +630,7 @@ def draw_quiver(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     args = [a["x"], a["y"], a["u"], a["v"]]
     if cvals is not None:
         args.append(np.asarray(cvals[valid], dtype=float))
-        kw["cmap"] = style.get("colormap", "viridis")
+        kw["cmap"] = ctx.cmap(style)
     else:
         kw["color"] = style.get("color", ctx.next_color())
     q = ctx.ax.quiver(*args, **kw)
@@ -607,7 +672,7 @@ def _sampled_surface(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     grid = np.full(seen.shape, np.nan)
     grid[yi, xi] = np.ma.filled(z.astype(float), np.nan)
     gx, gy = np.meshgrid(xu, yu, indexing="xy")
-    kw: dict[str, Any] = {"cmap": style.get("colormap", "viridis")}
+    kw: dict[str, Any] = {"cmap": ctx.cmap(style)}
     if "opacity" in style:
         kw["alpha"] = style["opacity"]
     _approximate_role(ctx, i, m, kw)
@@ -625,7 +690,7 @@ def draw_function(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     logs = tuple(ctx.spec.axes[k].scale == "log" if k in ctx.spec.axes else False for k in keys)
     inputs, out = fn_mod.sample(m, path, logs, ctx.warnings)
     if ctx.three_d:
-        kw: dict[str, Any] = {"cmap": style.get("colormap", "viridis")}
+        kw: dict[str, Any] = {"cmap": ctx.cmap(style)}
         if "opacity" in style:
             kw["alpha"] = style["opacity"]
         _approximate_role(ctx, i, m, kw)
@@ -635,7 +700,7 @@ def draw_function(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         if k in style:
             ctx.warn("style_key_ignored", f"a 2D function curve does not use {k!r}.",
                      f"{path}/style/{k}")
-    kw = line_kwargs(style, m.role, path, ctx.warnings)
+    kw = line_kwargs(style, m.role, path, ctx.warnings, ctx.roles)
     if m.role != "reference":
         kw["color"] = ctx.series_color(m, f"function|{m.expression}", None,
                                        kw.get("color"))

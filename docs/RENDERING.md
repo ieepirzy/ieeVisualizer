@@ -41,11 +41,12 @@ artifact.artifact_id, artifact.variant("png").sha256
 | `format` | `"png"` | `png`, `svg`, `pdf` (matplotlib); `html` is a known format no current adapter supports |
 | `width`, `height`, `units` | `6.4`, `4.8`, `"in"` | `units="px"` converts with `dpi`; a PNG measures exactly `request.size_px` |
 | `dpi` | `100` | |
-| `theme` | `None` | overrides `spec.theme`; matplotlib themes: `default`, `minimal`, `presentation` |
+| `theme` | `None` | overrides `spec.theme`; a registered theme `name` or `name@version` ([THEMES.md](THEMES.md)): `default`, `minimal`, `presentation`, `muutto365-admin-dark`, `muutto365-report-light` |
 | `adapter` | `None` | pin an adapter by name |
 
 `RenderResult` has `content`, `format`, `media_type`, `adapter_name`,
-`adapter_version`, `warnings`, `request`, plus `sha256` and `size_bytes`.
+`adapter_version`, `warnings`, `request`, `theme` (the resolved theme's
+name, version and hash), plus `sha256` and `size_bytes`.
 
 ## What the matplotlib adapter draws
 
@@ -81,8 +82,10 @@ arrow runs out of the plot. In 3D the default length factor is 1.
 is overridden with a warning), hollow markers, hatched bars/areas, and the
 legend label says "forecast". `reference` is lighter and thinner.
 
-**Style keys** `color`, `colormap`, `linewidth`, `linestyle`, `marker`,
-`opacity`. Unknown keys (`unknown_style_key`), keys the mark does not use
+**Style keys** `color`, `colormap` (a matplotlib name, or `sequential` /
+`diverging` for the theme's maps), `linewidth`, `linestyle`, `marker`,
+`opacity`; bars also `value_labels`, `bar_width`, `bar_offset`
+([THEMES.md](THEMES.md)). Unknown keys (`unknown_style_key`), keys the mark does not use
 (`style_key_ignored`) and invalid values (`invalid_style_value`) are warnings.
 
 **Functions.** Expressions are checked before SymPy sees them: only numbers,
@@ -136,6 +139,8 @@ tests check that both routes draw the same data.
 `export(spec, formats, writer, *, resolver=None, clock=None, request=None,
 name=None, registry=None)` renders every format first, then writes
 `figure.<fmt>`, `spec.json` (canonical spec; its SHA-256 is the spec hash),
+`theme.json` (the resolved theme, so the figure can be re-rendered after the
+registered theme changes),
 `spec.resolved.json` when references were resolved (so the figure can be
 re-rendered after the source changes), and `manifest.json` last. A failure
 writes nothing.
@@ -143,15 +148,17 @@ writes nothing.
 The `VisualizationArtifact` manifest records `artifact_id`, `schema_version`,
 `spec_hash`, per-dataset content hash, provenance and column meaning (unit,
 dtype, aggregation, denominator), each variant's format, media type, SHA-256,
-byte size, adapter name/version, request and warnings, library versions
+byte size, adapter name/version, request and warnings, the theme
+(`name`, `version`, `sha256`, `file`), library versions
 (ieeVisualizer, matplotlib, numpy, sympy, python) and `created_at` (from
 `clock`). Two exports of the same spec differ only in `created_at`.
 
 `artifact_id` is `<name or "viz">-<16 hex>` over the spec hash, the
 content hash of every dataset drawn, the list of formats (in order) and the
-render request (width, height, units, dpi, theme, adapter), so different
-data behind the same reference, or the same spec at another size, dpi,
-theme or set of formats, gives a different id. It never depends on a
+render request (width, height, units, dpi, theme, adapter) and the resolved
+theme's record (name, version, hash), so different data behind the same
+reference, or the same spec at another size, dpi, theme, theme version or
+set of formats, gives a different id. It never depends on a
 storage path or URL.
 
 Writers implement `write(artifact_id, name, content, media_type) -> str`
