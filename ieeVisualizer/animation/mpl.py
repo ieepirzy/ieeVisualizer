@@ -31,8 +31,11 @@ from .base import (
     AnimationRequest,
     AnimationResult,
     base_unmet,
+    counted_states,
     enforce_limits,
+    memoized,
     output_timing,
+    size_warnings,
 )
 from .encode import encode_gif, encode_mp4, find_ffmpeg
 from .frames import FramePlan, plan
@@ -85,13 +88,17 @@ class MatplotlibAnimationAdapter:
              resolver=None) -> tuple[FramePlan, list[RenderWarning]]:
         """The frame plan with fixed axis limits applied to every state spec.
         Every resource guard (:func:`~ieeVisualizer.animation.base.enforce_limits`)
-        is checked before any state is built or drawn."""
+        is checked, from the state count, before any state is built or drawn.
+        Each dataset reference is resolved once (the count, the plan and the
+        fixed-limit pass all see the same snapshot)."""
         errors = [i for i in validate_animation(anim) if i.severity == "error"]
         if errors:
             raise SpecValidationError(errors)
         request = request or AnimationRequest()
-        fp = plan(anim, resolver)  # checks frames/duration/poster before building
-        enforce_limits(anim, request, len(fp.states))
+        resolver = memoized(resolver)
+        n_states, figure = counted_states(anim, resolver)
+        enforce_limits(anim, request, n_states, figure)
+        fp = plan(anim, resolver)
         warnings = [RenderWarning(i.code, i.message, i.path) for i in fp.issues]
         if anim.axis_limits == "fixed":
             # A frame column's range is that of all its frames' data together
@@ -199,6 +206,7 @@ class MatplotlibAnimationAdapter:
             content = encode_mp4(frames, fp.fps, self.ffmpeg)
         delay, timing = output_timing(request.format, fp.fps, anim.loop)
         warnings.extend(timing)
+        warnings.extend(size_warnings(request))
         return AnimationResult(
             content=content, format=request.format, media_type=request.media_type,
             adapter_name=self.name, adapter_version=self.version,

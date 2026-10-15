@@ -3,6 +3,7 @@
 import datetime as dt
 import importlib.util
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -102,3 +103,66 @@ def test_examples_script_writes_every_animation(tmp_path):
     assert wb["datasets"]["bookings"]["provenance"]["source"] == "synthetic"
     assert "SYNTHETIC" in wb["datasets"]["bookings"]["provenance"]["notes"]
     assert wb["timeline"]["type"] == "frame_column" and wb["state_count"] == 12
+
+
+# ------------------------------------------------- one resolution per export
+
+
+def _drifting_resolver():
+    """A source that returns different data on every call (a live table)."""
+    from ieeVisualizer.spec import DataSnapshot
+
+    calls = []
+
+    def resolve(ref):
+        k = len(calls)
+        snap = DataSnapshot.from_columns({"week": [0, 1, 2],
+                                          "bookings": [k, 5 + 3 * k, 2 * k]})
+        calls.append((ref, snap))
+        return snap
+
+    return resolve, calls
+
+
+def _ref_anim(names=("b",)):
+    from ieeVisualizer.animation import AnimationSpec, FrameColumn
+    from ieeVisualizer.spec import DatasetRef, FigureSpec, LineMark
+
+    fig = FigureSpec(datasets={n: DatasetRef(kind="table", id=f"t_{n}") for n in names},
+                     layers=[LineMark(data=n, encoding={"x": "week", "y": "bookings"})
+                             for n in names])
+    return AnimationSpec(timeline=FrameColumn(dataset=names[0], column="week",
+                                              display="cumulative"), figure=fig, fps=4)
+
+
+def test_export_resolves_each_reference_once_and_records_the_rendered_data():
+    resolve, calls = _drifting_resolver()
+    w = MemoryWriter()
+    art = export_animation(_ref_anim(), "gif", w, request=SMALL, clock=lambda: CLOCK,
+                           resolver=resolve)
+    assert len(calls) == 1  # every format, the plan, limits, poster and record: one call
+    rendered = calls[0][1]
+    assert art.datasets["b"].content_hash == rendered.content_hash()
+    files = _files(w, art.artifact_id)
+    # The clip is exactly the clip of that snapshot, and so is the artifact id.
+    frozen = MemoryWriter()
+    ref = export_animation(_ref_anim(), "gif", frozen, request=SMALL, clock=lambda: CLOCK,
+                           resolver=lambda r: rendered)
+    assert ref.artifact_id == art.artifact_id
+    assert _files(frozen, ref.artifact_id)["animation.gif"] == files["animation.gif"]
+    # The poster is the rendered poster frame, not a re-render of newer data.
+    frames, _ = gif_frames(files["animation.gif"])
+    poster = png_pixels(files["poster.png"])
+    assert art.poster_frame == len(frames) - 1
+    assert np.abs(frames[-1].astype(int) - poster.astype(int)).mean() < 1.0
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_every_format_of_an_export_uses_the_same_resolution():
+    resolve, calls = _drifting_resolver()
+    art = export_animation(_ref_anim(("b", "c")), ["gif", "mp4"], MemoryWriter(),
+                           request=SMALL, clock=lambda: CLOCK, resolver=resolve)
+    assert len(calls) == 2  # two distinct references, each resolved once
+    by_id = {r.id: s for r, s in calls}
+    assert art.datasets["b"].content_hash == by_id["t_b"].content_hash()
+    assert art.datasets["c"].content_hash == by_id["t_c"].content_hash()

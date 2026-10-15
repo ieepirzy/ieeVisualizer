@@ -98,6 +98,29 @@ def test_sweep_validation(timeline, code, path):
         assert "Did you mean 'phase'" in issues[0].message
 
 
+@pytest.mark.parametrize("start,end,duration,bad", [
+    ("a", 1.0, 1.0, ["/timeline/start"]),
+    (0.0, True, 1.0, ["/timeline/end"]),
+    (False, "1", 1.0, ["/timeline/start", "/timeline/end"]),
+    (0.0, 1.0, "2", ["/timeline/duration"]),
+    (0.0, 1.0, True, ["/timeline/duration"]),
+])
+def test_non_numeric_sweep_range_is_invalid_type(start, end, duration, bad):
+    """Through the Python API (no JSON parser in front): a string or a bool
+    is not a number, and is refused instead of reaching the frame builder."""
+    issues = validate_animation(sine_anim(timeline=ParameterSweep(
+        parameter="phase", start=start, end=end, duration=duration)))
+    assert [(i.code, i.path) for i in issues if i.severity == "error"] == \
+        [("invalid_type", p) for p in bad]
+
+
+def test_non_finite_sweep_end_is_invalid_value():
+    tl = ParameterSweep(parameter="phase", start=0.0, end=1.0, duration=1.0)
+    tl.end = float("inf")  # bypasses the constructor's canonicalisation
+    assert ("invalid_value", "/timeline") in [
+        (i.code, i.path) for i in validate_animation(sine_anim(timeline=tl))]
+
+
 def test_duration_guard_is_separate_from_frame_guard():
     issues = validate_animation(sine_anim(fps=1, timeline=ParameterSweep(
         parameter="phase", start=0, end=1, duration=90)))

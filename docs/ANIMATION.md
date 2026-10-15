@@ -66,8 +66,9 @@ Serialized form (`to_json` is canonical: sorted keys, numbers as floats;
 
 Values are either listed (`values`, at least two, one state each) or
 interpolated: `start`, `end`, `duration` seconds give
-`floor(duration * fps + 0.5)` states (halves round up, so 0.25 s at 10 fps is
-3 states; at least 2) including both endpoints, eased `linear` or `smooth`
+`duration * fps` states rounded half up, computed in decimal on the number as
+written (so 0.25 s at 10 fps is 3 states and 4.1 s at 15 fps is 62, although
+binary `4.1 * 15` is 61.4999...; at least 2) including both endpoints, eased `linear` or `smooth`
 (smoothstep).
 
 ### Frame column
@@ -80,7 +81,8 @@ appearance. State *k* shows the rows whose value is the *k*-th
 (`current`), any of the first *k* (`cumulative`) or the last `window` values
 (`window`). Other datasets are drawn unchanged in every frame. Rows with no
 frame value appear in no frame (`frame_value_missing` warning). A `DatasetRef`
-is resolved once per `render_animation` call, through `resolver=`, before
+is resolved once per `render_animation` (or `export_animation`) call, through
+`resolver=` (equal references are one dataset), before
 frames are cut; the frame, duration and poster guards are checked against the
 resolved count before any frame is built (validation can only check the hold
 frames plus one state, and the poster's sign, until then).
@@ -112,11 +114,19 @@ the render reports it at the same sweep-value path.
 **Guards:** at most 300 output frames, 60 s and 60 fps (validation errors
 `too_many_frames`, `duration_too_long`), and at most 120 million pixels as
 frame area x output frames, hold and repeated frames included
-(`animation_too_large`). Frame counts are computed arithmetically from
+(`animation_too_large`), and an estimated render time of at most 60 s
+(`animation_too_expensive`): states x (layers + series groups + points per
+state, weighted by mark type) plus a per-state cost that grows with the frame
+area, for Matplotlib; output frames x (layers + samples, or vector-field
+arrows) for Manim, which redraws every frame in Python. The constants are
+measured render times and listed, with the measurements at the limit, in
+`ieeVisualizer/animation/cost.py`; e.g. 300 states x 1000 function layers
+(about 40 minutes) and a 200,000-sample Manim curve (about 5 s per frame) are
+refused in milliseconds. Frame counts are computed arithmetically from
 `duration`, `fps`, `len(values)`, the number of distinct frame values,
 `frames_per_value` and the holds, before any list of values, states or frames
 is built, so an oversized spec is refused in milliseconds. They are checked
-in `validate_animation`, again in `plan()`, and, with the pixel guard, by
+in `validate_animation`, again in `plan()`, and, with the pixel and work guards, by
 `render_animation` for every adapter before its `render` is called
 (`base.enforce_limits`); each built-in adapter also checks them itself when
 called directly.
@@ -160,15 +170,19 @@ unchanged.
 `notes` says why it is missing; requesting MP4 without it is refused with
 `format_unavailable` (adapter) or `CapabilityError` (selection), never
 silently turned into a GIF. Frames are streamed to ffmpeg's stdin one at a
-time. Encoding: libx264 (`-threads 1`, bitexact flags,
-metadata stripped, yuv420p, odd sizes padded by one pixel) or MPEG-4 part 2
+time; `timeout` bounds the whole encode, writing included (a stalled ffmpeg
+is killed and reaped, `encoder_timeout`). Encoding: libx264 (`-threads 1`, bitexact flags,
+metadata stripped, yuv420p, odd sizes padded by one pixel, with a
+`frame_size_padded` warning) or MPEG-4 part 2
 without libx264. With ffmpeg 6.1.1 here the bytes were identical across two
 processes; this is not promised for other ffmpeg builds.
 
 ## Export
 
 `export_animation(anim, formats, writer, *, resolver, clock, request, name,
-registry)` renders every format first, then writes `animation.<fmt>`,
+registry)` resolves each dataset reference once for the whole export (so the
+clips, the poster and the manifest's dataset hashes describe the same data),
+renders every format first, then writes `animation.<fmt>`,
 `poster.png`, `animation.json` (canonical spec) and `manifest.json` last; a
 failure writes nothing. The poster is frame `poster_frame` of the first
 format's clip, recorded with the adapter that drew it. For the Matplotlib
@@ -236,7 +250,11 @@ MP4 by Manim (through PyAV, not the system ffmpeg); GIF is made by decoding
 those frames one at a time (never all held as RGB) straight into the same
 Pillow encoder as above, because Manim's own GIF palette banded colours
 badly; for MP4 the frames are only counted. A clip whose decoded frame count
-differs from the plan is refused (`frame_count_mismatch`). Both outputs were
+differs from the plan is refused (`frame_count_mismatch`). Manim's MP4 needs
+even sizes, so an odd width or height is rendered one pixel larger and every
+decoded frame is cropped back: the GIF and the poster have the requested
+size; the MP4 keeps the even size, like every yuv420p MP4 here
+(`frame_size_padded`). Both outputs were
 byte-identical across two processes here. The result reports timing and the
 frame mapping exactly as the Matplotlib adapter does: `frame_duration_ms` is
 the stored GIF delay (70 ms at 15 fps, with `frame_timing_rounded`) or

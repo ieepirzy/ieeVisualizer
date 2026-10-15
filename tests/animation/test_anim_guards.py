@@ -153,11 +153,35 @@ def test_non_finite_duration_is_an_issue_not_an_exception():
     (0.45, 10, 5),   # 4.5 -> 5 (round() would give 4)
     (0.5, 10, 5),
     (0.04, 10, 2),   # at least two states
+    (4.1, 15, 62),   # 61.5 -> 62; binary 4.1 * 15 + 0.5 = 61.999... floored to 61
 ])
 def test_state_count_rounds_half_up_as_documented(duration, fps, states):
     tl = ParameterSweep(parameter="p", start=0.0, end=1.0, duration=duration)
     assert len(sweep_values(tl, fps)) == states
-    assert "floor(duration * fps + 0.5)" in (ROOT / "docs" / "ANIMATION.md").read_text()
+    assert "rounded half up, computed in decimal" in (ROOT / "docs" / "ANIMATION.md").read_text()
+
+
+def test_state_count_matches_exact_decimal_rounding_over_a_sweep():
+    """Every duration written with up to 3 decimals x every fps: the count is
+    the exact decimal product rounded half up (computed here with Fraction,
+    independently of the implementation)."""
+    from fractions import Fraction
+
+    from ieeVisualizer.animation.limits import sweep_state_count
+
+    wrong = []
+    for k in range(1, 6001, 7):  # 0.001 .. 6.0 s
+        text = f"{k / 1000:.3f}"
+        for fps in range(1, 61):
+            exact = Fraction(text) * fps
+            want = max(2, int(exact + Fraction(1, 2)))  # floor(x + 1/2), exact
+            if exact > 300:  # beyond MAX_FRAMES; not a useful sweep
+                break
+            tl = ParameterSweep(parameter="p", start=0.0, end=1.0, duration=float(text))
+            got = sweep_state_count(tl, fps)
+            if got != want:
+                wrong.append((text, fps, got, want))
+    assert not wrong, wrong[:10]
 
 
 # ---------------------------------------------------------------- HIGH 2
@@ -327,3 +351,218 @@ def test_plan_reports_a_template_refusal_at_the_sweep_value(monkeypatch):
         plan(_scale_sweep([1.0, -1.0, 1.0]))
     assert e.value.issues[0].path == "/timeline/values/1"
     assert "scale = -1" in e.value.issues[0].message
+
+
+# ------------------------------------------------- round 2: MP4 write timeout
+
+
+def test_mp4_encode_times_out_when_ffmpeg_stops_reading(tmp_path):
+    """A fake ffmpeg on PATH that never reads stdin: the frame writes block
+    on a full pipe. The encode must give up at its timeout with a structured
+    error and leave no child process (running or zombie) behind."""
+    fake = tmp_path / "ffmpeg"
+    fake.write_text("#!/bin/sh\n"
+                    'case "$*" in *-version*) echo "fake 1"; exit 0;; '
+                    "*-encoders*) exit 0;; esac\n"
+                    "exec sleep 1000\n")
+    fake.chmod(0o755)
+    out = run_limited(f"""
+        import os
+        os.environ["PATH"] = {str(tmp_path)!r} + os.pathsep + os.environ["PATH"]
+        import numpy as np
+        from ieeVisualizer.animation import AnimationError
+        from ieeVisualizer.animation.encode import encode_mp4, find_ffmpeg
+        exe = find_ffmpeg()
+        frames = [np.zeros((240, 320, 3), np.uint8)] * 20  # 230 kB each > a pipe buffer
+        t = time.perf_counter()
+        try:
+            encode_mp4(frames, 10, exe, timeout=2)
+            code = "encoded"
+        except AnimationError as e:
+            code = e.issues[0].code
+        elapsed = time.perf_counter() - t
+        me = str(os.getpid())
+        kids = []
+        for pid in filter(str.isdigit, os.listdir("/proc")):
+            try:
+                stat = open(f"/proc/{{pid}}/stat").read()
+            except OSError:
+                continue
+            fields = stat.rsplit(")", 1)[1].split()
+            if fields[1] == me:
+                kids.append((pid, fields[0]))
+        print(json.dumps({{"exe": exe, "code": code, "elapsed": elapsed, "kids": kids}}))
+    """, timeout=40)
+    assert out["exe"] == str(fake)
+    assert out["code"] == "encoder_timeout"
+    assert out["elapsed"] < 15
+    assert out["kids"] == []
+
+
+# ------------------------------------------------- round 2: render-work budget
+
+
+def _layers_anim(n_layers: int, n_states: int):
+    from ieeVisualizer.animation import AnimationSpec
+    from ieeVisualizer.spec import FigureSpec, FunctionMark
+
+    layers = [FunctionMark(expression="sin(x + phase)", variables=["x"], domain={"x": [0, 1]},
+                           samples=2, parameters={"phase": 0.0}) for _ in range(n_layers)]
+    return AnimationSpec(timeline=ParameterSweep(parameter="phase",
+                                                 values=[i / 10 for i in range(n_states)]),
+                         figure=FigureSpec(layers=layers), fps=30)
+
+
+def test_too_much_work_per_state_is_refused_before_any_state_is_built():
+    """1000 function layers x 300 states (about 40 minutes of drawing) passes
+    the frame and pixel guards; the work guard refuses it in milliseconds,
+    through render_animation and through the adapter called directly."""
+    out = run_limited("""
+        from ieeVisualizer.animation import AnimationError, AnimationRequest, render_animation
+        from ieeVisualizer.animation import frames as F
+        from ieeVisualizer.animation.mpl import MatplotlibAnimationAdapter
+        from test_anim_guards import _layers_anim
+        built = [0]
+        orig = F._clone
+        def spy(spec):
+            built[0] += 1
+            return orig(spec)
+        F._clone = spy
+        anim = _layers_anim(1000, 300)
+        req = AnimationRequest(width=64, height=48, units="px", dpi=20)
+        got = []
+        for call in (lambda: render_animation(anim, req),
+                     lambda: MatplotlibAnimationAdapter().render(anim, req),
+                     lambda: MatplotlibAnimationAdapter().plan(anim, req)):
+            try:
+                call()
+                got.append("rendered")
+            except AnimationError as e:
+                got.append(e.issues[0].code)
+        print(json.dumps({"codes": got, "built": built[0],
+                          "elapsed": time.perf_counter() - t0}))
+    """, timeout=60)
+    assert out["codes"] == ["animation_too_expensive"] * 3
+    assert out["built"] == 0
+    assert out["elapsed"] < 20  # interpreter start-up and imports included
+
+
+def test_work_budget_counts_points_groups_and_frame_size():
+    from ieeVisualizer.animation import AnimationRequest
+    from ieeVisualizer.animation.cost import MAX_RENDER_WORK_US, matplotlib_work_us
+
+    small = (64, 48)
+    few = _layers_anim(1, 50)
+    many = _layers_anim(40, 50)
+    assert matplotlib_work_us(many, small, 50, many.figure) > \
+        matplotlib_work_us(few, small, 50, few.figure) + 39 * 50 * 9_000
+    big = AnimationRequest(width=640, height=480, units="px").frame_request().size_px
+    assert matplotlib_work_us(few, big, 50, few.figure) > \
+        matplotlib_work_us(few, small, 50, few.figure)
+    # The examples and the defaults stay well inside the budget.
+    assert matplotlib_work_us(sine_anim(), small, 5, sine_anim().figure) < \
+        MAX_RENDER_WORK_US / 50
+
+
+def test_frame_column_work_counts_only_the_rows_each_state_shows():
+    from ieeVisualizer.animation.cost import frame_rows, matplotlib_work_us
+    from ieeVisualizer.spec import DataSnapshot
+
+    ds = DataSnapshot.from_columns({"t": [0, 0, 1, 2, 2, 2, None], "y": [1] * 7})
+    from ieeVisualizer.animation import FrameColumn
+
+    assert frame_rows(ds, FrameColumn(dataset="d", column="t")) == [2, 1, 3]
+    assert frame_rows(ds, FrameColumn(dataset="d", column="t", display="cumulative")) == \
+        [2, 3, 6]
+    assert frame_rows(ds, FrameColumn(dataset="d", column="t", display="window",
+                                      window=2)) == [2, 3, 4]
+    cur, cum = weekly_anim("current"), weekly_anim("cumulative")
+    assert matplotlib_work_us(cur, (64, 48), 4, cur.figure) < \
+        matplotlib_work_us(cum, (64, 48), 4, cum.figure)
+
+
+def test_huge_frame_column_is_refused_for_its_work():
+    from ieeVisualizer.animation import AnimationSpec, FrameColumn
+    from ieeVisualizer.spec import DataSnapshot, FigureSpec, LineMark
+
+    n = 400_000
+    ds = DataSnapshot.from_columns({"t": [i % 100 for i in range(n)], "y": [0.5] * n})
+    anim = AnimationSpec(timeline=FrameColumn(dataset="d", column="t", display="cumulative"),
+                         figure=FigureSpec(datasets={"d": ds}, layers=[LineMark(
+                             data="d", encoding={"x": "t", "y": "y"})]), fps=10)
+    with pytest.raises(AnimationError) as e:
+        render_animation(anim, SMALL)
+    assert e.value.issues[0].code == "animation_too_expensive"
+
+
+def test_template_sweep_work_is_estimated_before_the_template_runs():
+    from ieeVisualizer.animation import frames as F
+
+    # 300 states x 6400 arrows: about 74 s estimated (validation already
+    # dry-runs the template at every value, so the grid is kept moderate).
+    anim = vector_field_anim(values=[i / 10 for i in range(300)], params={"grid": 80},
+                             fps=30)
+    calls = []
+    orig = F._build_template
+    F._build_template = lambda *a: calls.append(a) or orig(*a)
+    try:
+        with pytest.raises(AnimationError) as e:
+            render_animation(anim, SMALL)
+    finally:
+        F._build_template = orig
+    assert e.value.issues[0].code == "animation_too_expensive" and calls == []
+
+
+def test_manim_has_a_stricter_per_frame_points_budget():
+    """A 200,000-sample curve (about 5 s per Manim frame) is refused before
+    Manim is imported or started; the same spec is within the Matplotlib
+    budget. Works without manim installed."""
+    from ieeVisualizer.animation.cost import (
+        MAX_RENDER_WORK_US,
+        manim_work_us,
+        matplotlib_work_us,
+    )
+    from ieeVisualizer.animation.manim_adapter import ManimAdapter
+
+    anim = sine_anim(timeline=ParameterSweep(parameter="phase",
+                                             values=[i / 10 for i in range(30)]))
+    anim.figure.layers[0].samples = 200_000
+    assert matplotlib_work_us(anim, (160, 120), 30, anim.figure) < MAX_RENDER_WORK_US
+    assert manim_work_us(anim, 30) > MAX_RENDER_WORK_US
+    with pytest.raises(AnimationError) as e:
+        ManimAdapter().render(anim, AnimationRequest(format="mp4", width=160, height=120,
+                                                     units="px"))
+    assert e.value.issues[0].code == "animation_too_expensive"
+    assert "manim" in e.value.issues[0].message
+
+
+# ------------------------------------- round 2: guards before template states
+
+
+def test_direct_adapter_render_checks_pixels_before_building_template_states():
+    from ieeVisualizer.animation import frames as F
+    from ieeVisualizer.animation.mpl import MatplotlibAnimationAdapter
+
+    calls = []
+    orig = F._build_template
+    F._build_template = lambda *a: calls.append(a) or orig(*a)
+    try:
+        with pytest.raises(AnimationError) as e:
+            MatplotlibAnimationAdapter().render(
+                vector_field_anim(values=[i / 10 for i in range(200)]),
+                AnimationRequest(width=2000, height=2000, units="px"))
+    finally:
+        F._build_template = orig
+    assert e.value.issues[0].code == "animation_too_large" and calls == []
+
+
+# ------------------------------------------------- round 2: request overflow
+
+
+@pytest.mark.parametrize("kw", [
+    {"width": 1e300, "height": 1e300, "units": "in", "dpi": 1e300},
+    {"width": 1e300, "height": 1.0, "units": "in", "dpi": 1e10},
+])
+def test_overflowing_request_size_is_a_value_error(kw):
+    with pytest.raises(ValueError, match="no representable pixel size"):
+        AnimationRequest(**kw)

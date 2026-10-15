@@ -10,6 +10,7 @@ request, is :func:`ieeVisualizer.animation.base.enforce_limits`.
 from __future__ import annotations
 
 import math
+from decimal import ROUND_HALF_UP, Decimal
 
 from ..spec import ValidationIssue
 from .spec import MAX_DURATION_S, MAX_FRAMES, AnimationSpec, FrameColumn, ParameterSweep
@@ -17,7 +18,12 @@ from .spec import MAX_DURATION_S, MAX_FRAMES, AnimationSpec, FrameColumn, Parame
 
 def sweep_state_count(tl: ParameterSweep, fps: int) -> int:
     """Number of states of a sweep without building them: ``len(values)``, or
-    ``floor(duration * fps + 0.5)`` (half rounds up), at least 2.
+    ``duration * fps`` rounded half up, at least 2.
+
+    The product is taken in decimal, on the shortest repr of ``duration``
+    (what the spec says: ``4.1``, not the binary float just below it), so
+    4.1 s at 15 fps is 61.5 -> 62 states, as documented; binary
+    ``4.1 * 15 + 0.5`` is 61.99999... and would floor to 61.
 
     Raises ``ValueError`` if ``duration * fps`` is not finite (validation
     reports ``invalid_value`` before this is reached)."""
@@ -26,7 +32,8 @@ def sweep_state_count(tl: ParameterSweep, fps: int) -> int:
     x = float(tl.duration) * fps
     if not math.isfinite(x):
         raise ValueError(f"duration * fps = {x!r} is not finite.")
-    return max(2, math.floor(x + 0.5))
+    exact = Decimal(repr(float(tl.duration))) * Decimal(int(fps))
+    return max(2, int(exact.to_integral_value(rounding=ROUND_HALF_UP)))
 
 
 def repeat_of(anim: AnimationSpec) -> int:

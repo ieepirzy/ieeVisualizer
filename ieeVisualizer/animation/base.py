@@ -16,7 +16,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from ..render.base import Capabilities, CapabilityError, RenderError, RenderRequest, RenderWarning
 from ..render.base import issue as _issue
-from ..spec import SpecValidationError
+from ..spec import FigureSpec, SpecValidationError
 from .spec import MAX_DURATION_S, MAX_FRAMES, AnimationSpec, FrameColumn, TemplateTarget
 
 ANIMATION_MEDIA_TYPES = {"gif": "image/gif", "mp4": "video/mp4"}
@@ -46,7 +46,12 @@ class AnimationRequest:
         if self.format not in ANIMATION_MEDIA_TYPES:
             raise ValueError(f"unknown animation format {self.format!r}; use one of "
                              f"{', '.join(ANIMATION_MEDIA_TYPES)}.")
-        self.frame_request()  # validates size/dpi/units
+        try:
+            self.frame_request()  # validates size/dpi/units
+        except OverflowError:  # width x dpi beyond float range: no pixel size exists
+            raise ValueError(f"width={self.width!r}, height={self.height!r}, dpi={self.dpi!r} "
+                             f"({self.units}) give no representable pixel size; lower the "
+                             "size or dpi.") from None
 
     def frame_request(self, fmt: str = "png") -> RenderRequest:
         return RenderRequest(format=fmt, width=self.width, height=self.height,
@@ -115,13 +120,18 @@ class AnimationCapabilities:
     #: False for an adapter with a different look (Manim): it is used only
     #: when asked for by name (``AnimationRequest(adapter=...)``).
     auto_select: bool = True
+    #: Which render-work estimate :func:`enforce_limits` applies
+    #: (``ieeVisualizer.animation.cost``): "matplotlib" (per state) or
+    #: "manim" (per output frame).
+    cost_model: str = "matplotlib"
 
     def to_dict(self) -> dict[str, Any]:
         return {"figure": self.figure.to_dict(), "timelines": sorted(self.timelines),
                 "output_formats": sorted(self.output_formats), "max_frames": self.max_frames,
                 "max_duration_s": self.max_duration_s,
                 "templates": None if self.templates is None else sorted(self.templates),
-                "notes": list(self.notes), "auto_select": self.auto_select}
+                "notes": list(self.notes), "auto_select": self.auto_select,
+                "cost_model": self.cost_model}
 
 
 def timeline_kind(anim: AnimationSpec) -> str:
@@ -156,14 +166,23 @@ def base_unmet(anim: AnimationSpec, request: AnimationRequest,
     return out
 
 
-def enforce_limits(anim: AnimationSpec, request: AnimationRequest, n_states: int) -> int:
-    """Every resource guard, from counts alone, before anything is drawn:
-    frames, duration and poster (:class:`SpecValidationError`) and frame
+def enforce_limits(anim: AnimationSpec, request: AnimationRequest, n_states: int,
+                   figure: FigureSpec | None = None, *, cost_model: str = "matplotlib") -> int:
+    """Every resource guard, from counts alone, before any state is built:
+    frames, duration and poster (:class:`SpecValidationError`), frame
     area x output frames <= :data:`MAX_TOTAL_PIXELS` (:class:`AnimationError`,
-    ``animation_too_large``). Returns the output frame count.
+    ``animation_too_large``) and the estimated render work <=
+    :data:`~ieeVisualizer.animation.cost.MAX_RENDER_WORK_US`
+    (``animation_too_expensive``; states x (layers + groups + points), see
+    :mod:`ieeVisualizer.animation.cost`). Returns the output frame count.
 
-    :func:`render_animation` calls this for every adapter before selection;
-    adapters call it again themselves (they can be called directly)."""
+    ``figure``: the figure with its references resolved (the base figure of
+    a mark sweep or frame column; ``None`` for a template sweep). Defaults to
+    ``anim.figure``, whose unresolved references count as no rows.
+
+    :func:`render_animation` calls this for every adapter before its
+    ``render``; adapters call it again themselves (they can be called directly)."""
+    from .cost import MAX_RENDER_WORK_US, manim_work_us, matplotlib_work_us
     from .limits import frame_limit_issues, frame_total
 
     errors = [i for i in frame_limit_issues(anim, n_states) if i.severity == "error"]
@@ -176,6 +195,20 @@ def enforce_limits(anim: AnimationSpec, request: AnimationRequest, n_states: int
                                      f"{n_frames} frames of {w}x{h} px = {w * h * n_frames} "
                                      f"pixels exceed {MAX_TOTAL_PIXELS}; lower the size, dpi, "
                                      "fps, number of values or hold frames.")])
+    if cost_model == "manim":
+        work, unit = manim_work_us(anim, n_frames), f"{n_frames} output frames"
+    else:
+        work = matplotlib_work_us(anim, (w, h), n_states,
+                                  figure if figure is not None else anim.figure)
+        unit = f"{n_states} states"
+    if work > MAX_RENDER_WORK_US:
+        raise AnimationError([_issue("", "animation_too_expensive",
+                                     f"{unit} would take about {work / 1e6:.0f} s to render "
+                                     f"with {cost_model} (estimated from the number of states, "
+                                     "layers, series and points); at most "
+                                     f"{MAX_RENDER_WORK_US / 1e6:g} s is accepted. Use fewer "
+                                     "states, layers, samples or rows, or a smaller frame "
+                                     "size.")])
     return n_frames
 
 
@@ -196,6 +229,18 @@ def output_timing(fmt: str, fps: int, loop: bool) -> tuple[float, list[RenderWar
         warnings.append(RenderWarning("loop_ignored", "MP4 has no loop flag; looping is up to "
                                       "the player.", "/loop"))
     return 1000.0 / fps, warnings
+
+
+def size_warnings(request: AnimationRequest) -> list[RenderWarning]:
+    """``frame_size_padded`` for an MP4 of odd width or height: yuv420p needs
+    even sizes, so the stored frames are one pixel larger (the GIF and the
+    poster keep the requested size)."""
+    w, h = request.frame_request().size_px
+    if request.format != "mp4" or not (w % 2 or h % 2):
+        return []
+    return [RenderWarning("frame_size_padded", f"MP4 (yuv420p) stores even frame sizes: the "
+                          f"requested {w}x{h} px frames are stored as {w + w % 2}x{h + h % 2} "
+                          "px.", "")]
 
 
 @runtime_checkable
@@ -282,8 +327,6 @@ def render_animation(anim: AnimationSpec, request: AnimationRequest | None = Non
     states; the adapter then gets a resolver that returns that same data, so
     the count checked is the count rendered and each reference is resolved
     once."""
-    from .frames import resolved_frame_keys
-    from .limits import sweep_state_count
     from .validate import validate_animation
 
     request = request or AnimationRequest()
@@ -291,28 +334,54 @@ def render_animation(anim: AnimationSpec, request: AnimationRequest | None = Non
     if errors:
         raise SpecValidationError(errors)
     adapter = (registry or default_animation_registry()).select(anim, request)
-    tl = anim.timeline
-    resolver = _memoized(resolver)
-    if isinstance(tl, FrameColumn):
-        from ..render.prepare import prepare
-
-        n_states = len(resolved_frame_keys(prepare(anim.figure, resolver).spec, tl)[0])
-    else:
-        n_states = sweep_state_count(tl, anim.fps)
-    enforce_limits(anim, request, n_states)
+    resolver = memoized(resolver)
+    n_states, figure = counted_states(anim, resolver)
+    enforce_limits(anim, request, n_states, figure,
+                   cost_model=getattr(adapter.capabilities, "cost_model", "matplotlib"))
     return adapter.render(anim, request, resolver=resolver)
 
 
-def _memoized(resolver):
-    """``resolver`` answering each DatasetRef object once (None stays None)."""
-    if resolver is None:
-        return None
-    cache: dict[int, tuple[Any, Any]] = {}
+def counted_states(anim: AnimationSpec, resolver=None) -> tuple[int, FigureSpec | None]:
+    """``(distinct states, base figure with references resolved)`` without
+    building any state: a sweep's count is arithmetic, a frame column's is
+    the number of distinct values in its resolved data. Pass a
+    :func:`memoized` resolver so the render that follows sees the same data."""
+    from ..render.prepare import prepare
+    from .frames import resolved_frame_keys
+    from .limits import sweep_state_count
+
+    figure = prepare(anim.figure, resolver).spec if anim.figure is not None else None
+    tl = anim.timeline
+    if isinstance(tl, FrameColumn):
+        return len(resolved_frame_keys(figure, tl)[0]), figure
+    return sweep_state_count(tl, anim.fps), figure
+
+
+def memoized(resolver):
+    """``resolver`` answering each distinct DatasetRef once (None stays None).
+
+    References are keyed by content (two equal references are one dataset),
+    so every count, plan, limit pass, poster and manifest record made through
+    the returned callable describes the same snapshot, even when the
+    underlying source changes between calls. Wrapping a memoized resolver
+    returns it unchanged, so callers can wrap freely."""
+    if resolver is None or getattr(resolver, "_ieev_memoized", False):
+        return resolver
+    from ..spec._common import canonical_json
+    from ..spec.data import dataset_to_dict
+
+    cache: dict[Any, tuple[Any, Any]] = {}
 
     def resolve(ref):
-        hit = cache.get(id(ref))
-        if hit is None or hit[0] is not ref:
-            hit = cache[id(ref)] = (ref, resolver(ref))
+        try:
+            key: Any = canonical_json(dataset_to_dict(ref))
+        except Exception:  # noqa: BLE001 - not a serializable reference: key by identity
+            key = ("id", id(ref))
+        hit = cache.get(key)
+        if hit is None:
+            hit = cache[key] = (ref, resolver(ref))  # the ref is kept: ids stay unique
         return hit[1]
 
+    resolve._ieev_memoized = True  # type: ignore[attr-defined]
     return resolve
+

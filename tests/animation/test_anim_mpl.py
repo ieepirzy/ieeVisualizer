@@ -188,6 +188,16 @@ def test_mp4_when_ffmpeg_exists():
     assert "mp4" in MatplotlibAnimationAdapter().capabilities.output_formats
 
 
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg is not installed")
+def test_odd_sized_mp4_says_its_frames_are_padded():
+    odd = dataclasses.replace(SMALL, format="mp4", width=161, height=121)
+    res = render_animation(sine_anim(), odd)
+    assert "frame_size_padded" in [w.code for w in res.warnings]
+    assert "161x121" in str([w.message for w in res.warnings])
+    even = render_animation(sine_anim(), dataclasses.replace(SMALL, format="mp4"))
+    assert "frame_size_padded" not in [w.code for w in even.warnings]
+
+
 def test_capability_selection_reports_what_each_adapter_lacks():
     from ieeVisualizer.animation.manim_adapter import ManimAdapter
 

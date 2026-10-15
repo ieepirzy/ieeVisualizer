@@ -15,10 +15,13 @@ it depends on the ffmpeg build.
 from __future__ import annotations
 
 import io
+import itertools
 import os
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 from collections.abc import Iterable
 
 import numpy as np
@@ -79,7 +82,15 @@ def _has_x264(exe: str) -> bool:
 
 def encode_mp4(frames: Iterable[np.ndarray], fps: int, exe: str, timeout: float = 300) -> bytes:
     """Frames are streamed to ffmpeg's stdin one at a time (never joined into
-    one buffer); stderr goes to a file so a chatty ffmpeg cannot block."""
+    one buffer); stderr goes to a file so a chatty ffmpeg cannot block.
+
+    ``timeout`` (seconds) bounds the whole encode, writing included: frames
+    are written by a helper thread, because a write to a pipe that ffmpeg
+    does not read blocks without any timeout. When the deadline passes,
+    ffmpeg is killed and reaped and ``encoder_timeout`` is raised."""
+    from ..render.base import issue
+    from .base import AnimationError
+
     it = iter(frames)
     first = next(it)
     h, w = first.shape[:2]
@@ -93,32 +104,55 @@ def encode_mp4(frames: Iterable[np.ndarray], fps: int, exe: str, timeout: float 
                "-pix_fmt", "yuv420p", "-map_metadata", "-1", "-fflags", "+bitexact",
                "-flags:v", "+bitexact", "-movflags", "+faststart", out]
         with open(os.path.join(tmp, "stderr.txt"), "w+b") as err:
+            deadline = time.monotonic() + timeout
             proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                     stderr=err)
-            try:
+            failed: list[BaseException] = []
+
+            def feed() -> None:
                 try:
-                    proc.stdin.write(np.ascontiguousarray(first).tobytes())
-                    for f in it:
-                        proc.stdin.write(np.ascontiguousarray(f).tobytes())
-                except BrokenPipeError:
-                    pass  # ffmpeg exited early; its exit code and stderr say why
+                    for f in itertools.chain([first], it):
+                        data = np.ascontiguousarray(f).tobytes()
+                        try:
+                            proc.stdin.write(data)
+                        except (BrokenPipeError, ValueError):
+                            return  # ffmpeg exited (or was killed); its exit code says why
+                except BaseException as e:  # noqa: BLE001 - a frame failed; re-raised below
+                    failed.append(e)
                 finally:
                     try:
                         proc.stdin.close()
-                    except BrokenPipeError:
+                    except OSError:
                         pass
-                code = proc.wait(timeout=timeout)
-            except BaseException:
-                proc.kill()
-                proc.wait()
-                raise
-            if code != 0:
-                from ..render.base import issue
-                from .base import AnimationError
 
+            writer = threading.Thread(target=feed, name="ieeVisualizer-mp4-writer", daemon=True)
+            try:
+                writer.start()
+                writer.join(max(0.0, deadline - time.monotonic()))
+                if writer.is_alive():
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                code = proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                _stop(proc, writer)
+                raise AnimationError([issue("", "encoder_timeout",
+                                            f"ffmpeg did not finish encoding within {timeout:g} s "
+                                            "and was stopped.")]) from None
+            except BaseException:
+                _stop(proc, writer)
+                raise
+            if failed:
+                raise failed[0]
+            if code != 0:
                 err.seek(0)
                 raise AnimationError([issue("", "encoder_failed",
                                             f"ffmpeg exited with {code}: "
                                             f"{err.read().decode(errors='replace').strip()}")])
         with open(out, "rb") as fh:
             return fh.read()
+
+
+def _stop(proc: subprocess.Popen, writer: threading.Thread) -> None:
+    """Kill and reap ffmpeg; its closed pipe then ends a blocked write."""
+    proc.kill()
+    proc.wait()
+    writer.join(10)

@@ -132,3 +132,21 @@ def test_export_records_the_manim_frame_as_poster_with_its_adapter(tmp_path):
     poster = png_pixels(files["poster.png"])
     frame = _video_frames(files["animation.mp4"])[2]
     assert poster.shape == frame.shape and np.array_equal(poster, frame)
+
+
+@needs_manim
+def test_odd_request_size_is_kept_in_gif_and_poster():
+    """Manim renders even sizes; frames are cropped back to the request, so
+    the GIF and poster are 161x121 as asked; the MP4 says it is padded."""
+    from anim_helpers import png_pixels
+
+    odd = dict(width=161, height=121, units="px", adapter="manim")
+    gif = ManimAdapter().render(sine_anim(poster=1), AnimationRequest(format="gif", **odd))
+    frames, _ = gif_frames(gif.content)
+    assert {f.shape for f in frames} == {(121, 161, 3)}
+    assert png_pixels(gif.poster_png).shape == (121, 161, 3)
+    assert "frame_size_padded" not in [w.code for w in gif.warnings]
+    mp4 = ManimAdapter().render(sine_anim(poster=1), AnimationRequest(format="mp4", **odd))
+    assert _video_frames(mp4.content)[0].shape == (122, 162, 3)
+    assert png_pixels(mp4.poster_png).shape == (121, 161, 3)
+    assert "frame_size_padded" in [w.code for w in mp4.warnings]

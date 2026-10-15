@@ -50,6 +50,7 @@ from .base import (
     base_unmet,
     enforce_limits,
     output_timing,
+    size_warnings,
     timeline_kind,
 )
 from .frames import sweep_values, template_params
@@ -81,6 +82,7 @@ CAPABILITIES = AnimationCapabilities(
            "legend) and the vector_field_2d template in expression mode",
            "used only when requested by name (adapter='manim'), never selected automatically"),
     auto_select=False,
+    cost_model="manim",
 )
 
 
@@ -125,7 +127,8 @@ class ManimAdapter:
         if errors:
             raise SpecValidationError(errors)
         if isinstance(anim.timeline, ParameterSweep):  # guards first: spec + request only
-            enforce_limits(anim, request, sweep_state_count(anim.timeline, anim.fps))
+            enforce_limits(anim, request, sweep_state_count(anim.timeline, anim.fps),
+                           cost_model="manim")
         missing = self.unmet(anim, request)
         if missing:
             raise AnimationError([issue("", "unsupported_by_adapter",
@@ -152,6 +155,7 @@ class ManimAdapter:
                                         "the frame-to-state mapping would be wrong.")])
         delay, timing = output_timing(request.format, anim.fps, anim.loop)
         warnings.extend(timing)
+        warnings.extend(size_warnings(request))
         return AnimationResult(
             content=content, format=request.format, media_type=request.media_type,
             adapter_name=self.name, adapter_version=self.version, frame_count=n_frames,
@@ -381,7 +385,13 @@ def _run(construct, title, anim: AnimationSpec, request: AnimationRequest, n_val
     """``(content, frames decoded, poster PNG)``. Manim writes an MP4; it is
     decoded one frame at a time (never all held): for GIF each frame goes
     straight into the Pillow encoder, for MP4 frames are only counted. The
-    poster is frame ``poster`` of that clip, as PNG."""
+    poster is frame ``poster`` of that clip, as PNG.
+
+    Manim's MP4 (yuv420p) needs even sizes, so an odd ``w`` or ``h`` is
+    rendered one pixel larger and every decoded frame is cropped back to the
+    requested ``w`` x ``h``: the GIF and the poster have the requested size.
+    The MP4 itself keeps the even size, as every yuv420p MP4 here does
+    (:func:`~ieeVisualizer.animation.base.size_warnings` says so)."""
     import manim as M
 
     w, h = request.frame_request().size_px
@@ -428,6 +438,7 @@ def _run(construct, title, anim: AnimationSpec, request: AnimationRequest, n_val
 
             def stream():
                 for k, frame in enumerate(_decode(path)):
+                    frame = np.ascontiguousarray(frame[:h, :w])
                     seen["n"] = k + 1
                     if k == poster:
                         seen["poster"] = _png(frame)

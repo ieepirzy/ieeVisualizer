@@ -5,7 +5,7 @@ FigureSpec validation; paths are JSON pointers into the serialized
 AnimationSpec, so a figure problem is reported under ``/figure/...``.
 
 Codes (besides every FigureSpec code, prefixed with ``/figure``):
-``figure_missing`` / ``figure_not_allowed``, ``invalid_value``,
+``figure_missing`` / ``figure_not_allowed``, ``invalid_value``, ``invalid_type``,
 ``sweep_source_missing`` / ``sweep_source_conflict``, ``too_few_values``,
 ``unknown_layer``, ``not_a_symbolic_function``, ``unknown_parameter``,
 ``unknown_template``, ``unsupported_parameter``, ``unknown_dataset``,
@@ -123,6 +123,13 @@ def _check_sweep(anim: AnimationSpec, tl: ParameterSweep, out: _Issues) -> bool:
     elif any(v is None for v in ranged):
         out.add(p, "sweep_source_missing",
                 "a sweep needs 'values', or all of 'start', 'end' and 'duration' (seconds).")
+    elif any(not is_number(v) for v in ranged):
+        for k, v in zip(("start", "end", "duration"), ranged):
+            if not is_number(v):  # bool is not a number here
+                out.add(f"{p}/{k}", "invalid_type",
+                        f"{k} must be a number, got {type(v).__name__} {v!r}.")
+    elif not math.isfinite(tl.start) or not math.isfinite(tl.end):
+        out.add(p, "invalid_value", "start and end must be finite numbers.")
     elif not is_number(tl.duration) or not math.isfinite(tl.duration * anim.fps) \
             or tl.duration <= 0:
         out.add(p + "/duration", "invalid_value",

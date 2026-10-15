@@ -14,6 +14,8 @@ static render of the poster state's FigureSpec (with the animation's fixed
 axis limits), which equals that frame pixel for pixel; for an adapter with
 its own look (Manim), the frame decoded from its clip. Every output is
 rendered before anything is written; a failure leaves no partial artifact.
+Each dataset reference is resolved once per export, so the clips, the poster
+and the manifest's dataset hashes describe the same data.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from .base import (
     AnimationError,
     AnimationRegistry,
     AnimationRequest,
+    memoized,
     render_animation,
 )
 from .spec import AnimationSpec, animation_hash, timeline_to_dict, to_json
@@ -121,6 +124,10 @@ def export_animation(
     if not fmts or any(f not in ANIMATION_MEDIA_TYPES for f in fmts):
         raise ValueError(f"formats must be a non-empty subset of {list(ANIMATION_MEDIA_TYPES)}.")
     base = request or AnimationRequest()
+    # One resolution per reference for the whole export: every format, the
+    # frame plan behind the poster and the manifest's dataset records all see
+    # the snapshot that was rendered, even if the source changes meanwhile.
+    resolver = memoized(resolver)
 
     outputs, results = [], []
     for fmt in fmts:
