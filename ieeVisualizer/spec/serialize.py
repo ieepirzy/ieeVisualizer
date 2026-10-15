@@ -13,18 +13,17 @@ Canonical form rules (so equal specs serialize to identical bytes):
 
 from __future__ import annotations
 
-import copy
 import json
 from typing import Any
 
-from ._common import canonical_json, fail, sha256_of
+from ._common import canonical_json, copy_tree, fail, sha256_of
 from .figure import FigureSpec, figure_from_dict, figure_to_dict
 
 
 def to_dict(spec: FigureSpec) -> dict[str, Any]:
     """Plain-JSON dict form of ``spec``. Deep-copied, so mutating the result
     (e.g. while patching) can never reach back into ``spec``."""
-    return copy.deepcopy(figure_to_dict(spec))
+    return copy_tree(figure_to_dict(spec))
 
 
 def from_dict(d: Any) -> FigureSpec:

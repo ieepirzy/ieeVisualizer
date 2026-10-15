@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from ..spec._common import ptr_join
 from .draw import Embed, esc, to_svg
 from .flow import flow_outline
-from .layout import GAP, edge_text, flow_items, kpi_lines, table_cells
+from .layout import GAP, edge_text, flow_items, kpi_lines, slot_columns, table_cells
 from .model import Card, FigureComponent, Flow, Grid, Kpi, Node, Note, Stack, Table, Text, ViewSpec
 from .text import NO_DATA, NULL_CELL, Run, parse_markdown
 
@@ -83,9 +83,8 @@ class _Html:
         if isinstance(n, (Stack, Grid, Card)):
             kids = list(enumerate(n.children))
             inner_w = w - 34 if isinstance(n, Card) else w
-            cols = (max(1, n.columns) if isinstance(n, Grid) else
-                    len(kids) if isinstance(n, Stack) and n.direction == "horizontal" else 1)
-            cw = (inner_w - GAP * (cols - 1)) / max(cols, 1)
+            cols = 1 if isinstance(n, Card) else slot_columns(n)
+            cw = (inner_w - GAP * (cols - 1)) / cols
             body = "".join(self.node(c, ptr_join(path, "children", i), cw) for i, c in kids)
             if cols > 1:
                 body = (f'<div class="iv-row" style="grid-template-columns:'

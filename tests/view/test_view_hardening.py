@@ -262,10 +262,10 @@ def test_limits_are_documented_with_their_values():
 
 
 def test_png_height_is_bounded():
-    v = ViewSpec(root=Stack([Text(" ".join(["word"] * 1900)) for _ in range(20)]))
+    v = ViewSpec(root=Stack([Text(" ".join(["word"] * 1900)) for _ in range(5)]))
     assert _errors(v) == []
     with pytest.raises(RenderError) as ei:
-        render_view(v, "png")
+        render_view(v, "png", scale=4)
     assert ei.value.issues[0].code == "view_too_large"
 
 

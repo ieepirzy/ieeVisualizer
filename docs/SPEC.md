@@ -54,7 +54,11 @@ fields (`samples`, `bins`) accept integer-valued floats (`200.0`) and store
 ints. NaN and infinities are not JSON numbers: `from_json` refuses the
 `NaN`/`Infinity` constants anywhere in the text, `from_dict` refuses them
 with the pointer of the value, constructors raise `ValueError`, and
-`validate` reports `non_finite_number` for one assigned later.
+`validate` reports `non_finite_number` for one assigned later. Free-form JSON
+(`metadata`, `style`, `provenance.extra`) may nest at most 64 levels
+(`MAX_JSON_DEPTH`); deeper is refused by `from_dict` and reported by
+`validate` as `too_deep`, so no input reaches recursive code (copying,
+hashing) that would raise `RecursionError`.
 
 **Marks** share `type`, `data` (dataset name), `encoding` (channel ->
 `{"field": column, "title"?}`; `"y": "col"` shorthand is accepted),

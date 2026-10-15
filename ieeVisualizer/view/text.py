@@ -8,15 +8,23 @@
 * :func:`text_width` - advance width in px of a string in DejaVu Sans (the
   font matplotlib ships, so it is always present), measured with
   matplotlib's FreeType binding. Used for wrapping and box sizes.
-* :func:`format_number` - no invented precision: ``decimals=None`` writes
-  integral values without decimals and other values at their stored
-  precision.
+* :func:`format_number` - no invented digits. A float is formatted from its
+  shortest decimal form (``Decimal(repr(v))``), never from its binary
+  expansion: ``decimals=None`` writes integral values without decimals and
+  other values at their stored precision; ``decimals=n`` rounds that decimal
+  form half-to-even. From ``1e15`` in magnitude (where a float stops holding
+  every integer digit) numbers are written in exponent notation with at most
+  17 significant digits, ``decimals`` ignored: ``1e+23``, not
+  ``99 999 999 999 999 991 611 392``. A result that rounds to zero is
+  written without a minus sign.
 """
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
+from decimal import Decimal, localcontext
 from functools import lru_cache
 
 NO_DATA = "no data"
@@ -112,12 +120,20 @@ def _unit_width(s: str, bold: bool, italic: bool, mono: bool) -> float:
     return font.get_width_height()[0] / 64.0
 
 
+def _approx(s: str, bold: bool, italic: bool, mono: bool) -> float:
+    """Width of ``s`` at size 1 from cached per-glyph advances (no kerning):
+    only used to tell that a string is far too wide, never to place it."""
+    return sum(_unit_width(ch, bold, italic, mono) for ch in s) / 1000.0
+
+
 def run_width(r: Run, size: float) -> float:
     return text_width(r.text, size, r.bold, r.italic, r.code)
 
 
 def wrap_runs(runs: list[Run], size: float, width: float) -> list[list[Run]]:
-    """Greedy word wrap; a single word wider than ``width`` gets its own line."""
+    """Greedy word wrap. A word wider than ``width`` is broken across lines
+    (at least one character per line), so no line is wider than ``width``
+    and no label is ever drawn far past its slot."""
     words: list[Run] = []
     for r in runs:
         for i, part in enumerate(re.split(r"(\s+)", r.text)):
@@ -126,7 +142,10 @@ def wrap_runs(runs: list[Run], size: float, width: float) -> list[list[Run]]:
     lines: list[list[Run]] = [[]]
     used = 0.0
     for w in words:
-        ww = run_width(w, size)
+        # a word far wider than the line is broken without measuring all of it
+        # (FreeType costs ~10 us per character; a word can be 10 000 long)
+        far = len(w.text) > 64 and _approx(w.text, w.bold, w.italic, w.code) * size > 2 * width
+        ww = math.inf if far else run_width(w, size)
         if w.text == " ":
             if lines[-1]:
                 lines[-1].append(w)
@@ -137,6 +156,18 @@ def wrap_runs(runs: list[Run], size: float, width: float) -> list[list[Run]]:
                 lines[-1].pop()
             lines.append([])
             used = 0.0
+        if ww > width and len(w.text) > 1:  # alone on its line and still too wide
+            rest = w.text
+            while True:  # O(k log k) per line of k characters; never re-measures the rest
+                k = fit_len(rest, size, width, w.bold, italic=w.italic, mono=w.code)
+                if k >= len(rest):
+                    break
+                k = max(1, k)
+                lines[-1].append(Run(rest[:k], w.bold, w.italic, w.code))
+                lines.append([])
+                rest = rest[k:]
+            w = Run(rest, w.bold, w.italic, w.code)
+            ww = run_width(w, size)
         lines[-1].append(w)
         used += ww
     while lines[-1] and lines[-1][-1].text == " ":
@@ -148,18 +179,94 @@ def wrap_text(s: str, size: float, width: float, bold: bool = False) -> list[str
     return ["".join(r.text for r in ln) for ln in wrap_runs([Run(s, bold)], size, width)]
 
 
-def format_number(v: float | int | None, decimals: int | None = None) -> str:
-    """``None`` -> ``"no data"``; thousands separated by a thin space."""
+#: From this magnitude on numbers are written in exponent notation.
+SCI_FROM = Decimal("1e15")
+SCI_DIGITS = 17  # significant digits kept in exponent notation (a float has <= 17)
+
+
+def as_decimal(v: float | int | Decimal) -> Decimal:
+    """``v`` as written: an int exactly, a float as its shortest decimal form."""
+    if isinstance(v, Decimal):
+        return v
+    if isinstance(v, int) or (hasattr(v, "dtype") and v.dtype.kind in "iu"):
+        return Decimal(int(v))
+    return Decimal(repr(float(v)))  # float() first: repr(numpy.float64) is not a number
+
+
+def _sci(d: Decimal) -> str:
+    with localcontext() as ctx:
+        ctx.prec = SCI_DIGITS
+        d = (+d).normalize()  # unary plus rounds to the context precision
+    sign, digits, exp = d.as_tuple()
+    m = "".join(map(str, digits))
+    e = exp + len(m) - 1
+    return ("-" if sign else "") + m[0] + ("." + m[1:] if len(m) > 1 else "") + f"e+{e}"
+
+
+def is_zero_text(s: str) -> bool:
+    """Does the formatted number ``s`` read as zero (no non-zero digit)?"""
+    return not re.search("[1-9]", s.split("e")[0])
+
+
+def format_number(v: float | int | Decimal | None, decimals: int | None = None) -> str:
+    """``None`` -> ``"no data"``; thousands separated by a thin space. See the
+    module docstring for the rules."""
     if v is None:
         return NO_DATA
-    if decimals is not None:
-        s = f"{v:,.{decimals}f}"
-    elif float(v).is_integer():
-        s = f"{int(v):,}"
+    d = as_decimal(v)
+    if not d.is_finite():  # validation keeps these out of views; never crash on one
+        s = str(float(d))
+    elif abs(d) >= SCI_FROM:
+        s = _sci(d)
+    elif decimals is not None:
+        s = f"{d:,.{decimals}f}"
+    elif d == d.to_integral_value():
+        s = f"{int(d):,}"
     else:
-        s = f"{v:,}"
-    s = s.replace(",", " ")
-    return "−" + s[1:] if s.startswith("-") else s  # not an exponent's "-" (1e-05)
+        s = f"{float(d):,}"  # shortest repr: the digits as written, 1e-05 stays 1e-05
+    if s.startswith("-") and d.is_finite() and is_zero_text(s):
+        s = s[1:]  # -0.04 at one decimal is 0.0, not -0.0
+    s = s.replace(",", "\u2009")
+    return "\u2212" + s[1:] if s.startswith("-") else s  # not an exponent's "-" (1e-05)
+
+
+def fit_len(s: str, size: float, w: float, bold: bool = False, suffix: str = "", *,
+            italic: bool = False, mono: bool = False) -> int:
+    """Largest ``k`` with ``s[:k] + suffix`` at most ``w`` px wide (0 if none).
+
+    The cut is estimated from per-character advances (cached per glyph), then
+    settled with exact measurements, galloping away from the estimate and
+    bisecting; kerning moves the estimate by a character or two at most, so a
+    few measurements of about ``k`` characters settle it. The cost does not
+    depend on ``len(s)``: a 10 000-character string in a 100 px slot is
+    measured only around its first few dozen characters."""
+    def fits(k: int) -> bool:
+        return measure(s[:k] + suffix, size, bold, italic, mono) <= w
+
+    budget = w * 1000.0 / size - (_unit_width(suffix, bold, italic, mono) if suffix else 0.0)
+    est = 0
+    for ch in s:  # stops at the first character past the budget
+        budget -= _unit_width(ch, bold, italic, mono)
+        if budget < 0:
+            break
+        est += 1
+    if fits(est):
+        lo, step = est, 1  # lo fits; look for a hi that does not
+        while lo + step <= len(s) and fits(lo + step):
+            lo, step = lo + step, step * 2
+        hi = min(lo + step, len(s) + 1)
+    else:
+        hi, step = est, 1  # hi does not fit; look for a lo that does
+        while hi - step > 0 and not fits(hi - step):
+            hi, step = hi - step, step * 2
+        lo = max(hi - step, 0)
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if fits(mid):
+            lo = mid
+        else:
+            hi = mid
+    return lo
 
 
 def with_unit(s: str, unit: str | None) -> str:

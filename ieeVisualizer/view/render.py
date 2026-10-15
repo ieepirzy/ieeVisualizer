@@ -31,7 +31,7 @@ from .draw import Embed, esc, num, to_png, to_svg
 from .layout import layout_view
 from .limits import MAX_PNG_SIDE_PX
 from .model import ViewSpec
-from .validate import errors
+from .validate import errors, too_narrow_at
 
 RENDERER_NAME = "ieeVisualizer.view"
 RENDERER_VERSION = "1.0.0"
@@ -170,6 +170,9 @@ def render_view(view: ViewSpec, format: str = "svg", *, width: float = 960.0,
     errs = errors(view)
     if errs:
         raise SpecValidationError(errs)
+    narrow = too_narrow_at(view, width)  # validation checked the default width only
+    if narrow is not None:
+        raise SpecValidationError([narrow])
     figs = FigureRenderer(resolver)
     if format == "html":
         from .html import render_html

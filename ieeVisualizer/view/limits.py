@@ -18,6 +18,10 @@ import re
 from collections.abc import Iterator
 from typing import Any
 
+# MAX_JSON_DEPTH: nesting of free-form JSON (view/figure ``metadata``,
+# mark/annotation ``style``, ``provenance.extra``); the object itself is
+# depth 1. Shared with the FigureSpec parser, which enforces it there too.
+from ..spec._common import MAX_JSON_DEPTH as MAX_JSON_DEPTH
 from ..spec._common import ptr_join
 
 #: Container nesting (``stack``/``grid``/``card``); the root is depth 1.
@@ -38,15 +42,24 @@ MAX_FLOW_DUMMY_NODES = 4000
 MAX_TABLE_ROWS = 300
 #: Table cells drawn (shown rows x columns), summed over the view.
 MAX_TABLE_CELLS = 1000
+#: Columns one table draws (independent of ``max_rows``: a table with no rows
+#: still lays out every header).
+MAX_TABLE_COLUMNS = 50
+#: Table columns drawn, summed over the view.
+MAX_TOTAL_TABLE_COLUMNS = 200
 #: Longest side of a PNG, in pixels (``height * scale``). Checked after layout,
 #: since height depends on wrapping; HTML and SVG have no such limit.
 MAX_PNG_SIDE_PX = 32_000
 #: Characters in any one string of the view (text, labels, titles, table
 #: cells, embedded figure strings, metadata).
 MAX_TEXT_CHARS = 10_000
-#: Characters of text the layout measures, summed over the view's text,
-#: notes, labels and titles (not dataset values).
-MAX_TOTAL_TEXT_CHARS = 200_000
+#: Characters of text the layout measures, summed over the view: its title,
+#: text, notes, labels, titles, units (a KPI unit three times: value, delta,
+#: comparison), table headers (column name + unit) and drawn string cells.
+MAX_TOTAL_TEXT_CHARS = 50_000
+#: Narrowest slot a grid cell or horizontal-stack child may get, in px, at
+#: the width the view is rendered at (validation uses the default, 960).
+MIN_SLOT_WIDTH = 80
 
 # XML 1.0 forbids C0 controls other than tab/LF/CR, lone surrogates and
 # U+FFFE/U+FFFF; such a string cannot be written into SVG/HTML at all.

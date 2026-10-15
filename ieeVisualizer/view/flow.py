@@ -45,6 +45,8 @@ SLOT_GAP = 26.0
 MIN_LAYER_GAP = 56.0
 MARGIN = 24.0
 SWEEPS = 4
+LANE_STEP = 8.0  # distance between two detours sharing a channel
+LOOP_H = 16.0  # how far a self-loop rises above its box
 
 
 @dataclass(frozen=True)
@@ -222,8 +224,8 @@ def _clip(b: Box, tx: float, ty: float) -> tuple[float, float]:
 
 def _self_loop(b: Box, lr: bool) -> list[tuple[float, float]]:
     if lr:
-        return [(b.cx + b.w / 4, b.y), (b.cx + b.w / 4, b.y - 16), (b.cx - b.w / 4, b.y - 16),
-                (b.cx - b.w / 4, b.y)]
+        return [(b.cx + b.w / 4, b.y), (b.cx + b.w / 4, b.y - LOOP_H),
+                (b.cx - b.w / 4, b.y - LOOP_H), (b.cx - b.w / 4, b.y)]
     return [(b.x + b.w, b.cy - b.h / 4), (b.x + b.w + 16, b.cy - b.h / 4),
             (b.x + b.w + 16, b.cy + b.h / 4), (b.x + b.w, b.cy + b.h / 4)]
 
@@ -261,35 +263,100 @@ def _longest_mid(points: list[tuple[float, float]]) -> tuple[float, float]:
     return (x0 + x1) / 2, (y0 + y1) / 2
 
 
+def _grid_channels(rc1: tuple[int, int], rc2: tuple[int, int], rows: int, ncols: int
+                   ) -> list[tuple[tuple[str, int], int]]:
+    """The channels a detour from cell ``rc1`` to ``rc2`` runs in, as
+    ``((axis, gap index), side)``. Row gap ``g`` lies below row ``g``, column
+    gap ``g`` right of column ``g`` (``g == rows - 1`` / ``ncols - 1`` is the
+    outer channel past the last row / column). ``side`` is 0 when the run's
+    stub(s) come from the box above / left of the channel, 1 from below /
+    right."""
+    (r1, c1), (r2, c2) = rc1, rc2
+    if r1 == r2:  # along the row gap below (above for the last row)
+        below = r1 < rows - 1 or r1 == 0
+        return [(("row", r1 if below else r1 - 1), 0 if below else 1)]
+    if c1 == c2:  # along the column gap right (left for the last column)
+        right = c1 < ncols - 1 or c1 == 0
+        return [(("col", c1 if right else c1 - 1), 0 if right else 1)]
+    down, east = r2 > r1, c2 > c1  # leave through the row gap, enter b from the column gap
+    return [(("row", r1 if down else r1 - 1), 0 if down else 1),
+            (("col", c2 - 1 if east else c2), 1 if east else 0)]
+
+
+def _row_gap(runs: int, gap: float) -> float:
+    # lanes keep 8 px from the box above and LOOP_H + 8 from the box below,
+    # so a run never meets the self-loop of the box below the channel
+    return max(gap, (runs - 1) * LANE_STEP + LOOP_H + 16)
+
+
+def _col_gap(runs: int, gap: float) -> float:
+    return max(gap, (runs - 1) * LANE_STEP + 16)
+
+
 def _grid(flow: Flow, w: float, h: float, gap: float) -> FlowGeometry:
     """Row-major cells. An edge is a straight line when that line clears every
     other box (by 4 px); otherwise it detours orthogonally through the gaps
     between rows and columns, which never contain a box, so an edge never
-    reads as passing through a node it does not touch."""
+    reads as passing through a node it does not touch.
+
+    Every detour gets its own lane in each gap it runs along, and a gap is
+    widened until all its lanes fit ``LANE_STEP`` apart, so two detours never
+    share a run. Within a gap, runs whose stubs come from the boxes above
+    (left) take the lanes nearer those boxes, so a stub never runs along
+    another stub from the opposite side either. Widening a gap moves boxes,
+    which can block a straight edge; the layout is repeated until it is
+    stable (a detour stays a detour, so this ends after at most E rounds)."""
     n = len(flow.nodes)
     cols = flow.layout.columns or max(1, math.ceil(math.sqrt(n)))
     ncols = min(cols, n)
     rows = math.ceil(n / cols) if n else 0
-    boxes: dict[str, Box] = {}
-    cell: dict[str, tuple[int, int]] = {}
-    for i, nd in enumerate(flow.nodes):
-        r, c = divmod(i, cols)
-        boxes[nd.id] = Box(MARGIN + c * (w + gap), MARGIN + r * (h + gap), w, h)
-        cell[nd.id] = (r, c)
-    all_boxes = list(boxes.items())
-    used: dict[tuple[str, int], int] = {}  # channel -> runs already in it
-    extra = [0.0, 0.0]  # canvas growth right / below for outer channels
-
-    def lane_offset(key: tuple[str, int]) -> float:
-        k = used.get(key, 0)
-        used[key] = k + 1
-        step = (k + 1) // 2 * 8.0 * (1 if k % 2 else -1)
-        lim = gap / 2 - 8
-        return max(-lim, min(lim, step))
-
+    cell = {nd.id: divmod(i, cols) for i, nd in enumerate(flow.nodes)}
+    rgap = [gap] * max(rows, 1)  # rgap[g]: gap below row g
+    cgap = [gap] * max(ncols, 1)  # cgap[g]: gap right of column g
+    detour: set[int] = set()
+    while True:
+        ys = [MARGIN + sum(h + rgap[g] for g in range(r)) for r in range(rows)]
+        xs = [MARGIN + sum(w + cgap[g] for g in range(c)) for c in range(ncols)]
+        boxes = {nd.id: Box(xs[cell[nd.id][1]], ys[cell[nd.id][0]], w, h) for nd in flow.nodes}
+        all_boxes = list(boxes.items())
+        for k, e in enumerate(flow.edges):
+            a, b = boxes.get(e.source), boxes.get(e.target)
+            if a is None or b is None or a is b or k in detour:
+                continue
+            p, q = _clip(a, b.cx, b.cy), _clip(b, a.cx, a.cy)
+            if any(_hits(p, q, bx, 4.0) for nid, bx in all_boxes
+                   if nid not in (e.source, e.target)):
+                detour.add(k)
+        runs: dict[tuple[str, int], list[tuple[int, int]]] = {}
+        for k in sorted(detour):
+            e = flow.edges[k]
+            for ch, side in _grid_channels(cell[e.source], cell[e.target], rows, ncols):
+                runs.setdefault(ch, []).append((side, k))
+        new_r = [_row_gap(len(runs.get(("row", g), ())), gap) for g in range(len(rgap))]
+        new_c = [_col_gap(len(runs.get(("col", g), ())), gap) for g in range(len(cgap))]
+        if (new_r, new_c) == (rgap, cgap):
+            break
+        rgap, cgap = new_r, new_c
+    lane: dict[tuple[tuple[str, int], int], float] = {}  # (channel, edge) -> coordinate
+    for ch, rs in runs.items():
+        axis, g = ch
+        rs.sort()
+        if axis == "row":
+            edge = ys[g] + h
+            centre = edge + (8 + rgap[g] - LOOP_H - 8) / 2
+        else:
+            edge = xs[g] + w
+            centre = edge + cgap[g] / 2
+        for i, (_, k) in enumerate(rs):
+            lane[ch, k] = centre + (i - (len(rs) - 1) / 2) * LANE_STEP
+    extra = [0.0, 0.0]  # canvas growth right / below for the outer channels
+    if ("col", ncols - 1) in runs:
+        extra[0] = max(cgap[-1] / 2, cgap[-1] - MARGIN)
+    if ("row", rows - 1) in runs:
+        extra[1] = max(rgap[-1] / 2, rgap[-1] - LOOP_H - MARGIN)
     routes: list = []
     labels: list = []
-    for e in flow.edges:
+    for k, e in enumerate(flow.edges):
         a, b = boxes.get(e.source), boxes.get(e.target)
         if a is None or b is None:
             routes.append(None)
@@ -300,46 +367,34 @@ def _grid(flow: Flow, w: float, h: float, gap: float) -> FlowGeometry:
             routes.append(pts)
             labels.append(_mid(pts))
             continue
-        straight = [_clip(a, b.cx, b.cy), _clip(b, a.cx, a.cy)]
-        if not any(_hits(straight[0], straight[1], bx, 4.0) for k, bx in all_boxes
-                   if k not in (e.source, e.target)):
-            routes.append(straight)
-            labels.append(_mid(straight))
+        if k not in detour:
+            pts = [_clip(a, b.cx, b.cy), _clip(b, a.cx, a.cy)]
+            routes.append(pts)
+            labels.append(_mid(pts))
             continue
         (r1, c1), (r2, c2) = cell[e.source], cell[e.target]
+        chans = [ch for ch, _ in _grid_channels((r1, c1), (r2, c2), rows, ncols)]
         # stubs sit a quarter off the box centre lines, where straight edges
         # between neighbours run, so a detour never overlaps one of them
         q, s = w / 4, h / 4
-        if r1 == r2:  # run along the row gap below (above for the last row)
-            below = r1 < rows - 1 or r1 == 0
-            if below and r1 == rows - 1:
-                extra[1] = gap / 2
-            y = (a.y + h + gap / 2 if below else a.y - gap / 2)
-            y += lane_offset(("row", 2 * r1 + (1 if below else -1)))
-            ya, yb = (a.y + h, b.y + h) if below else (a.y, b.y)
+        if r1 == r2:
+            y = lane[chans[0], k]
+            ya, yb = (a.y + h, b.y + h) if y > a.y else (a.y, b.y)
             pts = [(a.cx + q, ya), (a.cx + q, y), (b.cx - q, y), (b.cx - q, yb)]
-        elif c1 == c2:  # run along the column gap right (left for the last column)
-            right = c1 < ncols - 1 or c1 == 0
-            if right and c1 == ncols - 1:
-                extra[0] = gap / 2
-            x = (a.x + w + gap / 2 if right else a.x - gap / 2)
-            x += lane_offset(("col", 2 * c1 + (1 if right else -1)))
-            xa, xb = (a.x + w, b.x + w) if right else (a.x, b.x)
+        elif c1 == c2:
+            x = lane[chans[0], k]
+            xa, xb = (a.x + w, b.x + w) if x > a.x else (a.x, b.x)
             pts = [(xa, a.cy + s), (x, a.cy + s), (x, b.cy - s), (xb, b.cy - s)]
-        else:  # leave through the row gap toward b, enter b from the column gap beside it
-            down, east = r2 > r1, c2 > c1
-            y = (a.y + h + gap / 2 if down else a.y - gap / 2)
-            y += lane_offset(("row", 2 * r1 + (1 if down else -1)))
-            x = (b.x - gap / 2 if east else b.x + w + gap / 2)
-            x += lane_offset(("col", 2 * c2 + (-1 if east else 1)))
-            pts = [(a.cx + q, a.y + h if down else a.y), (a.cx + q, y), (x, y), (x, b.cy - s),
-                   (b.x if east else b.x + w, b.cy - s)]
+        else:
+            y, x = lane[chans[0], k], lane[chans[1], k]
+            pts = [(a.cx + q, a.y + h if y > a.y else a.y), (a.cx + q, y), (x, y),
+                   (x, b.cy - s), (b.x if x < b.x else b.x + w, b.cy - s)]
         routes.append(pts)
         labels.append(_longest_mid(pts))
-    return FlowGeometry(
-        width=2 * MARGIN + ncols * w + max(ncols - 1, 0) * gap + extra[0],
-        height=2 * MARGIN + rows * h + max(rows - 1, 0) * gap + extra[1], boxes=boxes,
-        routes=routes, label_at=labels, order=[nd.id for nd in flow.nodes])
+    width = (xs[-1] + w if ncols else MARGIN) + MARGIN + extra[0]
+    height = (ys[-1] + h if rows else MARGIN) + MARGIN + extra[1]
+    return FlowGeometry(width=width, height=height, boxes=boxes, routes=routes,
+                        label_at=labels, order=[nd.id for nd in flow.nodes])
 
 
 def _layered(flow: Flow, w: float, h: float, lab_w: float,

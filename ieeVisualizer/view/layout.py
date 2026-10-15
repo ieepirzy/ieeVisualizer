@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, localcontext
+from functools import lru_cache
 
 from ..render import RenderError
 from ..spec import DataSnapshot, ValidationIssue
@@ -24,8 +25,11 @@ from .model import Card, FigureComponent, Flow, Grid, Kpi, Node, Note, Stack, Ta
 from .text import (
     NO_DATA,
     NULL_CELL,
+    SCI_FROM,
+    as_decimal,
+    fit_len,
     format_number,
-    measure,
+    is_zero_text,
     parse_markdown,
     run_width,
     text_width,
@@ -63,6 +67,11 @@ class Ctx:
 
 def layout_view(view: ViewSpec, width: float = 960.0) -> tuple[list[Item], float, list[Embed]]:
     """``(items, height, embeds)`` for ``view`` drawn ``width`` px wide."""
+    from .validate import too_narrow_at  # (validate imports layout lazily too)
+
+    narrow = too_narrow_at(view, width)
+    if narrow is not None:  # never draw negative widths; render_view checks first
+        raise RenderError([narrow])
     ctx = Ctx(view)
     items: list[Item] = [Rect(0, 0, width, 0, fill="#ffffff")]
     y = PAD
@@ -100,12 +109,21 @@ def _container(n, path: str, x: float, y: float, w: float, ctx: Ctx):
         sub, h = _rows([[k] for k in kids], 1, inner_x, inner_y, inner_w, ctx)
         total = inner_y - y + h + 16
         return [Rect(x, y, w, total, fill="#ffffff", stroke=LINE, rx=10)] + items + sub, total
-    if isinstance(n, Grid):
-        cols = max(1, n.columns)
-    else:
-        cols = len(kids) if n.direction == "horizontal" else 1
-    rows = [kids[i:i + max(cols, 1)] for i in range(0, len(kids), max(cols, 1))]
-    return _rows(rows, max(cols, 1), x, y, w, ctx)
+    cols = slot_columns(n)
+    rows = [kids[i:i + cols] for i in range(0, len(kids), cols)]
+    return _rows(rows, cols, x, y, w, ctx)
+
+
+def slot_columns(n: Stack | Grid) -> int:
+    """Columns a grid / stack splits its width into. A grid never has more
+    columns than children (``columns=200`` with 4 children is 4 columns, not
+    196 empty ones squeezing the 4), so its children are as wide as they can
+    be; :func:`.validate.too_narrow_at` refuses layouts whose slots would
+    still be narrower than ``MIN_SLOT_WIDTH``."""
+    if isinstance(n, Grid):  # a non-integer `columns` is reported by validation
+        cols = n.columns if isinstance(n.columns, int) and not isinstance(n.columns, bool) else 1
+        return max(1, min(cols, len(n.children)))
+    return max(1, len(n.children)) if n.direction == "horizontal" else 1
 
 
 def _rows(rows, cols: int, x: float, y: float, w: float, ctx: Ctx):
@@ -176,15 +194,25 @@ def _note(n: Note, path, x, y, w, ctx):
             Rect(x, y, 4, h + 20, fill="#bf8700")] + items, h + 20
 
 
-def exact_delta(value: float, ref: float) -> float:
-    """``value - ref`` computed on the numbers as written (``0.3 - 0.1`` is
-    ``0.2``, not ``0.19999999999999998``): the difference of the shortest
-    decimal forms never has more decimal places than its operands."""
-    return float(Decimal(repr(value)) - Decimal(repr(ref)))
+def exact_delta(value: float, ref: float) -> Decimal:
+    """``value - ref`` computed exactly on the numbers as written (``0.3 -
+    0.1`` is ``0.2``, not ``0.19999999999999998``). Decimal, so it cannot
+    overflow: ``1e308 - -1e308`` is ``2e+308``, never ``inf``."""
+    with localcontext() as ctx:
+        ctx.prec = 1000  # > 17 digits + the 632 decimal places between 1e308 and 5e-324
+        return as_decimal(value) - as_decimal(ref)
+
+
+def _delta_text(delta: Decimal, decimals: int | None) -> str:
+    if abs(delta) < SCI_FROM:  # the float of an exact difference prints at its shortest
+        return format_number(float(delta), decimals)
+    return format_number(delta, decimals)
 
 
 def kpi_lines(n: Kpi) -> tuple[str, str | None]:
-    """(value text, comparison text). Shared with the HTML renderer."""
+    """(value text, comparison text). Shared with the HTML renderer. The
+    arrow follows the delta as displayed: one that rounds to zero at
+    ``decimals`` reads "= 0.0", not "▼ −0.0"."""
     value = with_unit(format_number(n.value, n.decimals), n.unit)
     cmp = None
     if n.comparison is not None:
@@ -194,15 +222,22 @@ def kpi_lines(n: Kpi) -> tuple[str, str | None]:
         elif n.value is None:
             cmp = f"{c.label}: {with_unit(format_number(c.value, n.decimals), n.unit)}"
         else:
-            delta = exact_delta(n.value, c.value)
-            arrow = "▲" if delta > 0 else "▼" if delta < 0 else "="
-            sign = "+" if delta > 0 else ""
-            cmp = (f"{arrow} {sign}{with_unit(format_number(delta, n.decimals), n.unit)} vs "
+            text = _delta_text(exact_delta(n.value, c.value), n.decimals)
+            if is_zero_text(text):
+                arrow, sign = "=", ""
+            elif text.startswith("\u2212"):
+                arrow, sign = "▼", ""
+            else:
+                arrow, sign = "▲", "+"
+            cmp = (f"{arrow} {sign}{with_unit(text, n.unit)} vs "
                    f"{c.label} ({with_unit(format_number(c.value, n.decimals), n.unit)})")
     return value, cmp
 
 
 def _kpi(n: Kpi, path, x, y, w, ctx):
+    """Every line stays inside the tile: the value shrinks from 30 to 14 px
+    and then wraps, other lines wrap, and a word wider than the tile is
+    broken (:func:`.text.wrap_runs`)."""
     items: list[Item] = []
     ix, iw, cy = x + 16, w - 32, y + 14
     for line in wrap_text(n.label, 13, iw):
@@ -211,12 +246,17 @@ def _kpi(n: Kpi, path, x, y, w, ctx):
     value, cmp = kpi_lines(n)
     if n.value is None:
         items.append(Label(ix, cy + 30, NO_DATA, 22, MUTED, italic=True))
+        cy += 42
     else:
         size = 30.0
         while size > 14 and text_width(value, size, bold=True) > iw:
             size -= 2
-        items.append(Label(ix, cy + 32, value, size, bold=True))
-    cy += 42
+        lines = [value] if text_width(value, size, bold=True) <= iw else wrap_text(
+            value, size, iw, bold=True)
+        lh = size * 1.25
+        for i, line in enumerate(lines):
+            items.append(Label(ix, cy + 32 + i * lh, line, size, bold=True))
+        cy += 42 + (len(lines) - 1) * lh
     for text, color in ((cmp, INK), (n.source and f"Source: {n.source}", MUTED)):
         if text:
             for line in wrap_text(text, 12, iw):
@@ -253,19 +293,29 @@ def table_cells(n: Table, ds: DataSnapshot, path: str = ""
     return names, heads, rows, total
 
 
+#: A table cell or header is measured and truncated on at most this many
+#: characters: a column is never wider than the view, so the rest could only
+#: be cut off (it gets the "…"). Bounds the work per cell whatever its length.
+FIT_CHARS = 1000
+
+
 def _fit(s: str, size: float, w: float, bold: bool = False) -> str:
-    """``s``, or its longest prefix + "…" that fits in ``w`` px. Binary search
-    on the cut point: O(n log n) instead of re-measuring per removed char."""
-    if text_width(s, size, bold) <= w:
+    """``s``, or its longest prefix + "…" that fits in ``w`` px. Only the
+    first ``FIT_CHARS`` characters are ever measured, and the search
+    (:func:`.text.fit_len`) costs O(k log k) in the length k of the prefix
+    that fits, so a long string in a narrow column is cheap."""
+    if len(s) <= FIT_CHARS and text_width(s, size, bold) <= w:  # cached: column widths
         return s
-    lo, hi = 0, len(s)  # s[:lo] + "…" fits (or lo == 0); s[:hi] + "…" does not
-    while hi - lo > 1:
-        mid = (lo + hi) // 2
-        if measure(s[:mid] + "…", size, bold) <= w:  # uncached: probes are throwaway
-            lo = mid
-        else:
-            hi = mid
-    return s[:lo] + "…"
+    t = s[:FIT_CHARS]
+    return t[:fit_len(t, size, w, bold, "…")] + "…"
+
+
+def _title(title: str, x: float, y: float, w: float) -> tuple[list[Item], float]:
+    """A table / flow title, wrapped to the slot: ``(items, y below it)``."""
+    items: list[Item] = []
+    for i, line in enumerate(wrap_text(title, 15, w, bold=True)):
+        items.append(Label(x, y + 16 + 20 * i, line, 15, bold=True))
+    return items, y + 26 + 20 * (len(items) - 1)
 
 
 def _table(n: Table, path, x, y, w, ctx: Ctx):
@@ -274,10 +324,11 @@ def _table(n: Table, path, x, y, w, ctx: Ctx):
     items: list[Item] = []
     cy = y
     if n.title:
-        items.append(Label(x, cy + 16, n.title, 15, bold=True))
-        cy += 26
+        sub, cy = _title(n.title, x, cy, w)
+        items.extend(sub)
     numeric = [ds.columns[nm].dtype in ("int", "float") for nm in names]
-    want = [max([text_width(h, 13, True)] + [text_width(r[i], 13) for r in rows]) + 20
+    want = [max([text_width(h[:FIT_CHARS], 13, True)]
+                + [text_width(r[i][:FIT_CHARS], 13) for r in rows]) + 20
             for i, h in enumerate(heads)]
     k = min(1.0, w / sum(want)) if want else 1.0
     widths = [wi * k for wi in want]
@@ -311,8 +362,11 @@ def _table(n: Table, path, x, y, w, ctx: Ctx):
 NODE_FONT, NODE_LH, NODE_MAX_W = 14.0, 18.0, 180.0
 
 
-def _node_lines(label: str) -> list[str]:
-    return wrap_text(label, NODE_FONT, NODE_MAX_W)
+@lru_cache(maxsize=1024)
+def _node_lines(label: str) -> tuple[str, ...]:
+    """Wrapped node label; cached because layout asks for every node's size
+    more than once and drawing wraps it again."""
+    return tuple(wrap_text(label, NODE_FONT, NODE_MAX_W))
 
 
 def _node_size(node) -> tuple[float, float]:
@@ -385,8 +439,8 @@ def _flow_component(f: Flow, path, x, y, w, ctx):
     items: list[Item] = []
     cy = y
     if f.title:
-        items.append(Label(x, cy + 16, f.title, 15, bold=True))
-        cy += 26
+        sub, cy = _title(f.title, x, cy, w)
+        items.extend(sub)
     sub, gw, gh, order = flow_items(f)
     s = min(1.0, w / gw) if gw else 1.0
     desc = "\n".join(([f.description] if f.description else [])

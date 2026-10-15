@@ -30,13 +30,17 @@ column_length_mismatch     columns of a view dataset differ in length
 invalid_text               a string holds a control character / lone surrogate
 text_too_long              one string longer than ``MAX_TEXT_CHARS``
 too_much_text              the view's text adds up to more than allowed
-too_deep                   containers nested deeper than ``MAX_DEPTH``
+too_deep                   containers nested deeper than ``MAX_DEPTH``, or
+                           free-form JSON deeper than ``MAX_JSON_DEPTH``
 too_many_nodes             too many view nodes, or flow nodes in the view
 too_many_edges             too many flow edges in the view
 too_many_dummy_nodes       layered flows would need too many long-edge slots
 too_many_figures           more figures than ``MAX_FIGURES``
 too_many_rows              a table's ``max_rows`` above ``MAX_TABLE_ROWS``
 too_many_cells             the tables draw more cells than allowed
+too_many_columns           a table, or the view's tables, draw too many columns
+too_narrow                 a grid / horizontal stack / card leaves a child a
+                           slot narrower than ``MIN_SLOT_WIDTH`` at 960 px
 table_truncated            (warning) a table longer than ``MAX_TABLE_ROWS``
                            shows its first rows and says so
 ========================== ===================================================
@@ -48,7 +52,6 @@ minutes.
 
 from __future__ import annotations
 
-import copy
 import json
 import math
 from collections.abc import Sequence
@@ -61,7 +64,16 @@ from ..spec import (
     ValidationIssue,
 )
 from ..spec import validate as validate_figure
-from ..spec._common import canonical_json, fail, is_number, ptr_join, sha256_of
+from ..spec._common import (
+    canonical_json,
+    copy_tree,
+    fail,
+    is_number,
+    json_problem,
+    ptr_join,
+    sha256_of,
+)
+from ..spec.figure import figure_to_dict
 from ..spec.patch import _apply_one, _err
 from . import limits as L
 from .flow import back_edges, dummy_count
@@ -93,6 +105,7 @@ from .model import (
 )
 
 MAX_TEXT_ISSUES = 20  # invalid_text / text_too_long issues reported per view
+DEFAULT_WIDTH = 960.0  # render_view's default width; slot widths are validated at it
 
 
 class _Budget:
@@ -112,19 +125,76 @@ class _Budget:
 
 
 def _node_text(n: Any) -> int:
-    """Characters of a node's own strings that the layout measures."""
+    """Characters of a node's own strings that the layout measures (a table's
+    headers and cells are counted by :func:`_table_size`)."""
     if isinstance(n, Flow):
         k = len(n.title or "") + len(n.description or "")
         k += sum(len(x.label) + len(x.group or "") for x in n.nodes if isinstance(x, FlowNode))
-        return k + sum(len(e.label or "") for e in n.edges)
-    if isinstance(n, Kpi):
-        return (len(n.label or "") + len(n.unit or "") + len(n.source or "")
+        return k + sum(len(e.label or "") + (len("claim: ") if e.kind == "causal" else 0)
+                       for e in n.edges)
+    if isinstance(n, Kpi):  # the unit is drawn after the value, the delta and the reference
+        return (len(n.label or "") + 3 * len(n.unit or "") + len(n.source or "")
                 + len((n.comparison.label or "") if n.comparison else ""))
     if isinstance(n, (Text, Note)):
         return len(n.text or "")
     if isinstance(n, (Card, Table)):
         return len(n.title or "")
     return 0
+
+
+def _figure_text(spec: Any) -> int:
+    """Characters of a FigureSpec's own strings that its renderer measures and
+    draws (title, caption, axis labels and units, legend title, layer names,
+    encoding titles and fields, annotation labels). Dataset values,
+    ``metadata`` and ``style`` are not drawn as text and are not counted."""
+    try:
+        doc = figure_to_dict(spec)
+    except Exception:  # noqa: BLE001 - a malformed figure is reported by its validation
+        return 0
+    total = 0
+    todo: list[Any] = [v for k, v in doc.items()
+                       if k not in ("datasets", "metadata", "schema_version")]
+    while todo:
+        v = todo.pop()
+        if isinstance(v, str):
+            total += len(v)
+        elif isinstance(v, dict):
+            todo.extend(x for k, x in v.items() if k != "style")
+        elif isinstance(v, (list, tuple)):
+            todo.extend(v)
+    return total
+
+
+def too_narrow_at(view: ViewSpec, width: float) -> ValidationIssue | None:
+    """The first container (document order) that would give a child a slot
+    narrower than ``MIN_SLOT_WIDTH`` px when the view is drawn ``width`` px
+    wide, as a ``too_narrow`` issue; None if every slot is wide enough. Mirrors
+    the box model of :mod:`.layout` (and of the HTML grid). Iterative; call it
+    only on a tree within ``MAX_DEPTH``."""
+    from .layout import GAP, PAD, slot_columns
+
+    todo = [("/root", view.root, width - 2 * PAD)]
+    while todo:
+        path, n, w = todo.pop()
+        if not isinstance(n, CONTAINERS) or not n.children:
+            continue
+        if isinstance(n, Card):
+            cols, cw, where = 1, w - 32, path
+            what = "a card's frame"
+        else:
+            cols = slot_columns(n)
+            cw = (w - GAP * (cols - 1)) / cols
+            where = ptr_join(path, "columns") if isinstance(n, Grid) else path
+            what = (f"{cols} columns" if isinstance(n, Grid)
+                    else f"{cols} side-by-side children")
+        if cw < L.MIN_SLOT_WIDTH:
+            return ValidationIssue(where, "too_narrow", (
+                f"{what} leave each child {max(cw, 0):.0f} px of the {w:.0f} px available at "
+                f"a view width of {width:g} px; the minimum is {L.MIN_SLOT_WIDTH} px. Use "
+                "fewer columns, or a vertical stack / several rows instead."))
+        todo.extend(reversed([(ptr_join(path, "children", i), c, cw)
+                              for i, c in enumerate(n.children)]))
+    return None
 
 
 def _strings(out: list, view: ViewSpec) -> None:
@@ -219,7 +289,19 @@ def validate_view(view: ViewSpec) -> list[ValidationIssue]:  # noqa: C901 - one 
         add(ValidationIssue(where, "too_deep", too_deep_message()))
         return out
     _strings(out, view)
+    if not isinstance(view.metadata, dict):
+        add(ValidationIssue("/metadata", "invalid_type", "metadata must be a JSON object."))
+    else:
+        problem = json_problem(view.metadata, "/metadata")
+        if problem:
+            add(ValidationIssue(*problem))
     budget = _Budget(out)
+    budget.take("text", len(view.title or ""), L.MAX_TOTAL_TEXT_CHARS, "/title",
+                "too_much_text", "the view's text adds up to {n} characters; the limit is "
+                "{limit}.")
+    narrow = too_narrow_at(view, DEFAULT_WIDTH)
+    if narrow is not None:
+        add(narrow)
     used: set[str] = set()
     for path, n in walk(view.root):
         budget.take("nodes", 1, L.MAX_VIEW_NODES, path, "too_many_nodes",
@@ -231,13 +313,19 @@ def validate_view(view: ViewSpec) -> list[ValidationIssue]:  # noqa: C901 - one 
                                 f"this {n.type} has no children.", "warning"))
         if isinstance(n, Stack):
             _choice(out, ptr_join(path, "direction"), n.direction, DIRECTIONS, "direction")
-        elif isinstance(n, Grid) and (not isinstance(n.columns, int) or n.columns < 1):
+        elif isinstance(n, Grid) and (not isinstance(n.columns, int) or isinstance(n.columns, bool)
+                                     or n.columns < 1):
             add(ValidationIssue(ptr_join(path, "columns"), "invalid_value",
                                 f"columns must be an integer >= 1, got {n.columns!r}."))
         elif isinstance(n, FigureComponent):
             budget.take("figures", 1, L.MAX_FIGURES, path, "too_many_figures",
                         "the view places more than {limit} figures; split it into several "
                         "views.")
+            spec = n.spec if n.spec is not None else view.figures.get(n.figure)
+            if spec is not None:
+                budget.take("text", _figure_text(spec), L.MAX_TOTAL_TEXT_CHARS, path,
+                            "too_much_text", "the view's text adds up to {n} characters; the "
+                            "limit is {limit}.")
             if not (is_number(n.aspect) and math.isfinite(n.aspect) and 0.1 <= n.aspect <= 4):
                 add(ValidationIssue(ptr_join(path, "aspect"), "invalid_value",
                                     "aspect (height/width) must be in [0.1, 4], got "
@@ -302,7 +390,7 @@ def validate_view(view: ViewSpec) -> list[ValidationIssue]:  # noqa: C901 - one 
         elif isinstance(n, Flow):
             _flow(out, n, path, budget)
     out.extend(i for i in validate_figure(FigureSpec(datasets=dict(view.datasets)))
-               if i.code == "column_length_mismatch")
+               if i.code == "column_length_mismatch" or "/provenance/" in i.path)
     for key, fig in view.figures.items():
         fp = ptr_join("/figures", key)
         out.extend(ValidationIssue(fp + i.path, i.code, i.message, i.severity)
@@ -314,7 +402,23 @@ def validate_view(view: ViewSpec) -> list[ValidationIssue]:  # noqa: C901 - one 
 
 
 def _table_size(n: Table, ds: Any, path: str, budget: _Budget) -> None:
+    """Columns, cells and text a table draws. Headers (name + unit) are laid
+    out even with ``max_rows`` 0, so columns and header text are counted on
+    their own, not through the cell count."""
     total = ds.num_rows
+    names = [c for c in (n.columns if n.columns is not None else list(ds.columns))
+             if c in ds.columns]
+    if len(names) > L.MAX_TABLE_COLUMNS:
+        budget.out.append(ValidationIssue(
+            ptr_join(path, "columns") if n.columns is not None else ptr_join(path, "data"),
+            "too_many_columns", f"the table draws {len(names)} columns; the limit is "
+            f"{L.MAX_TABLE_COLUMNS}. Choose the columns to show with 'columns'."))
+    budget.take("columns", len(names), L.MAX_TOTAL_TABLE_COLUMNS, path, "too_many_columns",
+                "the view's tables draw {n} columns in total; the limit is {limit}. Show "
+                "fewer columns or split the view.")
+    heads = sum(len(c) + len(ds.columns[c].unit or "") for c in names)
+    budget.take("text", heads, L.MAX_TOTAL_TEXT_CHARS, path, "too_much_text",
+                "the view's text adds up to {n} characters; the limit is {limit}.")
     if total is None:  # column_length_mismatch is reported for the dataset
         return
     if n.max_rows is None and total > L.MAX_TABLE_ROWS:
@@ -322,8 +426,6 @@ def _table_size(n: Table, ds: Any, path: str, budget: _Budget) -> None:
             path, "table_truncated", f"the table has {total} rows; the first "
             f"{L.MAX_TABLE_ROWS} are drawn, followed by 'Showing {L.MAX_TABLE_ROWS} of "
             f"{total} rows'. Set max_rows to choose fewer.", "warning"))
-    names = [c for c in (n.columns if n.columns is not None else list(ds.columns))
-             if c in ds.columns]
     shown = min(total, L.MAX_TABLE_ROWS if n.max_rows is None
                  else max(0, min(n.max_rows, L.MAX_TABLE_ROWS)))
     if budget.take("cells", shown * len(names), L.MAX_TABLE_CELLS, path, "too_many_cells",
@@ -331,7 +433,7 @@ def _table_size(n: Table, ds: Any, path: str, budget: _Budget) -> None:
                    "fewer rows (max_rows) or columns."):
         chars = sum(len(v) for c in names for v in ds.columns[c].values[:shown]
                     if isinstance(v, str))
-        budget.take("text", chars + sum(len(c) for c in names), L.MAX_TOTAL_TEXT_CHARS, path,
+        budget.take("text", chars, L.MAX_TOTAL_TEXT_CHARS, path,
                     "too_much_text", "the view's text adds up to {n} characters; the limit "
                     "is {limit}.")
 
@@ -346,7 +448,14 @@ def errors(view: ViewSpec) -> list[ValidationIssue]:
 
 
 def view_to_dict(view: ViewSpec) -> dict[str, Any]:
-    return copy.deepcopy(view_to_dict_raw(view))
+    """A fresh dict (no aliasing of ``view``). Iterative and depth-bounded: a
+    view built in Python with containers nested past ``MAX_DEPTH`` or a tree
+    of metadata thousands deep raises SpecParseError ``too_deep``, never
+    RecursionError."""
+    where = too_deep_at(view.root, L.MAX_DEPTH)
+    if where is not None:
+        raise fail(where, "too_deep", too_deep_message())
+    return copy_tree(view_to_dict_raw(view), "", "the view")
 
 
 def view_to_json(view: ViewSpec, indent: int | None = None) -> str:

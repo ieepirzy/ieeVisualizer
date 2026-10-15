@@ -13,6 +13,8 @@ invalid_value              a field holds a value outside its allowed set
 invalid_type               a field holds a value of the wrong JSON type (the same
                            value would be refused by from_dict after to_dict)
 non_finite_number          NaN or an infinity where a number is stored
+too_deep                   free-form JSON (metadata, style, provenance extra)
+                           nested deeper than ``MAX_JSON_DEPTH``
 no_layers                  the figure has nothing to draw
 empty_dataset              dataset with no columns or zero rows
 column_length_mismatch     columns of one snapshot differ in length

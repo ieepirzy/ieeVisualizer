@@ -7,6 +7,7 @@ consume it; they are not imported by it.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -202,26 +203,87 @@ def canon_int(v: Any) -> Any:
     return v
 
 
+#: Deepest nesting accepted in free-form JSON (``metadata``, ``style``,
+#: ``provenance.extra``); the object itself is depth 1. Deeper values are
+#: refused with ``too_deep`` instead of reaching recursive code (JSON
+#: encoding, deepcopy) that would raise RecursionError.
+MAX_JSON_DEPTH = 64
+#: Deepest nesting :func:`copy_tree` copies: generous enough for any document
+#: whose free-form parts respect ``MAX_JSON_DEPTH``, well below Python's
+#: recursion limit, so the copy can always be JSON-encoded afterwards.
+MAX_TREE_DEPTH = 256
+
+
+def _too_deep(path: str, what: str, limit: int) -> SpecParseError:
+    return fail(path, "too_deep", f"{what} is nested more than {limit} levels deep here; "
+                "flatten it.")
+
+
 def copy_json(value: Any, path: str, what: str) -> Any:
     """Validate free-form JSON (metadata, style, provenance.extra) and return a
-    deep copy, so a parsed spec never aliases its input. Rejects NaN/inf and
-    non-JSON types with the pointer of the offending value."""
-    if isinstance(value, dict):
-        out = {}
-        for k, v in value.items():
-            if not isinstance(k, str):
-                raise fail(path, "invalid_type", f"{what} keys must be strings, got {k!r}.")
-            out[k] = copy_json(v, ptr_join(path, k), what)
-        return out
-    if isinstance(value, list):
-        return [copy_json(v, ptr_join(path, i), what) for i, v in enumerate(value)]
-    if value is None or isinstance(value, (str, bool)):
-        return value
-    if isinstance(value, (int, float)):
-        if isinstance(value, float) and not math.isfinite(value):
-            raise non_finite_error(path, what, value)
-        return value
-    raise fail(path, "invalid_type", f"{what} must hold only JSON values, got {_jtype(value)}.")
+    deep copy, so a parsed spec never aliases its input. Rejects NaN/inf,
+    non-JSON types and nesting deeper than ``MAX_JSON_DEPTH`` with the
+    pointer of the offending value (the first one in document order).
+    Iterative: no input can make it raise RecursionError."""
+    box: list[Any] = [None]
+    todo: list[tuple[Any, str, int, Any, Any]] = [(value, path, 1, box, 0)]
+    while todo:
+        v, p, depth, parent, slot = todo.pop()
+        if isinstance(v, (dict, list)) and depth > MAX_JSON_DEPTH:
+            raise _too_deep(p, what, MAX_JSON_DEPTH)
+        if isinstance(v, dict):
+            out: Any = {}
+            kids = []
+            for k, x in v.items():
+                if not isinstance(k, str):
+                    raise fail(p, "invalid_type", f"{what} keys must be strings, got {k!r}.")
+                out[k] = None
+                kids.append((x, ptr_join(p, k), depth + 1, out, k))
+            todo.extend(reversed(kids))
+        elif isinstance(v, list):
+            out = [None] * len(v)
+            todo.extend(reversed([(x, ptr_join(p, i), depth + 1, out, i)
+                                  for i, x in enumerate(v)]))
+        elif v is None or isinstance(v, (str, bool)):
+            out = v
+        elif isinstance(v, (int, float)):
+            if isinstance(v, float) and not math.isfinite(v):
+                raise non_finite_error(p, what, v)
+            out = v
+        else:
+            raise fail(p, "invalid_type", f"{what} must hold only JSON values, got {_jtype(v)}.")
+        parent[slot] = out
+    return box[0]
+
+
+def copy_tree(value: Any, path: str = "", what: str = "the document",
+              limit: int = MAX_TREE_DEPTH) -> Any:
+    """Deep copy of a dict/list/tuple tree (other values are deep-copied as
+    leaves), iterative, refusing nesting deeper than ``limit`` with
+    ``too_deep``. Use instead of ``copy.deepcopy`` on anything a caller built."""
+    box: list[Any] = [None]
+    todo: list[tuple[Any, str, int, Any, Any]] = [(value, path, 1, box, 0)]
+    tuples: list[tuple[Any, Any, type, list[Any]]] = []
+    while todo:
+        v, p, depth, parent, slot = todo.pop()
+        if isinstance(v, (dict, list, tuple)) and depth > limit:
+            raise _too_deep(p, what, limit)
+        if isinstance(v, dict):
+            out: Any = dict.fromkeys(v)
+            todo.extend((x, ptr_join(p, k), depth + 1, out, k) for k, x in v.items())
+        elif isinstance(v, (list, tuple)):
+            out = [None] * len(v)
+            todo.extend((x, ptr_join(p, i), depth + 1, out, i) for i, x in enumerate(v))
+            if isinstance(v, tuple):
+                tuples.append((parent, slot, type(v), out))
+        elif v is None or isinstance(v, (str, bool, int, float)):
+            out = v
+        else:
+            out = copy.deepcopy(v)
+        parent[slot] = out
+    for parent, slot, kind, items in reversed(tuples):  # innermost first, once filled
+        parent[slot] = tuple(items) if kind is tuple else kind(*items)  # a namedtuple
+    return box[0]
 
 
 def json_problem(value: Any, path: str) -> tuple[str, str, str] | None:
