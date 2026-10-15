@@ -4,7 +4,6 @@ minutes (or hours) before; each now stops within its deadline plus the
 documented slack, or is refused or made cheap by a per-step bound."""
 
 import dataclasses
-import shutil
 
 import numpy as np
 import pytest
@@ -71,18 +70,19 @@ def test_reviewer_inputs_stop_within_the_deadline_and_clean_up(tmp_path):
                                              render_animation)
         from ieeVisualizer.artifacts import MemoryWriter
         from ieeVisualizer.spec import FigureSpec
-        import dataclasses
+        import dataclasses, shutil
         fn = _sweep(FigureSpec(layers=[_fn(HEAVY)]), 120)
         tpl = vector_field_anim(params={{"u": HEAVY.replace("+a)", "+k)"), "v": "x"}},
                                 values=[i / 40 for i in range(40)])
         cases = {{
             "function": lambda: render_animation(fn, SMALL, deadline={DEADLINE_S}),
             "template": lambda: render_animation(tpl, SMALL, deadline={DEADLINE_S}),
-            "mp4": lambda: render_animation(fn, dataclasses.replace(SMALL, format="mp4"),
-                                            deadline={DEADLINE_S}),
-            "export": lambda: export_animation(fn, ["gif", "mp4"], MemoryWriter(),
-                                               request=SMALL, deadline={DEADLINE_S}),
         }}
+        if shutil.which("ffmpeg"):  # MP4 cases need ffmpeg
+            cases["mp4"] = lambda: render_animation(
+                fn, dataclasses.replace(SMALL, format="mp4"), deadline={DEADLINE_S})
+            cases["export"] = lambda: export_animation(fn, ["gif", "mp4"], MemoryWriter(),
+                                                       request=SMALL, deadline={DEADLINE_S})
         res = {{}}
         for name, call in cases.items():
             t = time.perf_counter()
@@ -98,8 +98,6 @@ def test_reviewer_inputs_stop_within_the_deadline_and_clean_up(tmp_path):
         print(json.dumps({{"res": res, "kids": kids, "tmp": os.listdir({str(tmp_path)!r})}}))
     """, timeout=90, mem_mb=2500)
     for name, (elapsed, got) in out["res"].items():
-        if name in ("mp4", "export") and shutil.which("ffmpeg") is None:
-            continue
         assert got[:2] == ["render_deadline_exceeded", ""], (name, got)
         assert elapsed < DEADLINE_S + SLACK_S, (name, elapsed, got)
         stats = got[2]
