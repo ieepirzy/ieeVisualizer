@@ -157,7 +157,15 @@ temporary directory under `root` and swaps it in for `<root>/<artifact_id>`
 (the old directory is moved aside, then deleted), so an artifact directory
 always holds exactly the files its `manifest.json` lists: exporting again
 under the same id replaces the directory as a whole and never leaves files
-from an earlier export behind. `MemoryWriter` does the same for its dict.
+from an earlier export behind. Concurrent exports of one id (threads or
+processes) are serialised by a per-id lock file `<root>/.lock-<id>`, which
+stays in place; if the directory already holds exactly the same files (the
+usual case for a content-addressed id) nothing is rewritten. A failed export
+leaves the previous version and no staging directories; leftovers of a killed
+export are removed by the next export of that id. While *different* content
+replaces a directory, a reader may briefly find `<root>/<id>` missing (there
+is no portable atomic directory exchange). `MemoryWriter` does the same for
+its dict.
 A custom writer with only `write` gets one call per file, manifest last.
 
 ## Known gaps
