@@ -23,7 +23,9 @@ Matplotlib, per state (every state is drawn once)
 * per point, by mark type (``MPL_POINT_US``): function sample 1 us (0.24),
   line 15 (12.8), scatter 10 (9.2), area 60 (23-54), bar 1200 (1130),
   heatmap cell 110 (54-83; a numeric heatmap frame column builds every state
-  twice for fixed limits), quiver arrow 16 (15), histogram input row 1 (0.3)
+  twice for fixed limits), quiver arrow 40 (15 per draw; 63-83 per template
+  grid point with the build, as a sweep draws every state twice), histogram
+  input row 1 (0.3)
   plus ``MPL_BIN_US`` 1.6 ms per bin (1.6). Polar and 3D figures use
   ``MPL_POINT_US_OTHER`` (polar line 60 (55), 3D scatter 45 (33-41), 3D
   function sample 2 (0.2-0.5)), else 4x the cartesian cost;
@@ -70,8 +72,9 @@ These are estimates of one machine's speed, not promises: they keep the worst
 accepted input near a minute rather than an hour.
 ``tests/animation/test_anim_cost_calibration.py`` renders one case per term
 and requires measured / estimated within [1/6, 1.5]: under by at most half
-again (machine noise), over by at most 6x (re-measured after round 3:
-0.69-1.18).
+again (machine noise; a case over the band is timed once more), over by at
+most 6x (measured/estimated in full-suite and isolated runs after round 3:
+0.59-1.40).
 
 Validation (which does not know the request) refuses a template sweep whose
 :func:`min_work_us` (the cheaper cost model at zero frame area) is over the
@@ -94,8 +97,8 @@ MPL_LAYER_US = 9_500
 MPL_GROUP_US = 14_000
 MPL_BIN_US = 1_600
 MPL_POINT_US: dict[str, float] = {"function": 1, "line": 15, "scatter": 10, "area": 60,
-                                  "bar": 1_200, "heatmap": 110, "quiver": 16, "histogram": 1}
-MPL_POINT_US_OTHER: dict[str, float] = {"function": 2, "line": 60, "scatter": 45, "quiver": 16}
+                                  "bar": 1_200, "heatmap": 110, "quiver": 40, "histogram": 1}
+MPL_POINT_US_OTHER: dict[str, float] = {"function": 2, "line": 60, "scatter": 45, "quiver": 40}
 MPL_CATEGORY_US = 1_500
 MPL_ANNOTATION_US: dict[str, float] = {"text": 9_000, "reference_line": 1_000,
                                        "reference_band": 2_000}
