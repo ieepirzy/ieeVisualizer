@@ -48,9 +48,18 @@ Uncertainty
 Bounds appear only when the caller names ``lower_column`` and
 ``upper_column``; nothing is computed or estimated here. Spec schema 1.0 has
 no band mark (no ``y2`` channel), so bounds are emitted as two dotted line
-layers with the role of the rows they belong to, and the pair is recorded in
-``metadata["template"]["bands"]`` (layer indexes) so a renderer can fill
-between them once the spec grows a band mark.
+layers with the role of the rows they belong to (bounds of forecast rows are
+``role="forecast"`` layers, which renderers must draw as forecasts), and the
+pair is recorded in ``metadata["template"]["bands"]`` (layer indexes) so a
+renderer can fill between them once the spec grows a band mark.
+
+Each bound layer carries the style hint ``color_of: "<value layer name>"``
+(``revenue``, or ``revenue (forecast)`` in the forecast segment), which the
+matplotlib renderer honours by drawing the bounds of each series in that
+series' colour. Both bound layers of a segment share one name,
+``"<value> range (<lower> to <upper>)"``, so a renderer that merges
+identical legend entries (the matplotlib one does) shows one "range" entry
+per series and segment instead of two.
 """
 
 from __future__ import annotations
@@ -319,16 +328,18 @@ class TimeseriesTemplate(ComponentTemplate):
                                 f"column {v!r} has no {part} values; no {part} line is drawn "
                                 "for it.")
                     continue
-                spec.layers.append(_line(part, tname, v, series, v if part == "observed"
-                                         else f"{v} ({part})"))
+                value_name = v if part == "observed" else f"{v} ({part})"
+                spec.layers.append(_line(part, tname, v, series, value_name))
                 idx = {}
                 for which, b in (("lower", lower), ("upper", upper)):
                     if b is None:
                         continue
                     if not snap.columns[b].non_null():
                         continue  # caller gave no bound for these rows; nothing is invented
-                    m = _line(part, tname, b, series, f"{v} {which} bound ({b})")
-                    m.style = {"linestyle": "dotted", "linewidth": 1}
+                    # Both bounds share one name (one legend entry) and the colour
+                    # of the value series they bound (color_of, see module doc).
+                    m = _line(part, tname, b, series, f"{v} range ({lower} to {upper})")
+                    m.style = {"linestyle": "dotted", "linewidth": 1, "color_of": value_name}
                     idx[which] = len(spec.layers)
                     spec.layers.append(m)
                 if len(idx) == 2:

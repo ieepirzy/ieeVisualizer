@@ -49,6 +49,11 @@ of `ieeVisualizer/templates/base.py`. Registry errors (`TemplateRegistryError`)
 use `unknown_template`, `unknown_template_version`, `duplicate_template`,
 `invalid_version`, `invalid_name`.
 
+Numeric parameters (`target`, a numeric `forecast_from`, ranges, constants)
+must be finite: NaN, infinities and integers beyond float64 are an
+`invalid_parameter` issue from `check()` and a `TemplateInputError` from
+`build()`, never a failure of the spec built from them.
+
 Errors stop the build. Warnings do not; they are copied into the spec as
 `metadata["template"]["warnings"]`. `build()` also runs `validate()` on its
 own output and raises `SpecValidationError` rather than return a spec with
@@ -90,7 +95,12 @@ format).
   contradicts a declared one. Nothing is converted.
 - **Uncertainty:** only from caller-supplied `lower_column`/`upper_column`,
   never computed. Spec 1.0 has no band mark, so bounds are two dotted line
-  layers, paired in `metadata["template"]["bands"]`.
+  layers, paired in `metadata["template"]["bands"]`. Bounds of forecast rows
+  are `role="forecast"` layers (drawn as forecasts). Each bound layer has the
+  style hint `color_of: "<value layer name>"` so the renderer draws it in its
+  value series' colour, and both bounds of a segment are named
+  `"<value> range (<lower> to <upper>)"`, which the matplotlib renderer shows
+  as one legend entry per series.
 - **Nulls:** a null value stays null (a gap). A null time, series or role is
   an error because the row cannot be placed. Rows are ordered by time.
 - `target` adds a horizontal reference line; axis labels default to the
