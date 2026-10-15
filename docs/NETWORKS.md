@@ -271,10 +271,10 @@ seriation) and a bipartite allocation graph.
 
 ## Decisions
 
-* **A separate package and spec.** FigureSpec has no node/edge model and is
-  being migrated to pydantic on another branch, so networks live in
-  `ieeVisualizer/network/` with their own plain dataclasses, written to
-  move to pydantic later. The only edits elsewhere: `templates/__init__`
+* **A separate package and spec.** FigureSpec has no node/edge model, so
+  networks live in `ieeVisualizer/network/` with their own plain
+  dataclasses, following the spec's conventions (the spec models stay
+  stdlib dataclasses; see ROADMAP, "Phase 2 onward", Foundation). The only edits elsewhere: `templates/__init__`
   registers the three templates, and the gallery and its test dispatch on
   `kind: "network"`.
 * **No graph library.** Layouts are ~250 lines of numpy; networkx/graphviz

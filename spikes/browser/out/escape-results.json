@@ -8,12 +8,12 @@
   "tooltips": {
     "value": {
       "text": "06.07.2026Observed {b} <img src=x onerror=\"window.__pwned='name'\">: 1 180 EUR",
-      "html": "06.07.2026<br><span style=\"display:inline-block;width:9px;height:9px;margin-right:5px;background:#007c47\"></span>Observed {b} &lt;img src=x onerror=\"window.__pwned='name'\"&gt;: 1&nbsp;180 EUR",
+      "html": "06.07.2026<br><span style=\"display:inline-block;width:9px;height:9px;margin-right:5px;background:#0077bb\"></span>Observed {b} &lt;img src=x onerror=\"window.__pwned='name'\"&gt;: 1&nbsp;180 EUR",
       "injected": 0
     },
     "null": {
       "text": "03.08.2026Observed {b} <img src=x onerror=\"window.__pwned='name'\">: no data",
-      "html": "03.08.2026<br><span style=\"display:inline-block;width:9px;height:9px;margin-right:5px;background:#007c47\"></span>Observed {b} &lt;img src=x onerror=\"window.__pwned='name'\"&gt;: no data",
+      "html": "03.08.2026<br><span style=\"display:inline-block;width:9px;height:9px;margin-right:5px;background:#0077bb\"></span>Observed {b} &lt;img src=x onerror=\"window.__pwned='name'\"&gt;: no data",
       "injected": 0
     }
   },
@@ -58,7 +58,7 @@
     {
       "name": "browser: tooltip has no injected element",
       "ok": true,
-      "detail": "06.07.2026<br><span style=\"display:inline-block;width:9px;height:9px;margin-right:5px;background:#007c47\"></span>Observed {b} &lt;img src=x onerror=\"window.__pwned='name'\"&gt;: 1&nbsp;180 EUR"
+      "detail": "06.07.2026<br><span style=\"display:inline-block;width:9px;height:9px;margin-right:5px;background:#0077bb\"></span>Observed {b} &lt;img src=x onerror=\"window.__pwned='name'\"&gt;: 1&nbsp;180 EUR"
     },
     {
       "name": "browser: tooltip value formatted with unit (fi-FI)",
