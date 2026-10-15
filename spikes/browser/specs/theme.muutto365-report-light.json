@@ -77,6 +77,7 @@
       "admin --cyan hue darkened to 4.5:1 on white"
     ],
     "pending": "replace the pending slots with the official brand palette when one exists; publish it as a new theme version",
+    "roles": "forecast lines at 85 % opacity: at the renderer's default 75 % the purple series colour is 2.92:1 on white, below 3:1 for graphics",
     "semantic": "admin --green / --red hues darkened to 4.5:1, signal as attention",
     "sequential": "matplotlib viridis sampled on [0, 0.82] (high end visible on white)",
     "signal": "admin --orange hue darkened to 3:1 on white; reserved",
@@ -85,6 +86,7 @@
   "roles": {
     "forecast_fill_alpha": 0.85,
     "forecast_hatch": "///",
+    "forecast_line_alpha": 0.85,
     "forecast_linestyle": "dashed",
     "reference_alpha": 0.8,
     "reference_color": "#545454",

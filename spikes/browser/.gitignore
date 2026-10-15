@@ -8,3 +8,4 @@ out/plotly/
 out/vegalite/
 out/probe/*
 !out/probe/echarts-browser-band.png
+out/escape/*.svg

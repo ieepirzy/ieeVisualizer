@@ -5,6 +5,7 @@
 import {
   UnsupportedSpec, rows, field, axisTitle, axisKind, displayTimezone, wallClockMs,
   numberFormatter, legendLabel, tokens, isolatedPoints, assignColors, barGrid, describe,
+  escapeHtml, safeColor, strftimeUTC, valueText,
 } from './common.js';
 
 // strftime (theme locale date patterns) -> ECharts time template.
@@ -32,6 +33,10 @@ export function figureSpecToECharts(spec, theme) {
   const series = [];
   const legend = [];
   let categoryX = null, categoryY = null, visualMap = null;
+  // Per-series readout rules for the tooltip, keyed by ECharts series name:
+  // the same unit and number format the static render uses (RenderPlan stand-in).
+  const meta = {};
+  const unitOf = (data, f) => spec.datasets[data].columns[f]?.unit ?? null;
 
   const xVal = (v) => (xKind === 'time' ? wallClockMs(v, tz) : v);
 
@@ -57,6 +62,7 @@ export function figureSpecToECharts(spec, theme) {
         data: rs.map((r, i) => ({ value: [xVal(r[xf]), r[yf] ?? '-'], ...(lone.has(i) ? { symbolSize: 6 } : {}) })),
       });
       legend.push(name);
+      meta[name] = { kind: 'line', unit: unitOf(layer.data, yf), color };
     } else if (layer.type === 'band') {
       const lo = field(enc, 'y_lower'), hi = field(enc, 'y_upper');
       const rs = rows(spec, layer.data);
@@ -89,6 +95,7 @@ export function figureSpecToECharts(spec, theme) {
         },
       });
       legend.push(name);
+      meta[name] = { kind: 'band', unit: unitOf(layer.data, hi), color };
     } else if (layer.type === 'bar') {
       if ((layer.orientation ?? 'vertical') !== 'vertical') throw new UnsupportedSpec('horizontal bars not in spike');
       const { cats, groups, grid } = barGrid(spec, layer);
@@ -97,6 +104,7 @@ export function figureSpecToECharts(spec, theme) {
         series.push({ type: 'bar', name: String(groups[gi]), color: tk.palette[gi % tk.palette.length],
           data: cells.map((c) => (c.value == null ? '-' : c.value)), barGap: '0%', barCategoryGap: '20%' });
         legend.push(String(groups[gi]));
+        meta[String(groups[gi])] = { kind: 'bar', unit: unitOf(layer.data, field(enc, 'y')), color: tk.palette[gi % tk.palette.length] };
       });
       // "no data" in each empty slot, placed where its bar would be.
       const missing = [];
@@ -122,6 +130,7 @@ export function figureSpecToECharts(spec, theme) {
         // null cells are left out entirely: blank, not the colour of 0.
         data: rs.filter((r) => r[cf] != null).map((r) => [categoryX.indexOf(r[xf]), categoryY.indexOf(r[yf]), r[cf]]) });
       const unit = spec.datasets[layer.data].columns[cf].unit;
+      meta[name] = { kind: 'heatmap', unit };
       visualMap = { type: 'continuous', min: Math.min(...vals), max: Math.max(...vals), calculable: false,
         orient: 'vertical', right: 8, top: 'middle', itemHeight: 260,
         text: [`${fmt(Math.max(...vals))} ${unit ?? cf}`, fmt(Math.min(...vals))],
@@ -134,7 +143,10 @@ export function figureSpecToECharts(spec, theme) {
   const markLines = [];
   for (const a of spec.annotations || []) {
     if (a.type !== 'reference_line' || a.axis !== 'y') throw new UnsupportedSpec(`annotation ${a.type}/${a.axis}`);
-    markLines.push({ yAxis: a.value, name: a.label, label: { formatter: a.label ?? '', position: 'insideEndTop', color: tk.muted, fontFamily: tk.family, fontSize: tk.captionPx } });
+    // A string formatter is a template ({b}, {c} are substituted): pass the
+    // spec's label through a function so it is shown literally.
+    const label = a.label ?? '';
+    markLines.push({ yAxis: a.value, name: label, label: { formatter: () => label, position: 'insideEndTop', color: tk.muted, fontFamily: tk.family, fontSize: tk.captionPx } });
   }
   if (markLines.length) series.push({ type: 'line', name: '__reference', data: [], silent: true,
     markLine: { symbol: 'none', lineStyle: { color: tk.referenceColor, type: [6, 3, 1, 3], width: 1.2 }, data: markLines } });
@@ -151,7 +163,11 @@ export function figureSpecToECharts(spec, theme) {
     aria: { enabled: true, label: { description: describe(spec, theme) } },
     title: { text: spec.title, left: 'center', top: 4, textStyle: { ...text, fontSize: tk.fontPx * 1.2, fontWeight: 'normal' } },
     legend: { data: legend, right: 30, top: 34, textStyle: text },
-    tooltip: { trigger: categoryY ? 'item' : 'axis' },
+    // Tooltip text is built here from the spec, never ECharts' default
+    // (which reads raw values: epoch ms, '-', unformatted numbers). The HTML
+    // tooltip sets innerHTML, so every spec-supplied string is escaped.
+    tooltip: { trigger: categoryY ? 'item' : 'axis', renderMode: 'html',
+      formatter: tooltipFormatter({ meta, fmt, theme, xKind, categoryX, categoryY }) },
     grid: { left: 80, right: visualMap ? 110 : 30, top: 80, bottom: 75 },
     xAxis: categoryX
       ? { ...axisCommon, type: 'category', data: categoryX, name: axisTitle(spec, 'x'), nameGap: 28, splitLine: { show: false } }
@@ -165,5 +181,28 @@ export function figureSpecToECharts(spec, theme) {
     graphic: spec.caption ? [{ type: 'text', left: 8, bottom: 6,
       style: { text: spec.caption, fill: tk.muted, font: `italic ${tk.captionPx}px ${tk.family}` } }] : [],
     series,
+  };
+}
+
+function tooltipFormatter({ meta, fmt, theme, xKind, categoryX, categoryY }) {
+  const dayPattern = theme?.locale?.date_offset_formats?.[3] ?? '%Y-%m-%d';
+  const swatch = (c) => (safeColor(c) ? `<span style="display:inline-block;width:9px;height:9px;margin-right:5px;background:${c}"></span>` : '');
+  const header = (v) => escapeHtml(xKind === 'time' && typeof v === 'number' ? strftimeUTC(v, dayPattern) : v);
+  return (params) => {
+    const ps = (Array.isArray(params) ? params : [params]).filter((p) => meta[p.seriesName]);
+    if (!ps.length) return '';
+    if (categoryY) { // heatmap cell
+      const p = ps[0], m = meta[p.seriesName];
+      return `${escapeHtml(categoryX[p.value[0]])}, ${escapeHtml(categoryY[p.value[1]])}: ${escapeHtml(valueText(p.value[2], m.unit, fmt))}`;
+    }
+    const lines = ps.map((p) => {
+      const m = meta[p.seriesName];
+      const v = Array.isArray(p.value) ? p.value : [null, p.value];
+      const text = m.kind === 'band'
+        ? (v[1] == null || v[2] == null ? 'no data' : `${fmt(v[1])} to ${valueText(v[2], m.unit, fmt)}`)
+        : valueText(v[1], m.unit, fmt);
+      return `${swatch(m.color)}${escapeHtml(p.seriesName)}: ${escapeHtml(text)}`;
+    });
+    return [header(ps[0].axisValue), ...lines].join('<br>');
   };
 }

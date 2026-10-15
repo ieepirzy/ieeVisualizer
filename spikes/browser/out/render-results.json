@@ -5,25 +5,25 @@
       "spec": "band",
       "where": "node",
       "svg_bytes": 18825,
-      "ms": 119.3,
+      "ms": 97.2,
       "in_process_repeat_identical": false,
-      "sha": "7d9b65d7cd8b832f"
+      "sha": "98669f5e4d15197c"
     },
     {
       "engine": "vegalite",
       "spec": "band",
       "where": "node",
       "svg_bytes": 19041,
-      "ms": 130.6,
+      "ms": 127.6,
       "in_process_repeat_identical": true,
-      "sha": "b4d722a591171c8d"
+      "sha": "7af8b5a87489e7a5"
     },
     {
       "engine": "echarts",
       "spec": "grouped_bar",
       "where": "node",
       "svg_bytes": 7622,
-      "ms": 28.7,
+      "ms": 19.8,
       "in_process_repeat_identical": false,
       "sha": "f89af289674edfd2"
     },
@@ -32,7 +32,7 @@
       "spec": "grouped_bar",
       "where": "node",
       "svg_bytes": 14055,
-      "ms": 68.4,
+      "ms": 44.1,
       "in_process_repeat_identical": true,
       "sha": "c88083883b840685"
     },
@@ -41,7 +41,7 @@
       "spec": "heatmap",
       "where": "node",
       "svg_bytes": 23148,
-      "ms": 92.8,
+      "ms": 31.7,
       "in_process_repeat_identical": false,
       "sha": "7323edbe8911938a"
     },
@@ -50,7 +50,7 @@
       "spec": "heatmap",
       "where": "node",
       "svg_bytes": 15889,
-      "ms": 63.3,
+      "ms": 22.7,
       "in_process_repeat_identical": false,
       "sha": "1c449b9e35f18fd2"
     },
@@ -59,54 +59,54 @@
       "spec": "line",
       "where": "node",
       "svg_bytes": 11943,
-      "ms": 63,
+      "ms": 48.9,
       "in_process_repeat_identical": false,
-      "sha": "107c0913a25e97f9"
+      "sha": "f6754c8ac14d8457"
     },
     {
       "engine": "vegalite",
       "spec": "line",
       "where": "node",
       "svg_bytes": 17424,
-      "ms": 104.3,
+      "ms": 29.8,
       "in_process_repeat_identical": true,
-      "sha": "912277f76a30c611"
+      "sha": "d5505869149b9c98"
     },
     {
       "engine": "plotly",
       "spec": "band",
       "where": "chromium",
       "svg_bytes": 16811,
-      "ms": 139.7,
+      "ms": 88.3,
       "in_process_repeat_identical": false,
-      "sha": "2f435afc08d45bcc"
+      "sha": "f72bdc3b3d297672"
     },
     {
       "engine": "plotly",
       "spec": "grouped_bar",
       "where": "chromium",
       "svg_bytes": 16469,
-      "ms": 50.2,
+      "ms": 40.3,
       "in_process_repeat_identical": false,
-      "sha": "706919f837bb3051"
+      "sha": "e8b0aa30b9e02d69"
     },
     {
       "engine": "plotly",
       "spec": "heatmap",
       "where": "chromium",
       "svg_bytes": 12839,
-      "ms": 38.7,
+      "ms": 40.8,
       "in_process_repeat_identical": false,
-      "sha": "16e95dac63ec8f68"
+      "sha": "8199363ba653ac53"
     },
     {
       "engine": "plotly",
       "spec": "line",
       "where": "chromium",
       "svg_bytes": 18799,
-      "ms": 41.7,
+      "ms": 44.5,
       "in_process_repeat_identical": false,
-      "sha": "df61990c078369a1"
+      "sha": "d608caee080a85c4"
     }
   ],
   "pageErrors": []

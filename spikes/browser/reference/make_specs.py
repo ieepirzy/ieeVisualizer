@@ -1,10 +1,10 @@
 """Write the spike FigureSpecs, the theme tokens and the Matplotlib reference PNGs.
 
-Run with an ieeVisualizer that has ``ieeVisualizer.themes`` (branch
-claude/corporate-themes at the time of writing), e.g.::
+Run with an ieeVisualizer that has ``ieeVisualizer.themes`` (on ``main`` since
+the corporate-themes merge; the spike was first written against the unmerged
+branch), from the repository root::
 
-    git archive origin/claude/corporate-themes | tar -x -C /some/dir
-    PYTHONPATH=/some/dir python spikes/browser/reference/make_specs.py
+    PYTHONPATH=. python spikes/browser/reference/make_specs.py
 
 Outputs (next to this file's parent): ``specs/*.json`` (canonical FigureSpec
 JSON as the browser adapters read it), ``specs/theme.muutto365-report-light.json``

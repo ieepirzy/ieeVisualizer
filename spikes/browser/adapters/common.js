@@ -121,7 +121,9 @@ export function tokens(theme) {
     fontPx: ((t.typography?.size ?? 10) * 100) / 72,
     captionPx: ((t.typography?.caption ?? 8) * 100) / 72,
     referenceColor: t.roles?.reference_color ?? '#555555',
-    forecastOpacity: 0.75,
+    // Theme role token since the themes merge (0.85 in muutto365-report-light);
+    // 0.75 is the Matplotlib renderer default when a theme leaves it out.
+    forecastOpacity: t.roles?.forecast_line_alpha ?? 0.75,
     bandOpacity: 0.22,
   };
 }
@@ -205,4 +207,31 @@ export function describe(spec, theme) {
       (missing ? `; ${missing} missing (no data)` : ''));
   }
   return parts.join('. ') + '.';
+}
+
+/** Escape text for an HTML context (ECharts' HTML tooltip sets innerHTML). */
+export function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/** A colour safe to put in a style attribute, or null. */
+export const safeColor = (c) => (typeof c === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(c) ? c : null);
+
+/** strftime subset (%Y %m %d %H %M %S) on a wall-clock-as-UTC instant. */
+export function strftimeUTC(ms, pattern) {
+  const d = new Date(ms);
+  const p2 = (n) => String(n).padStart(2, '0');
+  const map = { Y: String(d.getUTCFullYear()), m: p2(d.getUTCMonth() + 1), d: p2(d.getUTCDate()),
+    H: p2(d.getUTCHours()), M: p2(d.getUTCMinutes()), S: p2(d.getUTCSeconds()) };
+  return pattern.replace(/%([YmdHMS])/g, (_, k) => map[k]);
+}
+
+/**
+ * Tooltip/readout text for one value, from the same rules as the static
+ * render: theme number format, the column's unit, and "no data" for a null
+ * (never 0, never "NaN", never "-"). Stand-in for the shared RenderPlan.
+ */
+export function valueText(v, unit, fmt) {
+  if (v == null || v === '-' || (typeof v === 'number' && Number.isNaN(v))) return 'no data';
+  return unit ? `${fmt(v)} ${unit}` : fmt(v);
 }
