@@ -2933,6 +2933,7 @@
  ],
  "generated_from": [
   "Recorded on the pre-migration code: origin/main at 5d75c72 (no pydantic models), with this branch's tools/spec_hashes.py copied in.",
+  "origin/main at cc109d5 (views merged) reproduces every record exactly, on Python 3.13 and 3.9 (tools/spec_hashes.py --compare).",
   "git archive origin/main | tar -x -C $SRC && mkdir -p $SRC/tools && cp tools/spec_hashes.py $SRC/tools/ && cd $SRC",
   "python3.13 tools/spec_hashes.py --write baseline.json --source ...   # numpy 2.5.4, native CPU (AVX-512)",
   "python3.9 tools/spec_hashes.py --merge baseline.json                  # numpy 2.0.2, native CPU",

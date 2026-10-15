@@ -1,0 +1,30 @@
+{
+  "echarts-figurespec.js": {
+    "packages": 3,
+    "by_licence": {
+      "Apache-2.0": 1,
+      "0BSD": 1,
+      "BSD-3-Clause": 1
+    },
+    "non_permissive": []
+  },
+  "plotly-figurespec.js": {
+    "packages": 18,
+    "by_licence": {
+      "MIT": 15,
+      "BSD-3-Clause": 2,
+      "Zlib": 1
+    },
+    "non_permissive": []
+  },
+  "vega-embed-full.js": {
+    "packages": 59,
+    "by_licence": {
+      "MIT": 1,
+      "BSD-3-Clause": 36,
+      "ISC": 21,
+      "Unlicense": 1
+    },
+    "non_permissive": []
+  }
+}

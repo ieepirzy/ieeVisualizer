@@ -1,0 +1,169 @@
+{
+ "schema_version": "1.0",
+ "coordinate_system": "cartesian2d",
+ "datasets": {
+  "h": {
+   "type": "snapshot",
+   "columns": {
+    "weekday": {
+     "values": [
+      "Mon",
+      "Mon",
+      "Mon",
+      "Mon",
+      "Mon",
+      "Tue",
+      "Tue",
+      "Tue",
+      "Tue",
+      "Tue",
+      "Wed",
+      "Wed",
+      "Wed",
+      "Wed",
+      "Wed",
+      "Thu",
+      "Thu",
+      "Thu",
+      "Thu",
+      "Thu",
+      "Fri",
+      "Fri",
+      "Fri",
+      "Fri",
+      "Fri",
+      "Sat",
+      "Sat",
+      "Sat",
+      "Sat",
+      "Sat",
+      "Sun",
+      "Sun",
+      "Sun",
+      "Sun",
+      "Sun"
+     ],
+     "dtype": "str"
+    },
+    "slot": {
+     "values": [
+      "08",
+      "10",
+      "12",
+      "14",
+      "16",
+      "08",
+      "10",
+      "12",
+      "14",
+      "16",
+      "08",
+      "10",
+      "12",
+      "14",
+      "16",
+      "08",
+      "10",
+      "12",
+      "14",
+      "16",
+      "08",
+      "10",
+      "12",
+      "14",
+      "16",
+      "08",
+      "10",
+      "12",
+      "14",
+      "16",
+      "08",
+      "10",
+      "12",
+      "14",
+      "16"
+     ],
+     "dtype": "str"
+    },
+    "bookings": {
+     "values": [
+      2,
+      7,
+      12,
+      17,
+      5,
+      5,
+      10,
+      15,
+      3,
+      8,
+      8,
+      13,
+      null,
+      6,
+      11,
+      11,
+      16,
+      4,
+      9,
+      14,
+      14,
+      2,
+      7,
+      12,
+      17,
+      17,
+      5,
+      10,
+      15,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null
+     ],
+     "dtype": "int",
+     "unit": "bookings"
+    }
+   }
+  }
+ },
+ "layers": [
+  {
+   "type": "heatmap",
+   "data": "h",
+   "encoding": {
+    "x": {
+     "field": "weekday"
+    },
+    "y": {
+     "field": "slot"
+    },
+    "color": {
+     "field": "bookings"
+    }
+   },
+   "role": "observed",
+   "style": {}
+  }
+ ],
+ "axes": {
+  "x": {
+   "label": "Weekday"
+  },
+  "y": {
+   "label": "Start time",
+   "unit": "h"
+  }
+ },
+ "legend": {
+  "show": true,
+  "position": "auto"
+ },
+ "annotations": [],
+ "metadata": {},
+ "title": "Bookings by weekday and start time",
+ "caption": "Sunday not collected (blank). Sat 16 is a measured zero.",
+ "theme": "muutto365-report-light"
+}

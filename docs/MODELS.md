@@ -307,7 +307,7 @@ six specs takes about 6 ms instead of 3 ms.
   `content_hash`; 68,000 cases) agree with `main` except for the
   intended `ValidationIssue` strictness above.
 * `tools/capture_spec_hashes.py` is a pytest plugin that hashes every spec the
-  whole test suite serializes or validates (508 tests, 405 distinct specs);
+  whole test suite serializes or validates (565 tests, 429 distinct specs);
   before/after runs of the full suite compare with zero differences.
 
 ## Gaps and follow-ups

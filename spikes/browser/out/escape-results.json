@@ -1,0 +1,85 @@
+{
+  "adapter": "adapters/",
+  "fixture": {
+    "HOSTILE_LABEL": "Target {b} {c} {a|x} <script>window.__pwned=\"label\"</script>",
+    "HOSTILE_NAME": "Observed {b} <img src=x onerror=\"window.__pwned='name'\">",
+    "HOSTILE_TITLE": "Revenue {c} <b>bold?</b>"
+  },
+  "tooltips": {
+    "value": {
+      "text": "06.07.2026Observed {b} <img src=x onerror=\"window.__pwned='name'\">: 1 180 EUR",
+      "html": "06.07.2026<br><span style=\"display:inline-block;width:9px;height:9px;margin-right:5px;background:#007c47\"></span>Observed {b} &lt;img src=x onerror=\"window.__pwned='name'\"&gt;: 1&nbsp;180 EUR",
+      "injected": 0
+    },
+    "null": {
+      "text": "03.08.2026Observed {b} <img src=x onerror=\"window.__pwned='name'\">: no data",
+      "html": "03.08.2026<br><span style=\"display:inline-block;width:9px;height:9px;margin-right:5px;background:#007c47\"></span>Observed {b} &lt;img src=x onerror=\"window.__pwned='name'\"&gt;: no data",
+      "injected": 0
+    }
+  },
+  "checks": [
+    {
+      "name": "ssr: reference label literal",
+      "ok": true,
+      "detail": [
+        "Target {b} {c} {a|x} <script>window.__pwned=\"label\"</script>"
+      ]
+    },
+    {
+      "name": "ssr: series name literal in legend",
+      "ok": true
+    },
+    {
+      "name": "ssr: title literal",
+      "ok": true
+    },
+    {
+      "name": "ssr: no injected element",
+      "ok": true
+    },
+    {
+      "name": "browser: no script ran",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "browser: reference label literal in SVG",
+      "ok": true
+    },
+    {
+      "name": "browser: tooltip shown",
+      "ok": true
+    },
+    {
+      "name": "browser: tooltip name literal",
+      "ok": true,
+      "detail": "06.07.2026Observed {b} <img src=x onerror=\"window.__pwned='name'\">: 1 180 EUR"
+    },
+    {
+      "name": "browser: tooltip has no injected element",
+      "ok": true,
+      "detail": "06.07.2026<br><span style=\"display:inline-block;width:9px;height:9px;margin-right:5px;background:#007c47\"></span>Observed {b} &lt;img src=x onerror=\"window.__pwned='name'\"&gt;: 1&nbsp;180 EUR"
+    },
+    {
+      "name": "browser: tooltip value formatted with unit (fi-FI)",
+      "ok": true,
+      "detail": "06.07.2026Observed {b} <img src=x onerror=\"window.__pwned='name'\">: 1 180 EUR"
+    },
+    {
+      "name": "browser: tooltip date in spec timezone",
+      "ok": true,
+      "detail": "06.07.2026Observed {b} <img src=x onerror=\"window.__pwned='name'\">: 1 180 EUR"
+    },
+    {
+      "name": "browser: null week reads \"no data\"",
+      "ok": true,
+      "detail": "03.08.2026Observed {b} <img src=x onerror=\"window.__pwned='name'\">: no data"
+    },
+    {
+      "name": "browser: no page errors",
+      "ok": true,
+      "detail": []
+    }
+  ],
+  "failed": 0
+}

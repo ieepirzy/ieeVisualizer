@@ -1,0 +1,1031 @@
+{
+ "$id": "https://github.com/ieepirzy/ieeVisualizer/schema/figurespec-1.0.json",
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "additionalProperties": false,
+ "definitions": {
+  "annotation": {
+   "oneOf": [
+    {
+     "additionalProperties": false,
+     "properties": {
+      "label": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "style": {
+       "type": "object"
+      },
+      "text": {
+       "type": "string"
+      },
+      "type": {
+       "const": "text"
+      },
+      "x": {
+       "type": [
+        "number",
+        "string",
+        "null"
+       ]
+      },
+      "y": {
+       "type": [
+        "number",
+        "string",
+        "null"
+       ]
+      },
+      "z": {
+       "type": [
+        "number",
+        "string",
+        "null"
+       ]
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "axis": {
+       "enum": [
+        "x",
+        "y",
+        "z"
+       ]
+      },
+      "label": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "style": {
+       "type": "object"
+      },
+      "type": {
+       "const": "reference_line"
+      },
+      "value": {
+       "type": [
+        "number",
+        "string",
+        "null"
+       ]
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "axis": {
+       "enum": [
+        "x",
+        "y",
+        "z"
+       ]
+      },
+      "end": {
+       "type": [
+        "number",
+        "string",
+        "null"
+       ]
+      },
+      "label": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "start": {
+       "type": [
+        "number",
+        "string",
+        "null"
+       ]
+      },
+      "style": {
+       "type": "object"
+      },
+      "type": {
+       "const": "reference_band"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    }
+   ]
+  },
+  "axis": {
+   "additionalProperties": false,
+   "properties": {
+    "label": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "limits": {
+     "items": {
+      "type": [
+       "number",
+       "string",
+       "null"
+      ]
+     },
+     "maxItems": 2,
+     "minItems": 2,
+     "type": [
+      "array",
+      "null"
+     ]
+    },
+    "scale": {
+     "enum": [
+      "linear",
+      "log",
+      "symlog",
+      "time",
+      "category",
+      null
+     ]
+    },
+    "unit": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "column": {
+   "additionalProperties": false,
+   "if": {
+    "properties": {
+     "dtype": {
+      "const": "datetime"
+     }
+    },
+    "required": [
+     "dtype"
+    ]
+   },
+   "properties": {
+    "aggregation": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "denominator": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "description": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "dtype": {
+     "enum": [
+      "float",
+      "int",
+      "bool",
+      "str",
+      "datetime",
+      null
+     ]
+    },
+    "unit": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "values": {
+     "type": "array"
+    }
+   },
+   "required": [
+    "values"
+   ],
+   "then": {
+    "properties": {
+     "values": {
+      "items": {
+       "pattern": "^([0-9]{4})-([0-9]{2})-([0-9]{2})(?:[T ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:[.]([0-9]+))?)?(Z|[+-][0-9]{2}:[0-9]{2})?)?$",
+       "type": [
+        "string",
+        "null"
+       ]
+      }
+     }
+    }
+   },
+   "type": "object"
+  },
+  "encoding": {
+   "oneOf": [
+    {
+     "type": "string"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "field": {
+       "type": "string"
+      },
+      "title": {
+       "type": [
+        "string",
+        "null"
+       ]
+      }
+     },
+     "required": [
+      "field"
+     ],
+     "type": "object"
+    }
+   ]
+  },
+  "mark": {
+   "oneOf": [
+    {
+     "additionalProperties": false,
+     "properties": {
+      "data": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "encoding": {
+       "additionalProperties": {
+        "$ref": "#/definitions/encoding"
+       },
+       "propertyNames": {
+        "enum": [
+         "x",
+         "y",
+         "z",
+         "u",
+         "v",
+         "w",
+         "color",
+         "size",
+         "series"
+        ]
+       },
+       "type": "object"
+      },
+      "name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "role": {
+       "enum": [
+        "observed",
+        "forecast",
+        "reference"
+       ]
+      },
+      "style": {
+       "type": "object"
+      },
+      "type": {
+       "const": "line"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "data": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "encoding": {
+       "additionalProperties": {
+        "$ref": "#/definitions/encoding"
+       },
+       "propertyNames": {
+        "enum": [
+         "x",
+         "y",
+         "z",
+         "u",
+         "v",
+         "w",
+         "color",
+         "size",
+         "series"
+        ]
+       },
+       "type": "object"
+      },
+      "name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "role": {
+       "enum": [
+        "observed",
+        "forecast",
+        "reference"
+       ]
+      },
+      "style": {
+       "type": "object"
+      },
+      "type": {
+       "const": "scatter"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "data": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "encoding": {
+       "additionalProperties": {
+        "$ref": "#/definitions/encoding"
+       },
+       "propertyNames": {
+        "enum": [
+         "x",
+         "y",
+         "z",
+         "u",
+         "v",
+         "w",
+         "color",
+         "size",
+         "series"
+        ]
+       },
+       "type": "object"
+      },
+      "name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "role": {
+       "enum": [
+        "observed",
+        "forecast",
+        "reference"
+       ]
+      },
+      "style": {
+       "type": "object"
+      },
+      "type": {
+       "const": "area"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "data": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "encoding": {
+       "additionalProperties": {
+        "$ref": "#/definitions/encoding"
+       },
+       "propertyNames": {
+        "enum": [
+         "x",
+         "y",
+         "z",
+         "u",
+         "v",
+         "w",
+         "color",
+         "size",
+         "series"
+        ]
+       },
+       "type": "object"
+      },
+      "name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "orientation": {
+       "enum": [
+        "vertical",
+        "horizontal"
+       ]
+      },
+      "role": {
+       "enum": [
+        "observed",
+        "forecast",
+        "reference"
+       ]
+      },
+      "style": {
+       "type": "object"
+      },
+      "type": {
+       "const": "bar"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "bin_edges": {
+       "items": {
+        "type": "number"
+       },
+       "minItems": 2,
+       "type": [
+        "array",
+        "null"
+       ]
+      },
+      "bins": {
+       "minimum": 1,
+       "type": [
+        "integer",
+        "null"
+       ]
+      },
+      "data": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "density": {
+       "type": "boolean"
+      },
+      "encoding": {
+       "additionalProperties": {
+        "$ref": "#/definitions/encoding"
+       },
+       "propertyNames": {
+        "enum": [
+         "x",
+         "y",
+         "z",
+         "u",
+         "v",
+         "w",
+         "color",
+         "size",
+         "series"
+        ]
+       },
+       "type": "object"
+      },
+      "name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "role": {
+       "enum": [
+        "observed",
+        "forecast",
+        "reference"
+       ]
+      },
+      "style": {
+       "type": "object"
+      },
+      "type": {
+       "const": "histogram"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "data": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "encoding": {
+       "additionalProperties": {
+        "$ref": "#/definitions/encoding"
+       },
+       "propertyNames": {
+        "enum": [
+         "x",
+         "y",
+         "z",
+         "u",
+         "v",
+         "w",
+         "color",
+         "size",
+         "series"
+        ]
+       },
+       "type": "object"
+      },
+      "name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "role": {
+       "enum": [
+        "observed",
+        "forecast",
+        "reference"
+       ]
+      },
+      "style": {
+       "type": "object"
+      },
+      "type": {
+       "const": "heatmap"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "data": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "encoding": {
+       "additionalProperties": {
+        "$ref": "#/definitions/encoding"
+       },
+       "propertyNames": {
+        "enum": [
+         "x",
+         "y",
+         "z",
+         "u",
+         "v",
+         "w",
+         "color",
+         "size",
+         "series"
+        ]
+       },
+       "type": "object"
+      },
+      "name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "normalize": {
+       "type": "boolean"
+      },
+      "role": {
+       "enum": [
+        "observed",
+        "forecast",
+        "reference"
+       ]
+      },
+      "scale": {
+       "type": [
+        "number",
+        "null"
+       ]
+      },
+      "style": {
+       "type": "object"
+      },
+      "type": {
+       "const": "quiver"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "data": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "domain": {
+       "additionalProperties": {
+        "items": {
+         "type": "number"
+        },
+        "maxItems": 2,
+        "minItems": 2,
+        "type": "array"
+       },
+       "type": "object"
+      },
+      "encoding": {
+       "additionalProperties": {
+        "$ref": "#/definitions/encoding"
+       },
+       "propertyNames": {
+        "enum": [
+         "x",
+         "y",
+         "z",
+         "u",
+         "v",
+         "w",
+         "color",
+         "size",
+         "series"
+        ]
+       },
+       "type": "object"
+      },
+      "expression": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "parameters": {
+       "additionalProperties": {
+        "type": "number"
+       },
+       "type": "object"
+      },
+      "role": {
+       "enum": [
+        "observed",
+        "forecast",
+        "reference"
+       ]
+      },
+      "samples": {
+       "minimum": 2,
+       "type": "integer"
+      },
+      "style": {
+       "type": "object"
+      },
+      "type": {
+       "const": "function"
+      },
+      "variables": {
+       "items": {
+        "type": "string"
+       },
+       "minItems": 1,
+       "type": "array"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    }
+   ]
+  },
+  "ref": {
+   "additionalProperties": false,
+   "properties": {
+    "columns": {
+     "additionalProperties": {
+      "additionalProperties": false,
+      "properties": {
+       "aggregation": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "denominator": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "description": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "dtype": {
+        "enum": [
+         "float",
+         "int",
+         "bool",
+         "str",
+         "datetime",
+         null
+        ]
+       },
+       "unit": {
+        "type": [
+         "string",
+         "null"
+        ]
+       }
+      },
+      "type": "object"
+     },
+     "type": "object"
+    },
+    "id": {
+     "type": "string"
+    },
+    "kind": {
+     "type": "string"
+    },
+    "query": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "retrieved_at": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "type": {
+     "const": "ref"
+    },
+    "version": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "type",
+    "kind",
+    "id"
+   ],
+   "type": "object"
+  },
+  "snapshot": {
+   "additionalProperties": false,
+   "properties": {
+    "columns": {
+     "additionalProperties": {
+      "$ref": "#/definitions/column"
+     },
+     "type": "object"
+    },
+    "provenance": {
+     "additionalProperties": false,
+     "properties": {
+      "extra": {
+       "type": "object"
+      },
+      "notes": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "query": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "retrieved_at": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "run_id": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "source": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "source_version": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "timezone": {
+       "type": [
+        "string",
+        "null"
+       ]
+      }
+     },
+     "type": "object"
+    },
+    "type": {
+     "const": "snapshot"
+    }
+   },
+   "required": [
+    "type",
+    "columns"
+   ],
+   "type": "object"
+  }
+ },
+ "properties": {
+  "annotations": {
+   "items": {
+    "$ref": "#/definitions/annotation"
+   },
+   "type": "array"
+  },
+  "axes": {
+   "additionalProperties": {
+    "$ref": "#/definitions/axis"
+   },
+   "propertyNames": {
+    "enum": [
+     "x",
+     "y",
+     "z"
+    ]
+   },
+   "type": "object"
+  },
+  "caption": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "coordinate_system": {
+   "enum": [
+    "cartesian2d",
+    "cartesian3d",
+    "polar"
+   ]
+  },
+  "datasets": {
+   "additionalProperties": {
+    "oneOf": [
+     {
+      "$ref": "#/definitions/snapshot"
+     },
+     {
+      "$ref": "#/definitions/ref"
+     }
+    ]
+   },
+   "type": "object"
+  },
+  "id": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "layers": {
+   "items": {
+    "$ref": "#/definitions/mark"
+   },
+   "type": "array"
+  },
+  "legend": {
+   "additionalProperties": false,
+   "properties": {
+    "position": {
+     "enum": [
+      "auto",
+      "top",
+      "bottom",
+      "left",
+      "right",
+      "upper-left",
+      "upper-right",
+      "lower-left",
+      "lower-right",
+      "outside-right"
+     ]
+    },
+    "show": {
+     "type": "boolean"
+    },
+    "title": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "metadata": {
+   "type": "object"
+  },
+  "schema_version": {
+   "enum": [
+    "1.0"
+   ]
+  },
+  "theme": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "title": {
+   "type": [
+    "string",
+    "null"
+   ]
+  }
+ },
+ "required": [
+  "schema_version"
+ ],
+ "title": "ieeVisualizer FigureSpec",
+ "type": "object"
+}

@@ -1,0 +1,93 @@
+{
+ "schema_version": "1.0",
+ "coordinate_system": "cartesian2d",
+ "datasets": {
+  "b": {
+   "type": "snapshot",
+   "columns": {
+    "region": {
+     "values": [
+      "Helsinki",
+      "Helsinki",
+      "Espoo",
+      "Espoo",
+      "Vantaa",
+      "Vantaa",
+      "Tampere",
+      "Turku",
+      "Turku"
+     ],
+     "dtype": "str"
+    },
+    "year": {
+     "values": [
+      "2025",
+      "2026",
+      "2025",
+      "2026",
+      "2025",
+      "2026",
+      "2026",
+      "2025",
+      "2026"
+     ],
+     "dtype": "str"
+    },
+    "bookings": {
+     "values": [
+      412,
+      468,
+      233,
+      251,
+      180,
+      176,
+      142,
+      96,
+      null
+     ],
+     "dtype": "int",
+     "unit": "bookings"
+    }
+   }
+  }
+ },
+ "layers": [
+  {
+   "type": "bar",
+   "data": "b",
+   "encoding": {
+    "x": {
+     "field": "region"
+    },
+    "y": {
+     "field": "bookings"
+    },
+    "series": {
+     "field": "year"
+    }
+   },
+   "role": "observed",
+   "style": {},
+   "orientation": "vertical"
+  }
+ ],
+ "axes": {
+  "x": {
+   "label": "Region"
+  },
+  "y": {
+   "label": "Bookings",
+   "unit": "bookings"
+  }
+ },
+ "legend": {
+  "show": true,
+  "position": "auto",
+  "title": "Year"
+ },
+ "annotations": [],
+ "metadata": {},
+ "title": "Bookings by region",
+ "caption": "Tampere has no 2025 row; Turku 2026 is null (not collected).",
+ "theme": "muutto365-report-light"
+}
