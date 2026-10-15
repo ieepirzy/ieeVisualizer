@@ -164,7 +164,7 @@ def test_export_png_svg_with_provenance_and_rerender_from_the_frozen_spec(tmp_pa
     artifact = export(spec, ["png", "svg"], LocalDirectoryWriter(tmp_path), name="cooling")
     root = tmp_path / artifact.artifact_id
     files = sorted(p.name for p in root.iterdir())
-    assert files == ["figure.png", "figure.svg", "manifest.json", "spec.json"]
+    assert files == ["figure.png", "figure.svg", "manifest.json", "spec.json", "theme.json"]
 
     manifest = json.loads((root / "manifest.json").read_text())
     assert (root / "figure.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"

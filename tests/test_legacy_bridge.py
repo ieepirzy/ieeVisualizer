@@ -272,7 +272,7 @@ def test_export_writes_png_svg_spec_and_manifest(tmp_path):
                                        units={"x": "rad"}, name="sine")
     root = tmp_path / artifact.artifact_id
     assert sorted(p.name for p in root.iterdir()) == [
-        "figure.png", "figure.svg", "manifest.json", "spec.json"]
+        "figure.png", "figure.svg", "manifest.json", "spec.json", "theme.json"]
     manifest = json.loads((root / "manifest.json").read_text())
     for variant in manifest["variants"]:
         data = (root / variant["file"]["name"]).read_bytes()
@@ -292,5 +292,6 @@ def test_export_accepts_a_writer_and_spec_options():
         warnings.simplefilter("error")  # nothing non-finite here
         artifact = Visualizer().export(rotation, w, dim=2, kind="vector_field",
                                        formats=["svg"], n=4)
-    assert {name for (_, name) in w.files} == {"figure.svg", "spec.json", "manifest.json"}
+    assert {name for (_, name) in w.files} == {"figure.svg", "spec.json", "theme.json",
+                                               "manifest.json"}
     assert artifact.variant("svg").format == "svg"
