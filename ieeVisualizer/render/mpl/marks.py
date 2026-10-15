@@ -502,17 +502,45 @@ def draw_heatmap(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     return [mesh]
 
 
-def _cell_scale(a: dict[str, np.ndarray]) -> float:
+def _grid_index(xs: np.ndarray, ys: np.ndarray):
+    """Distinct x and y values, each row's index into them, and how many rows
+    land in each (y, x) cell. The rows form a complete rectilinear grid when
+    both axes have at least two values and every cell count is exactly 1."""
+    xu, yu = np.unique(xs), np.unique(ys)
+    xi, yi = np.searchsorted(xu, xs), np.searchsorted(yu, ys)
+    seen = np.zeros((yu.size, xu.size), dtype=int)
+    np.add.at(seen, (yi, xi), 1)
+    return xu, yu, xi, yi, seen
+
+
+def _is_grid(seen: np.ndarray) -> bool:
+    return seen.shape[0] >= 2 and seen.shape[1] >= 2 and bool((seen == 1).all())
+
+
+def _linear_axis(ctx: DrawContext, ch: str) -> bool:
+    axis = ctx.spec.axes.get(ch)
+    scale = axis.scale if axis is not None else None
+    return scale in (None, "linear") and ctx.axes[ch].kind == "numeric"
+
+
+def _cell_scale(ctx: DrawContext, a: dict[str, np.ndarray]) -> float | None:
     """Data units per unit of |(u, v)| so the longest arrow spans one grid
-    cell: the smaller of the x and y extents divided by (distinct positions
-    - 1). Falls back to the other axis, then to 1, when an axis has a single
-    position; 1 when every vector is zero."""
-    cells = []
-    for k in ("x", "y"):
-        u = np.unique(a[k])
-        if u.size > 1:
-            cells.append((u[-1] - u[0]) / (u.size - 1))
-    cell = min(cells) if cells else 1.0
+    cell (the smaller of the x and y spacings), or None when that rule does
+    not apply: the rule measures a cell in linear data units, so it needs a
+    complete rectilinear grid of positions (the same check as a sampled 3D
+    surface) on two linear numeric axes of a cartesian plot. On a log axis
+    equal vectors would be drawn at different apparent lengths and tips can
+    fall at x <= 0; for scattered positions "a cell" is not a spacing at
+    all. Uneven grid spacing uses the mean spacing per axis. 1 when every
+    vector is zero."""
+    if ctx.spec.coordinate_system != "cartesian2d":
+        return None
+    if not (_linear_axis(ctx, "x") and _linear_axis(ctx, "y")):
+        return None
+    xu, yu, _, _, seen = _grid_index(a["x"], a["y"])
+    if not _is_grid(seen):
+        return None
+    cell = min((xu[-1] - xu[0]) / (xu.size - 1), (yu[-1] - yu[0]) / (yu.size - 1))
     mmax = float(np.max(np.hypot(a["u"], a["v"])))
     return cell / mmax if mmax > 0 else 1.0
 
@@ -552,16 +580,19 @@ def draw_quiver(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                                 for p, c in (("x", "u"), ("y", "v"), ("z", "w"))),
                               had_data=True)
         return [q]
-    # spec: arrow length in data units = scale * |(u, v)|. Without a scale the
-    # longest arrow spans one grid cell (the rule visualize_vf uses in 3D), so
-    # arrows neither overlap their neighbours nor run out of the plot: the
-    # view is widened to include every arrow tip, which matplotlib's own
-    # autoscaling (sized at draw time, tails only) does not do.
-    length = m.scale if m.scale is not None else _cell_scale(a)
-    kw.update(angles="xy", scale_units="xy", scale=1.0 / length)
-    tips_x, tips_y = a["x"] + length * a["u"], a["y"] + length * a["v"]
-    ctx.ax.update_datalim(np.column_stack([np.concatenate([a["x"], tips_x]),
-                                           np.concatenate([a["y"], tips_y])]))
+    # spec: arrow length in data units = scale * |(u, v)|. Without a scale,
+    # on a complete grid over linear axes, the longest arrow spans one grid
+    # cell (the rule visualize_vf uses in 3D), so arrows neither overlap their
+    # neighbours nor run out of the plot: the view is widened to include
+    # every arrow tip, which matplotlib's own autoscaling (sized at draw
+    # time, tails only) does not do. Anywhere else (log axes, scattered
+    # positions) matplotlib's own arrow autoscaling is used unchanged.
+    length = m.scale if m.scale is not None else _cell_scale(ctx, a)
+    if length is not None:
+        kw.update(angles="xy", scale_units="xy", scale=1.0 / length)
+        tips_x, tips_y = a["x"] + length * a["u"], a["y"] + length * a["v"]
+        ctx.ax.update_datalim(np.column_stack([np.concatenate([a["x"], tips_x]),
+                                               np.concatenate([a["y"], tips_y])]))
     args = [a["x"], a["y"], a["u"], a["v"]]
     if cvals is not None:
         args.append(np.asarray(cvals[valid], dtype=float))
@@ -592,11 +623,8 @@ def _sampled_surface(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                                  f"layer {i} has rows with a null x or y; a surface point "
                                  "cannot be placed without both. Drop those rows upstream.")])
     xs, ys = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
-    xu, yu = np.unique(xs), np.unique(ys)
-    xi, yi = np.searchsorted(xu, xs), np.searchsorted(yu, ys)
-    seen = np.zeros((yu.size, xu.size), dtype=int)
-    np.add.at(seen, (yi, xi), 1)
-    if xu.size < 2 or yu.size < 2 or not (seen == 1).all():
+    xu, yu, xi, yi, seen = _grid_index(xs, ys)
+    if not _is_grid(seen):
         raise RenderError([issue(path, "not_a_grid",
                                  f"layer {i} is a sampled 3D function, drawn as a surface "
                                  "z = f(x, y), so its rows must cover every (x, y) pair of a "

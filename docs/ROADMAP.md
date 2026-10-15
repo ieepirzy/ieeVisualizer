@@ -131,7 +131,8 @@ sampling mode, seed) and `Visualizer.export()` writes PNG/SVG + manifest.
 `style=`, streamlines and 3D magnitude colours, which the spec cannot
 express); tests assert both routes draw the same data instead. The adapter
 gained a surface for sampled 3D functions, a default 2D quiver scale that
-keeps arrows inside the plot, and a visible "no data" note on log axes.
+keeps arrows inside the plot (on complete grids over linear axes), and a
+visible "no data" note on log axes.
 `examples/gallery.py` exports every mark and template; README quick start
 covers the three entry points; `tests/test_end_to_end.py` covers the slice
 sentence clause by clause.

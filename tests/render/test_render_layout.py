@@ -36,6 +36,47 @@ def test_explicit_quiver_scale_is_kept():
     assert q.scale == pytest.approx(10.0)
 
 
+def _quiver(cols, **kw):
+    built = build_figure(one_layer(QuiverMark(encoding={c: c for c in "xyuv"}), cols, **kw))
+    built.figure.canvas.draw()
+    (q,) = built.layer_artists[0]
+    return built, q
+
+
+def test_log_axis_quiver_uses_matplotlib_arrow_scaling():
+    # The one-cell rule measures arrows in linear data units: on a log x axis
+    # equal vectors would be drawn at very different lengths, and tips left of
+    # x = 0 cannot be shown. Arrows fall back to matplotlib's screen-relative
+    # scaling ("uv" angles, no scale_units), where equal vectors look equal.
+    gx, gy = np.meshgrid([1.0, 10.0, 100.0, 1000.0], [1.0, 2.0, 3.0])
+    cols = {"x": gx.ravel(), "y": gy.ravel(), "u": np.full(12, -100.0), "v": np.zeros(12)}
+    built, q = _quiver(cols, axes={"x": Axis(label="x", scale="log")})
+    assert q.scale_units is None and q.angles == "uv"
+    x0, x1 = built.axes.get_xlim()
+    assert 0 < x0 <= 1.0 and x1 >= 1000.0  # view follows the positions, not tips < 0
+
+
+def test_scattered_quiver_positions_use_matplotlib_arrow_scaling():
+    # 100 scattered points are not a grid: "extent / (distinct - 1)" would make
+    # every arrow a speck, so the one-cell rule must not apply.
+    rng = np.random.default_rng(0)
+    x, y = rng.uniform(0, 10, 100), rng.uniform(0, 10, 100)
+    built, q = _quiver({"x": x, "y": y, "u": np.ones(100), "v": np.zeros(100)})
+    assert q.scale_units is None and q.angles == "uv"
+    x0, x1 = built.axes.get_xlim()
+    assert x0 <= x.min() and x.max() <= x1
+
+
+def test_incomplete_grid_falls_back_and_uneven_complete_grid_keeps_one_cell_rule():
+    cols = _saddle(3)
+    cut = {k: v[:-1] for k, v in cols.items()}  # one (x, y) cell missing
+    _, q = _quiver(cut)
+    assert q.scale_units is None
+    gx, gy = np.meshgrid([0.0, 1.0, 4.0], [0.0, 2.0])  # rectilinear, uneven spacing
+    _, q = _quiver({"x": gx.ravel(), "y": gy.ravel(), "u": np.ones(6), "v": np.zeros(6)})
+    assert q.scale_units == "xy" and 1.0 / q.scale == pytest.approx(2.0)  # min(4/2, 2/1)
+
+
 @pytest.mark.parametrize("horizontal", [False, True])
 def test_no_data_note_is_inside_the_plot_on_a_log_axis(horizontal):
     cat, val = ("y", "x") if horizontal else ("x", "y")
