@@ -39,7 +39,8 @@ class Dummy(ComponentTemplate):
 
 def test_builtins_are_listed():
     names = [t["name"] for t in templates.list_templates()]
-    assert names == ["bar_comparison", "funnel", "timeseries", "vector_field_2d"]
+    assert names == ["bar_comparison", "dependency_map", "funnel", "network", "org_chart",
+                     "timeseries", "vector_field_2d"]
     entry = templates.list_templates()[0]
     assert set(entry) == {"name", "version", "versions", "title", "description"}
     json.dumps(templates.list_templates())
@@ -65,8 +66,9 @@ def test_describe_is_json_and_its_example_builds(name):
 def test_catalog_covers_every_template():
     cat = templates.catalog()
     json.dumps(cat)
-    assert [t["name"] for t in cat["templates"]] == ["bar_comparison", "funnel", "timeseries",
-                                                     "vector_field_2d"]
+    assert [t["name"] for t in cat["templates"]] == [
+        "bar_comparison", "dependency_map", "funnel", "network", "org_chart",
+        "timeseries", "vector_field_2d"]
 
 
 def test_latest_version_by_semver_not_by_string_or_insertion():
