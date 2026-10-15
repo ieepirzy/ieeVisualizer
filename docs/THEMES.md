@@ -168,9 +168,16 @@ Measured (`themes.describe(name)["accessibility"]`):
 
 Bar style keys (renderer-neutral hints, matplotlib honours them):
 `value_labels: true` prints each bar's value at its end in the theme's
-locale (when the figure is drawn, the value axis is widened just enough that
-every label lies inside the plot; an end fixed by `axes.<ch>.limits` is kept
-and a label that does not fit is a `value_label_outside_axes` warning).
+locale. When the figure is drawn (at the size and dpi actually drawn) the
+labels are arranged so that no two overlap and each stays within its bar's
+cell (halfway to the neighbouring bars): on vertical bars, labels wider than
+their cell are all turned 90 degrees, reading upwards from the bar end;
+labels still too thick are shrunk to one common size down to 6 pt, and if
+even that does not fit they are left out with a `value_labels_omitted`
+warning rather than drawn over each other. Then the value axis is widened
+just enough that every label lies inside the plot; an end fixed by
+`axes.<ch>.limits` is kept and a label that does not fit is a
+`value_label_outside_axes` warning (`ieeVisualizer/render/mpl/value_labels.py`).
 Bar layers sharing categories are dodged side by side by the renderer
 (RENDERING.md, "Bars"); `bar_width` (0-1) and `bar_offset` (-0.5-0.5) are
 explicit overrides that place one layer's bars as fractions of the category

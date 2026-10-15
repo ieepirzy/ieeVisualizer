@@ -128,7 +128,9 @@ in layer order, so the template sets no `bar_width`/`bar_offset`).
   (a repeat or a null category is an error). All drawn columns share one
   unit (`mixed_units` otherwise); nothing is converted.
 - `value_labels` (default true) prints each value in the render theme's
-  locale (`1 234,50 €` for EUR under `muutto365-report-light`).
+  locale (`1 234,50 €` for EUR under `muutto365-report-light`). Vertical
+  bars too narrow for their labels get them turned upright on the bar; the
+  renderer never lets two labels overlap (THEMES.md).
 
 ### `funnel` 1.0.0
 

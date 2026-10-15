@@ -38,6 +38,7 @@ from .style import (
     parse_style,
     roles_for,
 )
+from .value_labels import NoDataNote, ValueLabel, fit_value_labels  # noqa: F401 (re-export)
 
 
 @dataclass
@@ -57,9 +58,12 @@ class DrawContext:
     axes: dict[str, AxisInfo]
     warnings: list[RenderWarning]
     layer_artists: dict[int, list[Any]] = field(default_factory=dict)
-    #: Bar value labels as ``(annotation, value channel, layer index)``;
-    #: :func:`fit_value_labels` keeps them inside the axes after layout.
-    value_labels: list[tuple[Any, str, int]] = field(default_factory=list)
+    #: Bar value labels and "no data" notes; :func:`fit_value_labels`
+    #: arranges them after layout (see :mod:`.value_labels`).
+    value_labels: list[ValueLabel] = field(default_factory=list)
+    no_data_notes: list[NoDataNote] = field(default_factory=list)
+    #: Category-axis centres of every bar and bar-less slot, by value channel.
+    bar_centres: dict[str, np.ndarray] = field(default_factory=dict)
     #: The resolved :class:`~ieeVisualizer.themes.Theme` (None = adapter defaults).
     theme: Any = None
     _color_i: int = 0
@@ -599,9 +603,12 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
             artists.append(ctx.ax.barh(pp, vv, height=each, **kw))
         else:
             artists.append(ctx.ax.bar(pp, vv, width=each, **kw))
+        _record_centres(ctx, val_ch, pp)
         if style.get("value_labels"):
             labels = _value_labels(ctx, m, val_ch, pp, vv, horizontal)
-            ctx.value_labels += [(a, val_ch, i) for a in labels]
+            ctx.value_labels += [ValueLabel(a, val_ch, i, float(q), float(each), bool(v < 0),
+                                            float(a.get_fontsize()))
+                                 for a, q, v in zip(labels, pp, vv)]
             artists += labels
             ctx.ax.margins(**{val_ch: 0.12})  # room for the labels inside the axes
         # A labelled slot with no bar reads as zero; say "no data" there: rows
@@ -624,14 +631,26 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
             ctx.ax.update_datalim([(0.0, e) if horizontal else (e, 0.0) for e in edges],
                                   updatex=not horizontal, updatey=horizontal)
             ctx.ax.autoscale_view()
+        _record_centres(ctx, val_ch, slots_without_bar)
         for q in slots_without_bar:
             xy = (0.0, q) if horizontal else (q, 0.0)
-            artists.append(ctx.ax.annotate(
+            # drawn on the positive side of zero; moved to the negative side
+            # after layout when only that side has room (value_labels.py)
+            note = ctx.ax.annotate(
                 "no data", xy, xycoords=coords, xytext=(3, 0) if horizontal else (0, 3),
                 textcoords="offset points", ha="left" if horizontal else "center",
                 va="center" if horizontal else "bottom", rotation=0 if horizontal else 90,
-                fontsize="x-small", color=ctx.muted("0.4"), style="italic"))
+                fontsize="x-small", color=ctx.muted("0.4"), style="italic")
+            ctx.no_data_notes.append(NoDataNote(note, val_ch))
+            artists.append(note)
     return artists
+
+
+def _record_centres(ctx: DrawContext, val_ch: str, centres: np.ndarray) -> None:
+    """Record bar (or bar-less slot) centres: value labels must stay within
+    the cell between them."""
+    have = ctx.bar_centres.get(val_ch, np.empty(0))
+    ctx.bar_centres[val_ch] = np.union1d(have, np.asarray(centres, dtype=float))
 
 
 def _value_labels(ctx: DrawContext, m: Mark, val_ch: str, pos: np.ndarray,
@@ -657,122 +676,6 @@ def _value_labels(ctx: DrawContext, m: Mark, val_ch: str, pos: np.ndarray,
         out.append(ctx.ax.annotate(text, xy, textcoords="offset points", fontsize="small",
                                    color=ctx.muted("0.25"), **kw))
     return out
-
-
-#: Space kept between a value label and the axes edge, in points.
-VALUE_LABEL_PAD_PT = 2.0
-
-
-def fit_value_labels(ctx: DrawContext, rounds: int = 4) -> None:
-    """Widen the value axis at draw time until every bar value label lies
-    inside the axes.
-
-    A label is drawn at a fixed offset (in points) beyond its bar's end, so
-    the longest bar's label can run past the axes and off the image; the
-    12 % margin set when drawing is a guess at text width. Only after layout
-    are the axes' size and the text extents known, so the figure's
-    constrained-layout engine is replaced by one that, after laying out,
-    measures each label and moves the end of the value axis it overruns out
-    just far enough (in the axis' scale space, so log axes work too), then
-    lays out again (new limits mean new tick labels); a few rounds at most.
-    This runs on every draw at the size and dpi actually drawn. An end the
-    spec fixed with ``axes.<ch>.limits`` is not moved; a label that still
-    does not fit is reported with a ``value_label_outside_axes`` warning
-    instead of silently cut off. When the labels already fit, the layout
-    runs exactly once, as before, so the output is unchanged byte for byte.
-    """
-    if not ctx.value_labels or ctx.three_d or ctx.spec.coordinate_system == "polar":
-        return
-    from matplotlib.layout_engine import ConstrainedLayoutEngine
-
-    fig = ctx.fig
-    old = fig.get_layout_engine()
-    if not isinstance(old, ConstrainedLayoutEngine):
-        return
-    reported: set[int] = set()
-
-    class ValueLabelLayout(ConstrainedLayoutEngine):
-        def execute(self, figure: Any) -> Any:
-            out = super().execute(figure)
-            pad = VALUE_LABEL_PAD_PT * figure.dpi / 72.0
-            for _ in range(rounds):
-                moved = False
-                for ch in sorted({c for _, c, _ in ctx.value_labels}):
-                    moved |= _fit_axis(ctx, ch, [a for a, c, _ in ctx.value_labels
-                                                 if c == ch], pad)
-                if not moved:
-                    break
-                out = super().execute(figure)
-            _report_unfitted(ctx, reported)
-            return out
-
-    new = ValueLabelLayout()
-    new.set(**old.get())
-    fig.set_layout_engine(new)
-
-
-def _report_unfitted(ctx: DrawContext, reported: set[int]) -> None:
-    box = ctx.ax.get_window_extent()
-    for a, _, i in ctx.value_labels:
-        if not a.get_visible() or id(a) in reported:
-            continue
-        b = a.get_window_extent()
-        if b.x0 < box.x0 - 0.5 or b.x1 > box.x1 + 0.5 or b.y0 < box.y0 - 0.5 \
-                or b.y1 > box.y1 + 0.5:
-            reported.add(id(a))
-            ctx.warn("value_label_outside_axes",
-                     f"the value label {a.get_text()!r} of layer {i} does not fit inside the "
-                     "plot (fixed axis limits or a very small figure).", f"/layers/{i}/style")
-
-
-def _fit_axis(ctx: DrawContext, ch: str, labels: list[Any], pad: float) -> bool:
-    """One round for the value axis ``ch``: returns whether a limit moved."""
-    ax = ctx.ax
-    axis = ax.xaxis if ch == "x" else ax.yaxis
-    box = ax.get_window_extent()
-    start, length = (box.x0, box.width) if ch == "x" else (box.y0, box.height)
-    if length <= 0:
-        return False
-    t = axis.get_transform()
-    a, b = ax.get_xlim() if ch == "x" else ax.get_ylim()  # display order: left/bottom first
-    ua, ub = (float(u) for u in t.transform([a, b]))
-    if ub == ua:
-        return False
-    axis_spec = ctx.spec.axes.get(ch)
-    fixed = list(axis_spec.limits) if axis_spec is not None and axis_spec.limits else [None, None]
-    # which data end (0 = min, 1 = max) is drawn at the far (right/top) side
-    far_end, near_end = (1, 0) if b > a else (0, 1)
-    new_ua, new_ub = ua, ub
-    for lab in labels:
-        if not lab.get_visible():
-            continue
-        u = float(t.transform([lab.xy[0] if ch == "x" else lab.xy[1]])[0])
-        f = (u - ua) / (ub - ua)
-        if not 0.0 <= f <= 1.0:
-            continue  # the bar end itself is outside the view
-        anchor = start + f * length
-        ext = lab.get_window_extent()
-        lo_px, hi_px = (ext.x0, ext.x1) if ch == "x" else (ext.y0, ext.y1)
-        beyond_far = hi_px - anchor  # px the label reaches past its anchor
-        beyond_near = anchor - lo_px
-        if hi_px > start + length - pad + 0.5 and fixed[far_end] is None \
-                and beyond_far + pad < length:
-            new_ub = _further(new_ub, ua + (u - ua) * length / (length - pad - beyond_far), ua)
-        if lo_px < start + pad - 0.5 and fixed[near_end] is None \
-                and beyond_near + pad < length:
-            k = (beyond_near + pad) / length
-            new_ua = _further(new_ua, (u - k * ub) / (1.0 - k), ub)
-    if (new_ua, new_ub) == (ua, ub):
-        return False
-    inv = t.inverted()
-    lo, hi = (float(v) for v in inv.transform([new_ua, new_ub]))
-    (ax.set_xlim if ch == "x" else ax.set_ylim)(lo, hi)
-    return True
-
-
-def _further(current: float, wanted: float, other: float) -> float:
-    """The one of ``current``/``wanted`` further from ``other``."""
-    return wanted if abs(wanted - other) > abs(current - other) else current
 
 
 def draw_histogram(ctx: DrawContext, i: int, m: Mark) -> list[Any]:

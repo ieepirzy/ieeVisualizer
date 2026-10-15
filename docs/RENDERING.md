@@ -98,7 +98,12 @@ laid out exactly as a single layer. A layer with an explicit `bar_width` /
 `bar_offset` style is placed where those say (fractions of the category
 slot) and is left out of the dodging. Every slot with no bar -- a null value,
 or a (category, group) or (category, layer) combination with no row -- is
-labelled "no data", so an absent bar never reads as 0.
+labelled "no data", so an absent bar never reads as 0. The note starts at
+the zero line and reads away from it on the positive side, or on the
+negative side when only that side has room inside the axes (an all-negative
+value axis, whose zero line is the plot's edge), so it never lands outside
+the plot or on the title. Bar value labels (`value_labels`) are arranged
+after layout; see [THEMES.md](THEMES.md).
 
 **Roles.** `forecast` is always distinguishable, whatever style it asks for:
 a forecast line uses the requested dash pattern (`solid` or unspecified
