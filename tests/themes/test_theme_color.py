@@ -63,6 +63,12 @@ def test_cvd_simulation_keeps_greys_and_collapses_red_green():
     assert delta_e2000(simulate_cvd(b, "deuteranopia"), simulate_cvd(o, "deuteranopia")) > 40
 
 
+def test_cvd_simulation_reference_value_is_linear_rgb_machado():
+    # Machado et al. (2009), protanopia at severity 1.0, applied to linear RGB.
+    # Applying the same matrix to gamma-encoded sRGB gives #271d00 instead.
+    assert to_hex(simulate_cvd("#ff0000", "protanopia")) == "#6d5f00"
+
+
 def test_parse_hex_and_oklch():
     assert parse_color("#fff") == (1.0, 1.0, 1.0)
     assert to_hex(parse_color("#6FD3A0")) == "#6fd3a0"

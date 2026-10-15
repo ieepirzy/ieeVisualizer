@@ -120,7 +120,7 @@ REPORT_LIGHT = Theme(
                   "external/light use exists in the movingfirm-* repositories",
         "background": "site --paper #ffffff",
         "foreground": "site --ink #0a0a0a",
-        "muted": "--ink at 70 % on --paper (site --text-dim-ink, ink at 55 %, is 4.3:1: "
+        "muted": "--ink at 70 % on --paper (site --text-dim-ink, ink at 55 %, is 4.4:1: "
                  "below 4.5:1 for text)",
         "grid": "site --line rgba(10,10,10,.12) composited on --paper",
         "palette": ["site --mint-deep oklch(0.50 0.15 162) (link/emphasis colour on white)",

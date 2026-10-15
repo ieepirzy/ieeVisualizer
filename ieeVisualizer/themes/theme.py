@@ -9,13 +9,19 @@ from the recorded theme after the registered one has moved on.
 its ``default`` style). The ``default`` theme sets nothing, which is how
 it reproduces the pre-theme look byte for byte; a theme only makes claims
 (and is only checked) for what it declares.
+
+A theme is immutable all the way down: construction copies sequences into
+tuples and mappings into read-only :class:`FrozenDict` copies (recursively,
+for ``provenance``), so neither the caller's objects nor the theme returned
+by a registry can change what a registered ``name@version`` means.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
-from typing import Any
+from typing import Any, NoReturn
 
 from ..spec import SpecError, ValidationIssue
 from ..spec._common import canonical_json, sha256_of
@@ -33,6 +39,37 @@ class ThemeError(SpecError):
     lookup failed. ``.issues`` holds structured ``ValidationIssue`` objects."""
 
 
+class FrozenDict(dict):
+    """A read-only ``dict`` (still JSON-serializable and ``== dict``)."""
+
+    __slots__ = ()
+
+    def _read_only(self, *args: Any, **kwargs: Any) -> NoReturn:
+        raise TypeError("theme data is immutable; publish a new theme version to change it")
+
+    __setitem__ = __delitem__ = __ior__ = _read_only
+    clear = pop = popitem = setdefault = update = _read_only
+
+    def __reduce__(self) -> tuple:
+        return (FrozenDict, (dict(self),))
+
+    def __copy__(self) -> FrozenDict:
+        return self
+
+    def __deepcopy__(self, memo: dict) -> FrozenDict:
+        return self
+
+
+def freeze(value: Any) -> Any:
+    """A deep, immutable copy: mappings -> :class:`FrozenDict`, lists and
+    tuples -> tuples; anything else as is."""
+    if isinstance(value, Mapping):
+        return FrozenDict((k, freeze(v)) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return tuple(freeze(v) for v in value)
+    return value
+
+
 @dataclass(frozen=True)
 class Typography:
     """Font family preference list and sizes in points (``None`` = default)."""
@@ -44,6 +81,10 @@ class Typography:
     tick: float | None = None
     legend: float | None = None
     caption: float | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.family, list):
+            object.__setattr__(self, "family", freeze(self.family))
 
 
 @dataclass(frozen=True)
@@ -112,6 +153,17 @@ class Theme:
     #: Slots whose values are placeholders awaiting an official source.
     pending: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        # Deep-frozen copies, so later mutation of the caller's list or dict
+        # cannot change a checked (registered) theme. Values of the wrong
+        # type are left as they are for structure_issues() to report.
+        for k in ("palette", "sequential", "diverging", "spines", "pending"):
+            if isinstance(getattr(self, k), (list, tuple)):
+                object.__setattr__(self, k, freeze(getattr(self, k)))
+        for k in ("semantic", "targets", "provenance"):
+            if isinstance(getattr(self, k), Mapping):
+                object.__setattr__(self, k, freeze(getattr(self, k)))
+
     # ------------------------------------------------------------ identity
     @property
     def ref(self) -> str:
@@ -138,6 +190,9 @@ class Theme:
         if not isinstance(d, dict):
             raise ThemeError([ValidationIssue("", "invalid_theme", "a theme must be an object.")])
         _keys(d, cls, "")
+        shape = _shape_issues(d)
+        if shape:
+            raise ThemeError(shape)
         kw = dict(d)
         for k in ("palette", "spines", "pending"):
             if isinstance(kw.get(k), list):
@@ -212,9 +267,67 @@ def _keys(d: dict, cls: type, path: str) -> None:
                                           f"{', '.join(sorted(known))}.")])
 
 
+#: Container fields and the JSON types they accept (``None`` = may be null).
+_SHAPES: dict[str, tuple[tuple[type, ...], str]] = {
+    "palette": ((list, tuple, type(None)), "a list of colours"),
+    "sequential": ((list, tuple, str, type(None)), "a list of colours or a colormap name"),
+    "diverging": ((list, tuple, str, type(None)), "a list of colours or a colormap name"),
+    "spines": ((list, tuple, type(None)), "a list of spine names"),
+    "pending": ((list, tuple), "a list of slot names"),
+    "semantic": ((dict,), "an object of meaning -> colour"),
+    "targets": ((dict,), "an object of target name -> {width, height, dpi}"),
+    "provenance": ((dict,), "an object"),
+    "typography": ((dict,), "an object"),
+    "roles": ((dict,), "an object"),
+    "locale": ((dict, type(None)), "an object or null"),
+}
+
+
+def _shape_issues(d: dict[str, Any]) -> list[ValidationIssue]:
+    """Wrong JSON types for the container fields of a theme dict."""
+    out = []
+    for k, (types, what) in _SHAPES.items():
+        if k in d and not isinstance(d[k], types):
+            out.append(ValidationIssue(f"/{k}", "invalid_theme",
+                                       f"{k} must be {what}, got {type(d[k]).__name__}."))
+    for k in ("semantic", "targets"):
+        v = d.get(k)
+        if isinstance(v, dict):
+            for name, item in v.items():
+                ok = isinstance(item, str) if k == "semantic" else isinstance(item, dict)
+                if not ok:
+                    out.append(ValidationIssue(
+                        f"/{k}/{name}", "invalid_theme",
+                        f"{k}/{name} must be {'a colour' if k == 'semantic' else 'an object'}, "
+                        f"got {type(item).__name__}."))
+    return out
+
+
+def _type_issues(theme: Theme) -> list[ValidationIssue]:
+    """Wrong Python types on a directly constructed theme."""
+    out = []
+    for k, cls in (("typography", Typography), ("roles", RoleStyle)):
+        if not isinstance(getattr(theme, k), cls):
+            out.append(ValidationIssue(f"/{k}", "invalid_theme",
+                                       f"{k} must be a {cls.__name__}."))
+    if theme.locale is not None and not isinstance(theme.locale, NumberLocale):
+        out.append(ValidationIssue("/locale", "invalid_theme",
+                                   "locale must be a NumberLocale or None."))
+    if isinstance(theme.targets, Mapping):
+        out += [ValidationIssue(f"/targets/{n}", "invalid_theme", "a target is a FigureTarget.")
+                for n, t in theme.targets.items() if not isinstance(t, FigureTarget)]
+    plain = {k: getattr(theme, k) for k in _SHAPES
+             if k not in ("typography", "roles", "locale", "targets")}
+    plain = {k: dict(v) if isinstance(v, Mapping) else v for k, v in plain.items()}
+    plain["targets"] = {} if isinstance(theme.targets, Mapping) else theme.targets
+    return out + _shape_issues(plain)
+
+
 def structure_issues(theme: Theme) -> list[ValidationIssue]:
     """Malformed values (bad colour, negative size, solid forecast...)."""
-    out: list[ValidationIssue] = []
+    out: list[ValidationIssue] = _type_issues(theme)
+    if out:
+        return out  # the checks below assume the right container types
 
     def err(path: str, msg: str, code: str = "invalid_theme") -> None:
         out.append(ValidationIssue(path, code, msg, "error"))
@@ -250,8 +363,8 @@ def structure_issues(theme: Theme) -> list[ValidationIssue]:
         v = getattr(t, k)
         if v is not None and not (_num(v) and v > 0):
             err(f"/typography/{k}", f"font size must be a positive number, got {v!r}.")
-    if t.family is not None and (not t.family or not all(isinstance(f, str) and f
-                                                          for f in t.family)):
+    if t.family is not None and (not isinstance(t.family, tuple) or not t.family
+                                 or not all(isinstance(f, str) and f for f in t.family)):
         err("/typography/family", "font family is a non-empty list of names.")
     for k in ("line_width", "grid_width"):
         v = getattr(theme, k)

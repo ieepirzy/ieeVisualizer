@@ -205,3 +205,44 @@ def test_template_text_locale_mismatch_is_reported():
     assert [w.code for w in render(spec, RenderRequest(format="svg")).warnings] == []
     r = render(spec, RenderRequest(format="svg", theme="default"))
     assert "label_locale_mismatch" in [w.code for w in r.warnings]
+
+
+def _x_tick_gaps(built):
+    """Rendered gaps (px) between neighbouring in-view x tick labels, and the
+    rendered width of the no-break space inside a grouped label."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    canvas = FigureCanvasAgg(built.figure)
+    canvas.draw()
+    r = canvas.get_renderer()
+    lo, hi = built.axes.get_xlim()
+    labs = [t for t in built.axes.get_xticklabels()
+            if t.get_text() and lo <= t.get_position()[0] <= hi]
+    boxes = [t.get_window_extent(r) for t in labs]
+    gaps = [boxes[i + 1].x0 - boxes[i].x1 for i in range(len(boxes) - 1)]
+    grouped = next(t for t in labs if S in t.get_text())
+    full = grouped.get_window_extent(r).width
+    grouped.set_text(grouped.get_text().replace(S, ""))
+    sep = full - grouped.get_window_extent(r).width
+    return [t.get_text() for t in labs], gaps, sep
+
+
+@pytest.mark.parametrize("name", ["funnel", "bar_comparison"])
+@pytest.mark.parametrize("theme", [DARK, LIGHT])
+def test_grouped_tick_labels_do_not_run_together_at_email_size(name, theme):
+    t = templates.get(name)
+    payload = t.example()
+    payload["params"]["theme"] = theme
+    built = build_figure(t.build_payload(payload), themes.get(theme).request("email"))
+    labels, gaps, sep = _x_tick_gaps(built)
+    assert sep > 0 and len(labels) >= 3, labels
+    # a gap between labels must read as wider than the space inside "10 000"
+    assert min(gaps) >= 1.5 * sep, (labels, gaps, sep)
+
+
+def test_default_theme_keeps_matplotlibs_tick_locator():
+    from matplotlib.ticker import AutoLocator
+
+    t = templates.get("funnel")
+    built = build_figure(t.build_payload(t.example()))
+    assert type(built.axes.xaxis.get_major_locator()) is AutoLocator

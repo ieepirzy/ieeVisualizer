@@ -8,12 +8,23 @@ format functions return ``None`` and the caller shows "no data".
 ``fi-FI`` follows the Finnish conventions: decimal comma, a (no-break)
 space as thousands separator, a space before ``%`` and a suffixed currency
 symbol, e.g. ``1 234,5``, ``42,1 %``, ``1 234,50 €``.
+
+Rounding for display is half-up on the value as written (its shortest
+decimal ``repr``): ``18.25`` -> ``18,3 %`` and ``0.125`` -> ``0,13 €``, the
+way a reader rounds by hand, not binary half-even. Only the displayed text is
+rounded; callers that record a value (template metadata, datasets) keep the
+exact one.
+
+A non-zero percent never displays as zero: a value that would round to
+``0,0`` at the display precision is written as a bound, ``< 0,1 %`` (or
+``> −0,1 %`` below zero), in the locale's conventions.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal, localcontext
 from typing import Any
 
 NBSP = " "
@@ -47,6 +58,11 @@ class NumberLocale:
     date_formats: tuple[str, ...] | None = None
     date_zero_formats: tuple[str, ...] | None = None
     date_offset_formats: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        for k in ("date_formats", "date_zero_formats", "date_offset_formats"):
+            if isinstance(getattr(self, k), list):
+                object.__setattr__(self, k, tuple(getattr(self, k)))
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
@@ -87,10 +103,23 @@ def localize_decimal(text: str, loc: NumberLocale) -> str:
     return (loc.minus + out) if neg else out
 
 
+def _round_half_up(v: float, decimals: int) -> str:
+    """``v`` rounded half-up to ``decimals`` places, as a plain ``-12.34``
+    string. The float's shortest ``repr`` is what gets rounded, so a value
+    written ``18.25`` rounds to ``18.3`` (binary 18.25 is exact; 0.125 too;
+    ``2.675`` is stored as 2.67499.. but written and rounded as 2.675)."""
+    with localcontext() as ctx:
+        ctx.prec = 400  # any finite float, every digit kept
+        d = Decimal(repr(v)).quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP)
+        if d == 0:
+            d = abs(d)  # "-0.00" -> "0.00"
+        return format(d, "f")
+
+
 def format_number(value: Any, loc: NumberLocale | None = None,
                   decimals: int | None = None) -> str | None:
     """``value`` with ``decimals`` places, or (``None``) as few as needed up
-    to ``loc.max_decimals``. ``None`` -> ``None``."""
+    to ``loc.max_decimals``; rounded half-up. ``None`` -> ``None``."""
     if value is None or isinstance(value, bool):
         return None
     loc = loc or NEUTRAL
@@ -98,22 +127,31 @@ def format_number(value: Any, loc: NumberLocale | None = None,
     if not math.isfinite(v):
         return None
     if decimals is None:
-        s = f"{v:.{loc.max_decimals}f}"
+        s = _round_half_up(v, loc.max_decimals)
         if "." in s:
             s = s.rstrip("0").rstrip(".")
     else:
-        s = f"{v:.{decimals}f}"
-    if s in ("-0", "-0." + "0" * (decimals or 0)):
-        s = s[1:]
+        s = _round_half_up(v, decimals)
     return localize_decimal(s, loc)
 
 
 def format_percent(value: Any, loc: NumberLocale | None = None,
                    decimals: int = 1) -> str | None:
-    """``value`` already in percent (42.1 -> ``42,1 %`` in fi-FI)."""
+    """``value`` already in percent (42.1 -> ``42,1 %`` in fi-FI).
+
+    A non-zero value that rounds to zero at ``decimals`` places is shown as
+    the bound it is below, ``< 0,1 %`` (``> −0,1 %`` when negative), never as
+    ``0,0 %``; exactly 0 stays ``0,0 %``."""
     loc = loc or NEUTRAL
     s = format_number(value, loc, decimals)
-    return None if s is None else f"{s}{loc.percent_sep}%"
+    if s is None:
+        return None
+    v = float(value)
+    if v != 0 and Decimal(_round_half_up(v, decimals)) == 0:
+        step = format_number(10.0 ** -decimals, loc, decimals)
+        bound = f"<{NBSP}{step}" if v > 0 else f">{NBSP}{loc.minus}{step}"
+        return f"{bound}{loc.percent_sep}%"
+    return f"{s}{loc.percent_sep}%"
 
 
 def format_currency(value: Any, loc: NumberLocale | None = None) -> str | None:

@@ -43,6 +43,70 @@ def locale_formatter(loc: Any) -> Any:
     return LocaleFormatter()
 
 
+#: Minimum gap between neighbouring x tick labels, as a multiple of the
+#: width of the locale's digit-group separator: a gap must read as wider
+#: than the space inside ``10 000`` or the labels run together.
+TICK_GAP_SEPARATORS = 1.5
+_TICK_STEPS = (1, 2, 2.5, 5, 10)  # matplotlib's AutoLocator steps
+
+
+def groups_digits(loc: Any) -> bool:
+    return loc is not None and bool(loc.group) and loc.group_min_digits is not None
+
+
+def spaced_tick_locator(loc: Any) -> Any:
+    """An x-axis locator for a locale that groups digits with a space
+    (``10 000``). matplotlib's ``auto`` tick count budgets about three
+    characters per label, so six-character grouped labels collide and the
+    axis reads ``10 00012 500``. At draw time this locator measures the
+    formatted labels (font metrics of the tick label font, no renderer
+    needed) and takes the largest tick count whose narrowest label gap is
+    at least :data:`TICK_GAP_SEPARATORS` group-separator widths. Positions
+    stay matplotlib's 1-2-2.5-5-10 steps."""
+    from matplotlib.textpath import TextToPath
+    from matplotlib.ticker import MaxNLocator
+
+    measure = TextToPath()
+
+    def width(text: str, prop: Any) -> float:
+        return measure.get_text_width_height_descent(text, prop, ismath=False)[0]
+
+    class SpacedTickLocator(MaxNLocator):
+        def __init__(self) -> None:
+            super().__init__(nbins="auto", steps=list(_TICK_STEPS))
+
+        def __call__(self) -> Any:
+            ticks = super().__call__()
+            axis = self.axis
+            if axis is None or axis.axes is None or len(ticks) < 3:
+                return ticks
+            vmin, vmax = sorted(axis.get_view_interval())
+            prop = axis.get_major_ticks(1)[0].label1.get_fontproperties()
+            sep = width(f"0{loc.group}0", prop) - width("00", prop)
+            need = TICK_GAP_SEPARATORS * max(sep, 0.0)
+            scale = axis.axes.bbox.width / (vmax - vmin) * 72.0 / axis.figure.dpi \
+                if vmax > vmin else 0.0
+            if scale <= 0:
+                return ticks
+            fmt = axis.get_major_formatter()
+            for nbins in range(len(ticks) - 1, 0, -1):
+                cand = ticks if nbins == len(ticks) - 1 else MaxNLocator(
+                    nbins=nbins, steps=list(_TICK_STEPS)).tick_values(vmin, vmax)
+                shown = [t for t in cand if vmin - 1e-9 * (vmax - vmin) <= t
+                         <= vmax + 1e-9 * (vmax - vmin)]
+                if len(shown) < 2:
+                    return cand
+                labels = fmt.format_ticks(shown)
+                widths = [width(t, prop) for t in labels]
+                gaps = [(shown[i + 1] - shown[i]) * scale - (widths[i] + widths[i + 1]) / 2
+                        for i in range(len(shown) - 1)]
+                if min(gaps) >= need:
+                    return cand
+            return cand
+
+    return SpacedTickLocator()
+
+
 def axis_label(spec: FigureSpec, info: AxisInfo) -> str | None:
     """"Label (unit)": the axis' own label/unit first, then the first bound
     column's title/name and unit."""
@@ -83,6 +147,8 @@ def apply_axes(ctx: DrawContext) -> None:
             getattr(ax, f"set_{key}scale")(scale)
         elif info.kind == "numeric" and loc is not None and not polar:
             _axis_obj(ax, key).set_major_formatter(locale_formatter(loc))
+            if key == "x" and not ctx.three_d and groups_digits(loc):
+                ax.xaxis.set_major_locator(spaced_tick_locator(loc))
         elif info.kind == "time":
             from matplotlib import dates as mdates
 

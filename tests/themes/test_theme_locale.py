@@ -48,3 +48,27 @@ def test_localize_leaves_non_decimals_alone():
     assert localize_decimal("1e6", FI_FI) == "1e6"
     assert localize_decimal("−2500.0", FI_FI) == f"−2{S}500,0"
     assert localize_decimal("", FI_FI) == ""
+
+
+def test_display_rounding_is_half_up_on_the_written_value():
+    # binary half-even / float-repr rounding would give 18,2 %, 0,12 € and 2,67
+    assert format_percent(18.25, FI_FI) == f"18,3{S}%"
+    assert format_currency(0.125, FI_FI) == f"0,13{S}€"
+    assert format_number(2.675, FI_FI, 2) == "2,68"
+    assert format_number(0.125, FI_FI) == "0,13"  # max_decimals path
+    assert format_number(-18.25, FI_FI, 1) == "−18,3"  # away from zero
+    assert format_number(-0.004, FI_FI, 2) == "0,00"  # no "−0,00"
+    assert format_number(1e16, FI_FI, 0) == S.join(["10", "000", "000", "000", "000", "000"])
+
+
+def test_a_non_zero_percent_never_displays_as_zero():
+    assert format_percent(0.016, FI_FI) == f"<{S}0,1{S}%"
+    assert format_percent(-0.04, FI_FI) == f">{S}−0,1{S}%"
+    assert format_percent(0.4, FI_FI, decimals=0) == f"<{S}1{S}%"
+    assert format_percent(0.016) == f"<{S}0.1%"  # neutral locale
+    assert format_percent(1e-300, FI_FI) == f"<{S}0,1{S}%"
+    # a real zero is still zero, and values that round up are shown normally
+    assert format_percent(0, FI_FI) == f"0,0{S}%"
+    assert format_percent(-0.0, FI_FI) == f"0,0{S}%"
+    assert format_percent(0.05, FI_FI) == f"0,1{S}%"
+    assert format_quantity(0.016, "%", FI_FI) == f"<{S}0,1{S}%"

@@ -78,3 +78,14 @@ def test_presets_map_to_the_former_rcparams_exactly():
     assert theme_rc(themes.get("presentation")) == {
         "font.size": 13, "axes.titlesize": 16, "axes.labelsize": 14, "lines.linewidth": 2.2,
         "axes.spines.top": False, "axes.spines.right": False}
+
+
+def test_report_light_provenance_quotes_the_measured_dim_ink_contrast():
+    import re
+
+    note = themes.get("muutto365-report-light").provenance["muted"]
+    quoted = float(re.search(r"ink at 55 %, is ([0-9.]+):1", note).group(1))
+    dim = blend(SITE["ink"], SITE["paper"], 0.55)
+    # 4.40:1 composited exactly, 4.42:1 once quantized to #787878: 4.4 either way
+    assert quoted == round(contrast_ratio(dim, SITE["paper"]), 1) == 4.4
+    assert quoted == round(contrast_ratio(to_hex(dim), SITE["paper"]), 1)

@@ -5,6 +5,8 @@ accessibility check (:class:`ThemeError` with every issue); warnings and
 info findings are kept and reported by :meth:`ThemeRegistry.describe`. A
 name+version pair is registered once: publish a new version to change a
 theme, so a stored figure that names ``name@version`` keeps its meaning.
+``register`` stores and returns a deep-frozen copy; mutating the objects the
+theme was built from cannot change the registered one.
 
 A theme reference is ``"name"`` (the highest version) or
 ``"name@version"`` (exactly that one).
@@ -12,6 +14,7 @@ A theme reference is ``"name"`` (the highest version) or
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 from ..spec import ValidationIssue
@@ -32,6 +35,9 @@ class ThemeRegistry:
     def register(self, theme: Theme) -> Theme:
         if not isinstance(theme, Theme):
             raise TypeError(f"expected a Theme, got {type(theme).__name__}")
+        # Check and keep a fresh, deep-frozen copy (Theme.__post_init__), so
+        # what was checked is exactly what name@version resolves to.
+        theme = dataclasses.replace(theme)
         issues = structure_issues(theme)
         if not issues:
             issues = check_theme(theme)

@@ -60,6 +60,21 @@ multiplier), date axes use its patterns, and bar value labels use it. fi-FI:
 times `14.30`. Only EUR is shown as currency; other units are bare numbers
 with the unit on the axis label. Nothing is converted.
 
+Display rounding is half-up on the value as written (`18.25` -> `18,3 %`,
+`0.125` -> `0,13 €`); recorded values (template metadata, datasets) stay
+exact. A non-zero percent that would round to zero is shown as a bound,
+`< 0,1 %` (`> −0,1 %` below zero), never `0,0 %`. When the locale groups
+digits, the x axis takes the largest tick count whose narrowest gap between
+labels is at least 1.5 times the group separator's width, so `10 000` and
+`12 500` cannot run together; positions stay matplotlib's 1-2-2.5-5-10
+steps, and a theme without a locale (`default`) keeps matplotlib's locator.
+
+A theme is immutable: construction copies lists into tuples and mappings
+(`semantic`, `targets`, `provenance`, recursively) into read-only dicts, and
+`register` stores such a copy, so `name@version` always resolves to what was
+checked. Malformed theme JSON (e.g. `semantic` as a list) is a `ThemeError`
+with structured issues.
+
 ## Accessibility checks
 
 `check_theme(theme)` returns `ValidationIssue`s; `register()` refuses a
@@ -128,7 +143,7 @@ theme (or a new name); never change 1.0.0 in place.
 | Slot | Value | Source |
 |---|---|---|
 | background, foreground | `#ffffff`, `#0a0a0a` | public site `--paper`, `--ink` (`movingfirm-admin/tests/fixtures/interface/home.css`, a copy of the CSS production served) |
-| muted | `#545454` | `--ink` at 70 % (7.6:1); the site's `--text-dim-ink` (ink at 55 %) is 4.3:1 |
+| muted | `#545454` | `--ink` at 70 % (7.6:1); the site's `--text-dim-ink` (ink at 55 %) is 4.4:1 |
 | grid | `#e2e2e2` | site `--line` on `--paper` |
 | palette | `#007c47`, `#2f4380`, `#9262b6` | site `--mint-deep` `oklch(0.50 0.15 162)`; admin `--indigo` hue at OKLCH L 0.40; admin `--cyan` hue darkened to 4.5:1 |
 | signal / semantic | `#cc8600` / `#148759`, `#d24539` | admin `--orange` (3:1), `--green`, `--red` (4.5:1) darkened |

@@ -126,3 +126,88 @@ def test_importing_themes_does_not_import_matplotlib():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                          check=True)
     assert out.stdout.strip() == "False"
+
+
+def test_mutating_the_callers_objects_cannot_change_a_registered_theme():
+    palette = ["#007c47", "#2f4380"]
+    semantic = {"negative": "#d24539"}
+    provenance = {"palette": ["a", "b"], "nested": {"k": "v"}}
+    targets = {"email": themes.FigureTarget(6.0, 3.75, 100)}
+    reg = ThemeRegistry()
+    t = reg.register(base(name="mut", palette=palette, semantic=semantic,
+                          provenance=provenance, targets=targets))
+    before = t.sha256
+    palette[1] = "#00804a"  # near-identical green: would fail palette_indistinct
+    semantic["negative"] = "#fefefe"
+    provenance["palette"].append("c")
+    provenance["nested"]["k"] = "changed"
+    targets["slide"] = targets["email"]
+    resolved = reg.resolve("mut@1.0.0")
+    assert resolved.sha256 == before and t.sha256 == before
+    assert resolved.palette == ("#007c47", "#2f4380")
+    assert check_theme(resolved) == []
+    # nor can the returned theme be mutated in place
+    for attempt in (lambda: t.semantic.__setitem__("negative", "#fefefe"),
+                    lambda: t.targets.update(slide=t.targets["email"]),
+                    lambda: t.provenance["nested"].__setitem__("k", "x"),
+                    lambda: t.semantic.pop("negative"),
+                    lambda: t.palette.append("#000000")):
+        with pytest.raises((TypeError, AttributeError)):
+            attempt()
+    assert reg.resolve("mut@1.0.0").sha256 == before
+    assert isinstance(t.provenance["palette"], tuple)
+    assert json.loads(t.to_json()) == t.to_dict()  # still plain JSON data
+
+
+def test_register_stores_its_own_frozen_copy():
+    # even a theme whose fields were forced past __post_init__ is re-frozen
+    t = base(name="forced")
+    palette = ["#007c47", "#2f4380"]
+    object.__setattr__(t, "palette", palette)
+    stored = ThemeRegistry().register(t)
+    palette[1] = "#00804a"
+    assert stored.palette == ("#007c47", "#2f4380")
+
+
+def test_mutating_the_callers_palette_does_not_change_rendered_output():
+    from ieeVisualizer.render import RenderRequest, render
+    from ieeVisualizer.spec import DataSnapshot, FigureSpec, LineMark
+
+    palette = ["#007c47", "#2f4380"]
+    themes.register(base(name="mut-render", palette=palette))
+    data = DataSnapshot.from_columns({"t": [0, 1], "a": [1.0, 2.0], "b": [2.0, 1.0]},
+                                     units={"t": "d"})
+    spec = FigureSpec(datasets={"d": data}, theme="mut-render@1.0.0", layers=[
+        LineMark(data="d", encoding={"x": "t", "y": c}, name=c) for c in "ab"])
+    req = RenderRequest(format="svg", width=3, height=2)
+    first = render(spec, req)
+    palette[:] = ["#ff0000", "#00ff00"]
+    again = render(spec, req)
+    assert again.content == first.content and again.theme == first.theme
+
+
+@pytest.mark.parametrize("bad, path", [
+    ({"semantic": ["#000"]}, "/semantic"),
+    ({"semantic": {"negative": 5}}, "/semantic/negative"),
+    ({"targets": ["email"]}, "/targets"),
+    ({"targets": {"email": 1}}, "/targets/email"),
+    ({"typography": ["DejaVu Sans"]}, "/typography"),
+    ({"roles": "dashed"}, "/roles"),
+    ({"locale": "fi-FI"}, "/locale"),
+    ({"palette": "#007c47"}, "/palette"),
+    ({"provenance": ["x"]}, "/provenance"),
+    ({"pending": None}, "/pending"),
+])
+def test_malformed_theme_json_is_a_theme_error_not_a_crash(bad, path):
+    with pytest.raises(ThemeError) as e:
+        Theme.from_dict(dict({"name": "x", "version": "1.0.0"}, **bad))
+    assert (path, "invalid_theme") in codes(e.value.issues)
+
+
+def test_malformed_directly_built_theme_is_refused_with_issues():
+    for kw, path in (({"semantic": ["#000"]}, "/semantic"),
+                     ({"typography": ["x"]}, "/typography"),
+                     ({"targets": {"email": 1}}, "/targets/email")):
+        with pytest.raises(ThemeError) as e:
+            ThemeRegistry().register(base(**kw))
+        assert (path, "invalid_theme") in codes(e.value.issues)
