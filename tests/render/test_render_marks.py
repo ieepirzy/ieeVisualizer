@@ -438,3 +438,79 @@ def test_forecast_pairs_with_its_observed_series_by_field_and_group():
     colours = [[ln.get_color() for ln in arts[i]] for i in range(4)]
     assert colours[2] == colours[0] and colours[3] == colours[1]  # forecast continues observed
     assert len({c for cs in colours[:2] for c in cs}) == 4  # A/B x value/bound all distinct
+
+
+def _bar_patches(built, layer):
+    return [p for c in built.layer_artists[layer] if hasattr(c, "patches") for p in c.patches]
+
+
+def _no_data(built, layer):
+    return [a for a in built.layer_artists[layer]
+            if type(a).__name__ == "Annotation" and a.get_text() == "no data"]
+
+
+@pytest.mark.parametrize("horizontal", [False, True])
+def test_bar_layers_on_shared_categories_are_dodged_not_overdrawn(horizontal):
+    from ieeVisualizer.spec import DataSnapshot, FigureSpec
+
+    a = DataSnapshot.from_columns({"k": ["a", "b", "c"], "v": [5.0, 6.0, 7.0]})
+    b = DataSnapshot.from_columns({"k": ["a", "b", "c"], "v": [3.0, 9.0, 2.0]})
+    enc = {"x": "v", "y": "k"} if horizontal else {"x": "k", "y": "v"}
+    o = "horizontal" if horizontal else "vertical"
+    spec = FigureSpec(datasets={"obs": a, "plan": b}, layers=[
+        BarMark(data="obs", encoding=enc, name="Observed", orientation=o),
+        BarMark(data="plan", encoding=enc, name="Plan", orientation=o)])
+    built = build_figure(spec)
+
+    def boxes(layer):
+        return [(p.get_y(), p.get_height()) if horizontal else (p.get_x(), p.get_width())
+                for p in _bar_patches(built, layer)]
+
+    first, second = boxes(0), boxes(1)
+    for (s0, w0), (s1, w1) in zip(first, second):
+        assert w0 == pytest.approx(0.4) and w1 == pytest.approx(0.4)
+        assert s1 == pytest.approx(s0 + w0)  # side by side, layer order, no overlap
+    assert first[0][0] == pytest.approx(-0.4)  # the pair is centred on the category
+
+
+def test_bar_layers_on_disjoint_categories_keep_single_layer_layout():
+    from ieeVisualizer.spec import DataSnapshot, FigureSpec
+
+    a = DataSnapshot.from_columns({"k": ["a", "b"], "v": [5.0, 6.0]})
+    b = DataSnapshot.from_columns({"k": ["c", "d"], "v": [3.0, 9.0]})
+    spec = FigureSpec(datasets={"a": a, "b": b}, layers=[
+        BarMark(data="a", encoding={"x": "k", "y": "v"}),
+        BarMark(data="b", encoding={"x": "k", "y": "v"})])
+    built = build_figure(spec)
+    assert all(p.get_width() == pytest.approx(0.8) for i in (0, 1) for p in _bar_patches(built, i))
+
+
+def test_grouped_bar_slot_without_a_row_is_labelled_no_data():
+    spec = one_layer(BarMark(encoding={"x": "k", "y": "v", "series": "g"}),
+                     {"k": ["a", "a", "b"], "g": ["x", "y", "x"], "v": [5.0, 6.0, 7.0]})
+    built = build_figure(spec)
+    (label,) = _no_data(built, 0)
+    # the (b, y) slot: category b at index 1, group y offset +0.2
+    assert label.xy[0] == pytest.approx(1.2)
+
+
+def test_dodged_bar_layer_missing_a_category_is_labelled_no_data():
+    from ieeVisualizer.spec import DataSnapshot, FigureSpec
+
+    a = DataSnapshot.from_columns({"k": ["a", "b", "c"], "v": [5.0, 6.0, 7.0]})
+    b = DataSnapshot.from_columns({"k": ["a", "c"], "v": [3.0, 2.0]})
+    spec = FigureSpec(datasets={"a": a, "b": b}, layers=[
+        BarMark(data="a", encoding={"x": "k", "y": "v"}),
+        BarMark(data="b", encoding={"x": "k", "y": "v"})])
+    built = build_figure(spec)
+    assert not _no_data(built, 0)
+    (label,) = _no_data(built, 1)
+    assert label.xy[0] == pytest.approx(1.2)
+
+
+def test_null_value_bar_is_labelled_once():
+    spec = one_layer(BarMark(encoding={"x": "k", "y": "v", "series": "g"}),
+                     {"k": ["a", "a", "b", "b"], "g": ["x", "y", "x", "y"],
+                      "v": [5.0, 6.0, None, 7.0]})
+    built = build_figure(spec)
+    assert [a.xy[0] for a in _no_data(built, 0)] == [pytest.approx(0.8)]

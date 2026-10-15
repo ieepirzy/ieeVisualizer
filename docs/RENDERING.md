@@ -67,6 +67,14 @@ with no value says "no data"; null heatmap cells stay blank. Each case adds a
 `null_values_omitted` warning. A layer or series with no complete row is a
 `RenderError` (`empty_series`).
 
+**Bars.** Bar groups of one layer (`series`/categorical `color`) sit side by
+side in each slot. Bar layers of the same orientation that share a category
+(or position) are dodged the same way, in layer order, instead of being
+drawn over each other; a bar layer that shares no position with another is
+laid out exactly as a single layer. Every slot with no bar -- a null value,
+or a (category, group) or (category, layer) combination with no row -- is
+labelled "no data", so an absent bar never reads as 0.
+
 **Roles.** `forecast` is always distinguishable, whatever style it asks for:
 a forecast line uses the requested dash pattern (`solid` or unspecified
 count as `dashed`; a solid request is overridden with a warning) with every

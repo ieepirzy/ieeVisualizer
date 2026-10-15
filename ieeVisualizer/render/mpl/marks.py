@@ -425,9 +425,51 @@ def _width(pos: np.ndarray, info: AxisInfo, polar: bool) -> float:
     return 0.8 * float(np.min(np.diff(u)))
 
 
+def _orientation(m: Mark) -> str:
+    return getattr(m, "orientation", "vertical")
+
+
+def _bar_group_count(ctx: DrawContext, m: Mark, n: int) -> int:
+    """Number of bar groups of ``m`` (as :func:`_groups` splits it), without
+    emitting its warnings."""
+    col = _col(ctx, m, "series") if "series" in m.encoding else _col(ctx, m, "color")
+    if "series" not in m.encoding and col is not None and col.dtype == "float":
+        col = None
+    return len(groups(col, n))
+
+
+def _bar_slots(ctx: DrawContext, i: int, m: Mark, cat_ch: str,
+               polar: bool) -> tuple[int, int, float, np.ndarray]:
+    """Where layer ``i``'s bars go among all bar layers of the same orientation.
+
+    Returns ``(first_slot, slots, width, positions)``: when two or more such
+    layers share a category position they are dodged side by side in layer
+    order (each layer's groups in their own order), across a slot width
+    computed from all their positions, and ``positions`` (every slot any of
+    them draws at) is where a missing bar is labelled. A layer that shares no
+    position with another bar layer is laid out on its own exactly as a
+    single bar layer is.
+    """
+    own = np.asarray(_pos(ctx, m, cat_ch).compressed())
+    info = ctx.axes[cat_ch]
+    peers = [(k, b) for k, b in enumerate(ctx.spec.layers)
+             if b.type == "bar" and _orientation(b) == _orientation(m)]
+    pos = {k: (own if k == i else np.asarray(_pos(ctx, b, cat_ch).compressed()))
+           for k, b in peers}
+    shared = any(np.intersect1d(pos[a], pos[b]).size
+                 for x, (a, _) in enumerate(peers) for (b, _) in peers[x + 1:])
+    if not shared:
+        n = _bar_group_count(ctx, m, len(_col(ctx, m, cat_ch).values))
+        return 0, n, _width(own, info, polar), np.unique(own)
+    counts = {k: _bar_group_count(ctx, b, len(_col(ctx, b, cat_ch).values)) for k, b in peers}
+    first = sum(c for k, c in counts.items() if k < i)
+    union = np.concatenate(list(pos.values()))
+    return first, sum(counts.values()), _width(union, info, polar), np.unique(union)
+
+
 def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     style = _style(ctx, i, m)
-    horizontal = getattr(m, "orientation", "vertical") == "horizontal"
+    horizontal = _orientation(m) == "horizontal"
     cat_ch, val_ch = ("y", "x") if horizontal else ("x", "y")
     if ctx.axes[val_ch].kind != "numeric":
         raise RenderError([issue(f"/layers/{i}/encoding/{val_ch}", "unsupported_dtype",
@@ -438,14 +480,14 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     _report_nulls(ctx, i, _mask(pos, val), "left out (no bar)")
     grp = _groups(ctx, i, m, len(pos))
     polar = ctx.spec.coordinate_system == "polar"
-    total = _width(np.asarray(pos.compressed()), ctx.axes[cat_ch], polar)
-    each = total / len(grp)
+    first, slots, total, everywhere = _bar_slots(ctx, i, m, cat_ch, polar)
+    each = total / slots
     artists = []
     for g, (group, idx) in enumerate(grp):
         p, v = pos[idx], val[idx]
         valid = _mask(p, v)
         _require(valid, i, m, group)
-        off = (g - (len(grp) - 1) / 2.0) * each
+        off = (first + g - (slots - 1) / 2.0) * each
         kw = fill_kwargs(style, m.role)
         if m.role != "reference":
             kw["color"] = ctx.layer_color(i, m, group, style, kw.get("color"))
@@ -457,9 +499,12 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
             artists.append(ctx.ax.barh(pp, vv, height=each, **kw))
         else:
             artists.append(ctx.ax.bar(pp, vv, width=each, **kw))
-        # A labelled slot with no bar reads as zero; say "no data" there.
+        # A labelled slot with no bar reads as zero; say "no data" there: rows
+        # whose value is null, and slots (a position some bar of this layer or
+        # of a layer dodged with it is drawn at) this group has no row for.
         missing = ~np.ma.getmaskarray(p) & np.ma.getmaskarray(v)
-        for q in np.asarray(p[missing].filled(np.nan)) + off:
+        absent = np.setdiff1d(everywhere, np.asarray(p.compressed()))
+        for q in np.concatenate([np.asarray(p[missing].filled(np.nan)), absent]) + off:
             xy = (0.0, q) if horizontal else (q, 0.0)
             artists.append(ctx.ax.annotate(
                 "no data", xy, xytext=(3, 0) if horizontal else (0, 3),
