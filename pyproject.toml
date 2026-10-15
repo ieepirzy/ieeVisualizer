@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ieeVisualizer"
 version = "0.1.0"
-description = "A package to serve as an abstraction layer over matplotlib.pyplot to make plotting easier in certain scenarios"
+description = "Plot functions, surfaces and vector fields from Python callables or SymPy expressions with Matplotlib; groundwork for a declarative, agent-accessible visualization layer"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
@@ -15,5 +15,25 @@ dependencies = [
     "sympy",
 ]
 
-[tool.setuptools]
-packages = ["ieeVisualizer"]
+[project.optional-dependencies]
+dev = [
+    "jsonschema",
+    "pytest",
+    "ruff",
+]
+
+# Discover subpackages too; a bare ``packages = ["ieeVisualizer"]`` ships only
+# the top-level package and silently drops e.g. ``ieeVisualizer.spec``.
+[tool.setuptools.packages.find]
+include = ["ieeVisualizer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]

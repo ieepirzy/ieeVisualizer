@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Ruff
+        run: ruff check .
+      - name: Pytest
+        run: python -m pytest
+      # Check the built wheel, not the source tree: install it into a fresh venv
+      # and import every package found in the source from outside the checkout,
+      # so a subpackage missing from the wheel fails here. One matrix entry only.
+      - name: Wheel install smoke test
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m pip wheel . --no-deps -w "$RUNNER_TEMP/dist"
+          python -m venv "$RUNNER_TEMP/wheelenv"
+          "$RUNNER_TEMP/wheelenv/bin/python" -m pip install "$RUNNER_TEMP"/dist/*.whl
+          pkgs=$(find ieeVisualizer -name __init__.py -exec dirname {} \; | tr / . | sort)
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/wheelenv/bin/python" - $pkgs <<'PY'
+          import importlib, os, sys
+          for name in sys.argv[1:]:
+              mod = importlib.import_module(name)
+              assert os.environ["GITHUB_WORKSPACE"] not in mod.__file__, mod.__file__
+              print("ok", name, mod.__file__)
+          PY
