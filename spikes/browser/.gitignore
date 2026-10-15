@@ -1,0 +1,11 @@
+node_modules/
+# Regenerable outputs; the side-by-side comparisons, finding images and the
+# measured numbers (JSON) are committed because the evaluation cites them.
+out/bundles/
+out/mpl/
+out/echarts/
+out/plotly/
+out/vegalite/
+out/probe/*
+!out/probe/echarts-browser-band.png
+out/escape/*.svg

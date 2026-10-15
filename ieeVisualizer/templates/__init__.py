@@ -7,8 +7,9 @@ Importing this package never imports matplotlib, numpy or sympy; the
 expressions. See ``docs/TEMPLATES.md``.
 
     >>> from ieeVisualizer import templates
-    >>> [t["name"] for t in templates.list_templates()]
-    ['timeseries', 'vector_field_2d']
+    >>> [t["name"] for t in templates.list_templates()]  # doctest: +NORMALIZE_WHITESPACE
+    ['bar_comparison', 'dependency_map', 'funnel', 'network', 'org_chart',
+     'timeseries', 'vector_field_2d']
     >>> spec = templates.get("vector_field_2d").build(u="-y", v="x", grid=5)
 """
 
@@ -17,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..spec import FigureSpec
+from .bar_comparison import BarComparisonTemplate
 from .base import (
     PARAM_TYPES,
     ColumnRequirement,
@@ -25,6 +27,7 @@ from .base import (
     TemplateInputError,
     TemplateRegistryError,
 )
+from .funnel import FunnelTemplate
 from .registry import TemplateRegistry, parse_semver
 from .timeseries import TimeseriesTemplate
 from .vector_field import VectorField2DTemplate
@@ -34,6 +37,15 @@ def _builtin_registry() -> TemplateRegistry:
     reg = TemplateRegistry()
     reg.register(TimeseriesTemplate())
     reg.register(VectorField2DTemplate())
+    reg.register(BarComparisonTemplate())
+    reg.register(FunnelTemplate())
+    # Network templates build a NetworkSpec (ieeVisualizer.network), not a
+    # FigureSpec. Imported here, after .base, so either package can be
+    # imported first.
+    from ..network.templates import TEMPLATES as _network_templates
+
+    for t in _network_templates:
+        reg.register(t())
     return reg
 
 
@@ -70,8 +82,10 @@ def build(name: str, data: Any = None, params: dict[str, Any] | None = None,
 
 __all__ = [
     "PARAM_TYPES",
+    "BarComparisonTemplate",
     "ColumnRequirement",
     "ComponentTemplate",
+    "FunnelTemplate",
     "Parameter",
     "TemplateInputError",
     "TemplateRegistry",

@@ -1,0 +1,13 @@
+import Plotly from 'plotly.js/lib/core';
+import scatter from 'plotly.js/lib/scatter';
+import bar from 'plotly.js/lib/bar';
+import heatmap from 'plotly.js/lib/heatmap';
+import histogram from 'plotly.js/lib/histogram';
+import scatterpolar from 'plotly.js/lib/scatterpolar';
+import barpolar from 'plotly.js/lib/barpolar';
+import quiver from 'plotly.js/lib/quiver';
+import scatter3d from 'plotly.js/lib/scatter3d';
+import surface from 'plotly.js/lib/surface';
+import cone from 'plotly.js/lib/cone';
+Plotly.register([scatter, bar, heatmap, histogram, scatterpolar, barpolar, quiver, scatter3d, surface, cone]);
+window.p = Plotly;

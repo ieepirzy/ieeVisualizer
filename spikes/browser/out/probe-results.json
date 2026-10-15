@@ -1,0 +1,182 @@
+{
+  "a11y": {
+    "echarts/svg": {
+      "elements": 75,
+      "svg": true,
+      "canvas": 0,
+      "aria": {
+        "role": 1,
+        "aria-label": 1
+      },
+      "labels": [
+        "Weekly revenue. Forecast is a model output, not a measurement. Two weeks have no data. Observed (line): 10 values, 6.7.2026 to 21.9.2026, from 1 180 to 1 398 EUR; 2 missing (no data). Forecast (line, forecast): 4 values, 28.9.2026 to 19.10.2026, from 1 410 to 1 471 EUR."
+      ],
+      "focusable": 0,
+      "tables": 0,
+      "ariaSnapshot": "- 'img \"Weekly revenue. Forecast is a model output, not a measurement. Two weeks have no data. Observed (line): 10 values, 6.7.2026 to 21.9.2026, from 1 180 to 1 398 EUR; 2 missing (no data). Forecast (line, forecast): 4 values, 28.9.2026 to 19.10.2026, from 1 410 to 1 471 EUR.\"':\n  - img: Forecast is a model output, not a measurement. Two weeks have no data. Revenue (EUR) Week 0 300 600 900 1 200 1 500 17.07. 02.08. 17.08. 02.09. 17.09. 03.10. 17.10. Observed Forecast (forecast) Target Weekly revenue"
+    },
+    "echarts/canvas": {
+      "elements": 3,
+      "svg": false,
+      "canvas": 1,
+      "aria": {
+        "role": 1,
+        "aria-label": 1
+      },
+      "labels": [
+        "Weekly revenue. Forecast is a model output, not a measurement. Two weeks have no data. Observed (line): 10 values, 6.7.2026 to 21.9.2026, from 1 180 to 1 398 EUR; 2 missing (no data). Forecast (line, forecast): 4 values, 28.9.2026 to 19.10.2026, from 1 410 to 1 471 EUR."
+      ],
+      "focusable": 0,
+      "tables": 0,
+      "ariaSnapshot": "- 'img \"Weekly revenue. Forecast is a model output, not a measurement. Two weeks have no data. Observed (line): 10 values, 6.7.2026 to 21.9.2026, from 1 180 to 1 398 EUR; 2 missing (no data). Forecast (line, forecast): 4 values, 28.9.2026 to 19.10.2026, from 1 410 to 1 471 EUR.\"'"
+    },
+    "plotly": {
+      "elements": 256,
+      "svg": true,
+      "canvas": 0,
+      "aria": {
+        "role": 1,
+        "aria-label": 10
+      },
+      "labels": [
+        "Download plot as a PNG",
+        "Share chart...",
+        "Zoom",
+        "Pan"
+      ],
+      "focusable": 10,
+      "tables": 0,
+      "ariaSnapshot": "- img: 12.07. 26.07. 09.08. 23.08. 06.09. 20.09. 04.10. 18.10. 0 200 400 600 800 1 000 1 200 1 400\n- img: Observed Forecast (forecast) Weekly revenue Week Revenue (EUR) Target Forecast is a model output, not a measurement. Two weeks have no data.\n- toolbar:\n  - button \"Download plot as a PNG\":\n    - img\n  - button \"Share chart...\":\n    - img\n  - button \"Zoom\":\n    - img\n  - button \"Pan\":\n    - img\n  - button \"Box Select\":\n    - img\n  - button \"Lasso Select\":\n    - img\n  - button \"Zoom in\":\n    - img\n  - button \"Zoom out\":\n    - img\n  - button \"Autoscale\":\n    - img\n  - button \"Reset axes\":\n    - img\n- img"
+    },
+    "vegalite/svg": {
+      "elements": 183,
+      "svg": true,
+      "canvas": 0,
+      "aria": {
+        "role": 18,
+        "aria-roledescription": 18,
+        "aria-label": 9,
+        "aria-hidden": 26
+      },
+      "labels": [
+        "Weekly revenue. Forecast is a model output, not a measurement. Two weeks have no data.",
+        "X-axis titled 'Week' for a utc scale with values from Monday, 06 July 2026, 12:00:00 AM UTC to Monday, 19 October 2026, 12:00:00 AM UTC",
+        "Y-axis titled 'Revenue (EUR)' for a linear scale with values from 0 to 1 600",
+        "Week: Jul 06, 2026; Revenue (EUR): 1180; series: Observed"
+      ],
+      "focusable": 6,
+      "tables": 0,
+      "ariaSnapshot": "- img: 12.07. 19.07. 26.07. 02.08. 09.08. 16.08. 23.08. 30.08. 06.09. 13.09. 20.09. 27.09. 04.10. 11.10. 18.10. Week 0 200 400 600 800 1 000 1 200 1 400 1 600 Revenue (EUR) Target Observed Forecast (forecast) Weekly revenue Forecast is a model output, not a measurement. Two weeks have no data.\n- group \"Click to view actions\":\n  - img"
+    },
+    "vegalite/canvas": {
+      "elements": 15,
+      "svg": true,
+      "canvas": 1,
+      "aria": {
+        "role": 1,
+        "aria-roledescription": 1,
+        "aria-label": 1
+      },
+      "labels": [
+        "Weekly revenue. Forecast is a model output, not a measurement. Two weeks have no data."
+      ],
+      "focusable": 6,
+      "tables": 0,
+      "ariaSnapshot": "- group \"Click to view actions\":\n  - img"
+    }
+  },
+  "chromium": "playwright 1.56.1 chromium-1194 headless",
+  "ssr": {
+    "line": {
+      "browser_svg_bytes": 9983,
+      "node_svg_bytes": 11943,
+      "identical": false
+    },
+    "band": {
+      "browser_svg_bytes": 14817,
+      "node_svg_bytes": 18825,
+      "identical": false
+    },
+    "grouped_bar": {
+      "browser_svg_bytes": 6431,
+      "node_svg_bytes": 7622,
+      "identical": false
+    }
+  },
+  "determinism": {
+    "echarts/line": {
+      "fresh_processes_identical": true,
+      "sha": "ed3aa5e9e7f4cd37"
+    },
+    "vegalite/line": {
+      "fresh_processes_identical": true,
+      "sha": "912277f76a30c611"
+    },
+    "plotly/line": {
+      "fresh_pages_identical": false,
+      "identical_after_id_normalisation": true,
+      "first_diff_raw": "255, 255, 255); fill-opacity: 1;\"/><defs id=\"defs-9eba1c\"><g class=\"clips\"><clipPath id=\"c",
+      "first_diff_normalised": null
+    },
+    "echarts/grouped_bar": {
+      "fresh_processes_identical": true,
+      "sha": "7910c7ef300f1b96"
+    },
+    "vegalite/grouped_bar": {
+      "fresh_processes_identical": true,
+      "sha": "c88083883b840685"
+    },
+    "plotly/grouped_bar": {
+      "fresh_pages_identical": false,
+      "identical_after_id_normalisation": true,
+      "first_diff_raw": "255, 255, 255); fill-opacity: 1;\"/><defs id=\"defs-a33103\"><g class=\"clips\"><clipPath id=\"c",
+      "first_diff_normalised": null
+    },
+    "echarts/heatmap": {
+      "fresh_processes_identical": true,
+      "sha": "ceac99798b12ae11"
+    },
+    "vegalite/heatmap": {
+      "fresh_processes_identical": true,
+      "sha": "1c449b9e35f18fd2"
+    },
+    "plotly/heatmap": {
+      "fresh_pages_identical": false,
+      "identical_after_id_normalisation": true,
+      "first_diff_raw": "255, 255, 255); fill-opacity: 1;\"/><defs id=\"defs-8be0b2\"><g class=\"clips\"><clipPath id=\"c",
+      "first_diff_normalised": null
+    },
+    "echarts/band": {
+      "fresh_processes_identical": true,
+      "sha": "7d9b65d7cd8b832f"
+    },
+    "vegalite/band": {
+      "fresh_processes_identical": true,
+      "sha": "b4d722a591171c8d"
+    },
+    "plotly/band": {
+      "fresh_pages_identical": false,
+      "identical_after_id_normalisation": true,
+      "first_diff_raw": "255, 255, 255); fill-opacity: 1;\"/><defs id=\"defs-ae8f4a\"><g class=\"clips\"><clipPath id=\"c",
+      "first_diff_normalised": null
+    }
+  },
+  "perf_ms": {
+    "ECharts canvas line (no sampling) @ 100000": 321,
+    "ECharts canvas line (sampling: lttb) @ 100000": 216,
+    "ECharts SVG line (sampling: lttb) @ 100000": 220,
+    "Plotly scatter (SVG) line @ 100000": 225,
+    "Plotly scattergl (WebGL) line @ 100000": 3668,
+    "Vega-Lite canvas line @ 100000": 728,
+    "Observable Plot (SVG) line @ 100000": 241,
+    "uPlot (canvas) line @ 100000": 69,
+    "ECharts canvas line (no sampling) @ 1000000": 2070,
+    "ECharts canvas line (sampling: lttb) @ 1000000": 2625,
+    "ECharts SVG line (sampling: lttb) @ 1000000": 1739,
+    "Plotly scatter (SVG) line @ 1000000": 1105,
+    "Plotly scattergl (WebGL) line @ 1000000": 27557,
+    "Vega-Lite canvas line @ 1000000": 6938,
+    "Observable Plot (SVG) line @ 1000000": 1551,
+    "uPlot (canvas) line @ 1000000": 89
+  }
+}

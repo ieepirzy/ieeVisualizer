@@ -1,0 +1,85 @@
+{
+  "adapter": "control",
+  "fixture": {
+    "HOSTILE_LABEL": "Target {b} {c} {a|x} <script>window.__pwned=\"label\"</script>",
+    "HOSTILE_NAME": "Observed {b} <img src=x onerror=\"window.__pwned='name'\">",
+    "HOSTILE_TITLE": "Revenue {c} <b>bold?</b>"
+  },
+  "tooltips": {
+    "value": {
+      "text": "2026-07-06 00:00:00Observed {b} <img src=x onerror=\"window.__pwned='name'\">1,180",
+      "html": "<div style=\"margin: 0px 0 0;line-height:1;\"><div style=\"margin: 0px 0 0;line-height:1;\"><div style=\"font-size:14px;color:#6d6e73;font-weight:400;line-height:1;\">2026-07-06 00:00:00</div><div style=\"margin: 10px 0 0;line-height:1;\"><div style=\"margin: 0px 0 0;line-height:1;\"><div style=\"margin: 0px 0 0;line-height:1;\"><span style=\"display:inline-block;margin-right:4px;border-radius:10px;width:10px;height:10px;background-color:#007c47;\"></span><span style=\"font-size:14px;color:#6d6e73;font-weight:400;margin-left:2px\">Observed {b} &lt;img src=x onerror=\"window.__pwned='name'\"&gt;</span><span style=\"float:right;margin-left:20px;font-size:14px;color:#6d6e73;font-weight:900\">1,180</span><div style=\"clear:both\"></div></div><div style=\"clear:both\"></div></div><div style=\"clear:both\"></div></div><div style=\"clear:both\"></div></div><div style=\"clear:both\"></div></div>",
+      "injected": 0
+    },
+    "null": {
+      "text": "2026-08-03 00:00:00Observed {b} <img src=x onerror=\"window.__pwned='name'\">-",
+      "html": "<div style=\"margin: 0px 0 0;line-height:1;\"><div style=\"margin: 0px 0 0;line-height:1;\"><div style=\"font-size:14px;color:#6d6e73;font-weight:400;line-height:1;\">2026-08-03 00:00:00</div><div style=\"margin: 10px 0 0;line-height:1;\"><div style=\"margin: 0px 0 0;line-height:1;\"><div style=\"margin: 0px 0 0;line-height:1;\"><span style=\"display:inline-block;margin-right:4px;border-radius:10px;width:10px;height:10px;background-color:#007c47;\"></span><span style=\"font-size:14px;color:#6d6e73;font-weight:400;margin-left:2px\">Observed {b} &lt;img src=x onerror=\"window.__pwned='name'\"&gt;</span><span style=\"float:right;margin-left:20px;font-size:14px;color:#6d6e73;font-weight:900\">-</span><div style=\"clear:both\"></div></div><div style=\"clear:both\"></div></div><div style=\"clear:both\"></div></div><div style=\"clear:both\"></div></div><div style=\"clear:both\"></div></div>",
+      "injected": 0
+    }
+  },
+  "checks": [
+    {
+      "name": "ssr: reference label literal",
+      "ok": false,
+      "detail": [
+        "Target Target {b} {c} {a|x} <script>window.__pwned=\"label\"</script> 1300 {a|x} <script>window.__pwned=\"label\"</script>"
+      ]
+    },
+    {
+      "name": "ssr: series name literal in legend",
+      "ok": true
+    },
+    {
+      "name": "ssr: title literal",
+      "ok": true
+    },
+    {
+      "name": "ssr: no injected element",
+      "ok": true
+    },
+    {
+      "name": "browser: no script ran",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "browser: reference label literal in SVG",
+      "ok": false
+    },
+    {
+      "name": "browser: tooltip shown",
+      "ok": true
+    },
+    {
+      "name": "browser: tooltip name literal",
+      "ok": true,
+      "detail": "2026-07-06 00:00:00Observed {b} <img src=x onerror=\"window.__pwned='name'\">1,180"
+    },
+    {
+      "name": "browser: tooltip has no injected element",
+      "ok": true,
+      "detail": "<div style=\"margin: 0px 0 0;line-height:1;\"><div style=\"margin: 0px 0 0;line-height:1;\"><div style=\"font-size:14px;color:#6d6e73;font-weight:400;line-height:1;\">2026-07-06 00:00:00</div><div style=\"margin: 10px 0 0;line-height:1;\"><div style=\"margin: 0px 0 0;line-height:1;\"><div style=\"margin: 0px 0 0;line-height:1;\"><span style=\"display:inline-block;margin-right:4px;border-radius:10px;width:10px;height:10px;background-color:#007c47;\"></span><span style=\"font-size:14px;color:#6d6e73;font-weight:400;margin-left:2px\">Observed {b} &lt;img src=x onerror=\"window.__pwned='name'\"&gt;</span><span style=\"float:right;margin-left:20px;font-size:14px;color:#6d6e73;font-weight:900\">1,180</span><div style=\"clear:both\"></div></div><div style=\"clear:both\"></div></div><div style=\"clear:both\"></div></div><div style=\"clear:both\"></div></div><div style=\"clear:both\"></div></div>"
+    },
+    {
+      "name": "browser: tooltip value formatted with unit (fi-FI)",
+      "ok": false,
+      "detail": "2026-07-06 00:00:00Observed {b} <img src=x onerror=\"window.__pwned='name'\">1,180"
+    },
+    {
+      "name": "browser: tooltip date in spec timezone",
+      "ok": false,
+      "detail": "2026-07-06 00:00:00Observed {b} <img src=x onerror=\"window.__pwned='name'\">1,180"
+    },
+    {
+      "name": "browser: null week reads \"no data\"",
+      "ok": false,
+      "detail": "2026-08-03 00:00:00Observed {b} <img src=x onerror=\"window.__pwned='name'\">-"
+    },
+    {
+      "name": "browser: no page errors",
+      "ok": true,
+      "detail": []
+    }
+  ],
+  "failed": 5
+}

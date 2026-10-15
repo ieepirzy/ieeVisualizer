@@ -87,7 +87,11 @@ held by any reader that parses numbers as doubles: in those fields, and in a
 `ValueError`) with code `number_out_of_range` and the value's pointer
 (relative to the constructed object on construction), never a raw
 `OverflowError`. An `int` column may store it exactly, but `validate` reports
-`number_out_of_range` there, and for any such value assigned later.
+`number_out_of_range` there, and for any such value assigned later. Free-form JSON
+(`metadata`, `style`, `provenance.extra`) may nest at most 64 levels
+(`MAX_JSON_DEPTH`); deeper is refused by `from_dict` and reported by
+`validate` as `too_deep`, so no input reaches recursive code (copying,
+hashing) that would raise `RecursionError`.
 
 **Marks** share `type`, `data` (dataset name), `encoding` (channel ->
 `{"field": column, "title"?}`; `"y": "col"` shorthand is accepted),

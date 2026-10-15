@@ -1,5 +1,6 @@
 """Gallery: every built-in template example, every mark type and the legacy
-bridge, rendered and exported with provenance manifests.
+bridge, rendered and exported with provenance manifests; the business
+templates also under the Muutto365 themes.
 
 Run: python examples/gallery.py  (writes to examples/out/, which is gitignored)
 
@@ -14,6 +15,12 @@ writer that stores one flat file per artifact file instead of the default
 ``<root>/<artifact_id>/...`` layout, so the gallery is easy to browse. The
 manifest still lists the files under their artifact names (``figure.png``,
 ``spec.json``); :func:`output_path` maps one to the other.
+
+Two composed views (``ieeVisualizer.view``) are exported the same way by
+:func:`export_views`: ``view-reporting-pipeline`` (the section 5.2 flow
+diagram) and ``view-weekly-briefing`` (KPI tiles, a timeseries figure, a
+table and caveats), each as ``.html``, ``.svg`` and ``.png`` plus
+``.view.json``, ``.figure-<n>.spec.json`` and ``.manifest.json``.
 
 The mark examples use small synthetic data (formulas or a seeded generator),
 labelled as such in their provenance; none of it is a measurement.
@@ -30,6 +37,7 @@ import sympy as sp
 
 from ieeVisualizer import Visualizer, templates
 from ieeVisualizer.artifacts import export
+from ieeVisualizer.network import Edge, Layout, NetworkSpec, Node, Quantity, export_network
 from ieeVisualizer.render import RenderRequest
 from ieeVisualizer.spec import (
     AreaMark,
@@ -47,6 +55,8 @@ from ieeVisualizer.spec import (
     ReferenceLine,
     ScatterMark,
 )
+from ieeVisualizer.view import export_view
+from ieeVisualizer.view.examples import reporting_pipeline, weekly_briefing
 
 OUT = Path(__file__).parent / "out"
 FORMATS = ("png", "svg")
@@ -200,12 +210,36 @@ MARKS = {
 # --------------------------------------------------------------------------
 
 
-def template_specs() -> dict[str, FigureSpec]:
+def template_specs() -> dict:
     """Every registered template's own example payload, built as-is."""
     out = {}
     for entry in templates.list_templates():
         t = templates.get(entry["name"])
         out[f"template-{t.name}"] = t.build_payload(t.example())
+    return out
+
+
+#: Themes the reporting templates are also shown in (entry suffix -> theme).
+THEMED = {"report-light": "muutto365-report-light", "admin-dark": "muutto365-admin-dark"}
+THEMED_TEMPLATES = ("bar_comparison", "funnel", "timeseries")
+
+
+def themed_specs() -> dict[str, FigureSpec]:
+    """Reporting template examples under each Muutto365 theme. A template
+    with a ``theme`` parameter is built with it (so text it writes uses the
+    theme's number format); otherwise the built spec's theme is set."""
+    out = {}
+    for name in THEMED_TEMPLATES:
+        t = templates.get(name)
+        for suffix, theme in THEMED.items():
+            payload = t.example()
+            if t.parameter("theme") is not None:
+                payload["params"] = dict(payload["params"], theme=theme)
+                spec = t.build_payload(payload)
+            else:
+                spec = t.build_payload(payload)
+                spec.theme = theme
+            out[f"template-{name}--{suffix}"] = spec
     return out
 
 
@@ -226,11 +260,79 @@ def legacy_specs() -> dict[str, FigureSpec]:
     }
 
 
-def all_specs() -> dict[str, FigureSpec]:
+# --------------------------------------------------------------------------
+# networks (NetworkSpec; the templates above cover org_chart, dependency_map
+# and network)
+# --------------------------------------------------------------------------
+
+
+def _communities(layout: Layout) -> NetworkSpec:
+    """Seeded stochastic block model: 3 communities of 12, dense inside,
+    sparse between; integer weights, two of them not recorded."""
+    rng = np.random.default_rng(7)
+    nodes = [Node(f"{g}{i}", group=f"community {g}") for g in "ABC" for i in range(1, 13)]
+    edges = []
+    for a in range(len(nodes)):
+        for b in range(a + 1, len(nodes)):
+            same = nodes[a].group == nodes[b].group
+            if rng.random() < (0.35 if same else 0.025):
+                edges.append(Edge(nodes[a].id, nodes[b].id,
+                                  weight=float(rng.integers(1, 10 if same else 3))))
+    edges[3].weight = edges[20].weight = None
+    return NetworkSpec(nodes=nodes, edges=edges, layout=layout,
+                       edge_weight=Quantity("Interactions", "count/day"),
+                       title="Stochastic block model (synthetic, seed 7)",
+                       caption="Synthetic graph; two edges have no recorded count.")
+
+
+def _bipartite() -> NetworkSpec:
+    people = [("p1", "Aino"), ("p2", "Bo"), ("p3", "Chen"), ("p4", "Dara")]
+    projects = ["Pricing", "Routing", "Reporting"]
+    alloc = [("p1", "Pricing", 0.6), ("p1", "Routing", 0.4), ("p2", "Routing", 0.5),
+             ("p3", "Reporting", 0.8), ("p4", "Pricing", 0.2), ("p4", "Reporting", 0.8)]
+    return NetworkSpec(
+        nodes=[Node(i, label=n, group="person") for i, n in people]
+        + [Node(p, group="project") for p in projects],
+        edges=[Edge(a, b, weight=w) for a, b, w in alloc],
+        edge_weight=Quantity("Allocation", "FTE"),
+        layout=Layout("bipartite"), title="People and projects (illustrative)")
+
+
+def network_specs() -> dict[str, NetworkSpec]:
+    return {
+        "network-force": _communities(Layout("force", seed=3)),
+        "network-matrix-group": _communities(Layout("matrix", order="group")),
+        "network-matrix-seriation": _communities(Layout("matrix", order="seriation")),
+        "network-circular": _communities(Layout("circular")),
+        "network-bipartite": _bipartite(),
+    }
+
+
+def all_specs() -> dict:
     specs = {name: build() for name, build in MARKS.items()}
     specs.update(template_specs())
+    specs.update(themed_specs())
     specs.update(legacy_specs())
+    specs.update(network_specs())
     return specs
+
+
+VIEWS = {
+    "view-reporting-pipeline": reporting_pipeline,
+    "view-weekly-briefing": weekly_briefing,
+}
+VIEW_FORMATS = ("html", "svg", "png")
+
+
+def export_views(out: Path, clock) -> dict:
+    """Export every gallery view; returns ``{name: ViewArtifact}``."""
+    artifacts = {}
+    for name, build in VIEWS.items():
+        artifacts[name] = export_view(build(), VIEW_FORMATS, FlatWriter(out, name), name=name,
+                                      clock=clock)
+        warns = sorted({w["code"] for v in artifacts[name].variants for w in v.warnings})
+        print(f"{name:28s} {artifacts[name].artifact_id}  warnings: {', '.join(warns) or '-'}")
+    return artifacts
 
 
 def main(out: Path | None = None, clock=None) -> dict:
@@ -241,11 +343,13 @@ def main(out: Path | None = None, clock=None) -> dict:
     clock = clock or (lambda: dt.datetime.now(dt.timezone.utc))
     artifacts = {}
     for name, spec in all_specs().items():
-        artifacts[name] = export(spec, FORMATS, FlatWriter(out, name), request=REQUEST,
+        exporter = export_network if isinstance(spec, NetworkSpec) else export
+        artifacts[name] = exporter(spec, FORMATS, FlatWriter(out, name), request=REQUEST,
                                  name=name, clock=clock)
         warns = sorted({w["code"] for v in artifacts[name].variants for w in v.warnings})
         print(f"{name:28s} {artifacts[name].artifact_id}  warnings: {', '.join(warns) or '-'}")
-    print(f"wrote {len(artifacts)} figures to {out}")
+    views = export_views(out, clock)
+    print(f"wrote {len(artifacts)} figures and {len(views)} views to {out}")
     return artifacts
 
 

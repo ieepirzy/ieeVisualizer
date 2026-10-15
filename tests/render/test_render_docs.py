@@ -21,4 +21,4 @@ def test_readme_rendering_snippet_runs(tmp_path, monkeypatch, capsys):
     assert out[0] == "image/svg+xml ['null_values_omitted']"
     artifact_id = out[1].split()[0]
     assert sorted(os.listdir(tmp_path / "out" / artifact_id)) == [
-        "figure.png", "figure.svg", "manifest.json", "spec.json"]
+        "figure.png", "figure.svg", "manifest.json", "spec.json", "theme.json"]

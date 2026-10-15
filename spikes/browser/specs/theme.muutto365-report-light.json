@@ -1,0 +1,144 @@
+{
+  "background": "#ffffff",
+  "description": "Neutral, accessible light theme for email and print. Awaits an official brand palette: the 'pending' slots are placeholders.",
+  "diverging": [
+    "#007c47",
+    "#cecece",
+    "#9262b6"
+  ],
+  "foreground": "#0a0a0a",
+  "grid": "#e2e2e2",
+  "grid_alpha": 1.0,
+  "grid_below": true,
+  "grid_show": true,
+  "grid_width": 0.6,
+  "line_width": 1.8,
+  "locale": {
+    "currency_decimals": 2,
+    "currency_position": "suffix",
+    "currency_sep": " ",
+    "currency_symbol": "€",
+    "date_formats": [
+      "%Y",
+      "%m/%Y",
+      "%d.%m.",
+      "%H.%M",
+      "%H.%M",
+      "%S,%f"
+    ],
+    "date_offset_formats": [
+      "",
+      "%Y",
+      "%m/%Y",
+      "%d.%m.%Y",
+      "%d.%m.%Y",
+      "%d.%m.%Y %H.%M"
+    ],
+    "date_zero_formats": [
+      "",
+      "%Y",
+      "%m/%Y",
+      "%d.%m.",
+      "%H.%M",
+      "%H.%M"
+    ],
+    "decimal": ",",
+    "group": " ",
+    "group_min_digits": 4,
+    "max_decimals": 2,
+    "minus": "−",
+    "percent_sep": " ",
+    "tag": "fi-FI"
+  },
+  "muted": "#545454",
+  "name": "muutto365-report-light",
+  "palette": [
+    "#007c47",
+    "#2f4380",
+    "#9262b6"
+  ],
+  "pending": [
+    "palette",
+    "signal",
+    "semantic",
+    "typography.family"
+  ],
+  "provenance": {
+    "background": "site --paper #ffffff",
+    "diverging": "palette ends with --ink at 20 % as the neutral midpoint",
+    "fonts": "Brand UI fonts (admin: Geist / IBM Plex Sans; site: Public Sans) are not bundled; DejaVu Sans ships with matplotlib, so a render is byte-identical on every machine.",
+    "foreground": "site --ink #0a0a0a",
+    "grid": "site --line rgba(10,10,10,.12) composited on --paper",
+    "locale": "fi-FI",
+    "muted": "--ink at 70 % on --paper (site --text-dim-ink, ink at 55 %, is 4.4:1: below 4.5:1 for text)",
+    "palette": [
+      "site --mint-deep oklch(0.50 0.15 162) (link/emphasis colour on white)",
+      "admin --indigo hue at OKLCH lightness 0.40 (dark enough to stay apart from the purple under protan/deutan simulation)",
+      "admin --cyan hue darkened to 4.5:1 on white"
+    ],
+    "pending": "replace the pending slots with the official brand palette when one exists; publish it as a new theme version",
+    "roles": "forecast lines at 85 % opacity: at the renderer's default 75 % the purple series colour is 2.92:1 on white, below 3:1 for graphics",
+    "semantic": "admin --green / --red hues darkened to 4.5:1, signal as attention",
+    "sequential": "matplotlib viridis sampled on [0, 0.82] (high end visible on white)",
+    "signal": "admin --orange hue darkened to 3:1 on white; reserved",
+    "source": "movingfirm-admin/tests/fixtures/interface/home.css (public site) and movingfirm-admin/frontend/src/styles/tokens.css; no brand guideline for external/light use exists in the movingfirm-* repositories"
+  },
+  "roles": {
+    "forecast_fill_alpha": 0.85,
+    "forecast_hatch": "///",
+    "forecast_line_alpha": 0.85,
+    "forecast_linestyle": "dashed",
+    "reference_alpha": 0.8,
+    "reference_color": "#545454",
+    "reference_fill_alpha": 0.7,
+    "reference_linewidth": 1.2
+  },
+  "semantic": {
+    "attention": "#cc8600",
+    "negative": "#d24539",
+    "positive": "#148759"
+  },
+  "sequential": [
+    "#440154",
+    "#482576",
+    "#404588",
+    "#34618d",
+    "#297a8e",
+    "#20938c",
+    "#25ac82",
+    "#4cc26c",
+    "#86d549"
+  ],
+  "signal": "#cc8600",
+  "spines": [
+    "left",
+    "bottom"
+  ],
+  "targets": {
+    "email": {
+      "description": "1200 x 750 px; shown about 600 px wide in mail",
+      "dpi": 200.0,
+      "height": 3.75,
+      "width": 6.0
+    },
+    "slide": {
+      "description": "1920 x 1080 px (16:9)",
+      "dpi": 240.0,
+      "height": 4.5,
+      "width": 8.0
+    }
+  },
+  "title": "Muutto365 report (light)",
+  "typography": {
+    "caption": 8.0,
+    "family": [
+      "DejaVu Sans"
+    ],
+    "label": null,
+    "legend": null,
+    "size": null,
+    "tick": null,
+    "title": null
+  },
+  "version": "1.0.0"
+}

@@ -19,6 +19,8 @@ non_finite_number          NaN or an infinity where a number is stored; for one
                            put into a column's values after construction, an
                            infinity is an error and a NaN a warning (it is
                            stored as null, as on construction)
+too_deep                   free-form JSON (metadata, style, provenance extra)
+                           nested deeper than ``MAX_JSON_DEPTH``
 no_layers                  the figure has nothing to draw
 empty_dataset              dataset with no columns or zero rows
 column_length_mismatch     columns of one snapshot differ in length
