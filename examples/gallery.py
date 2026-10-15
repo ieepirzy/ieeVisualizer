@@ -1,5 +1,6 @@
 """Gallery: every built-in template example, every mark type and the legacy
-bridge, rendered and exported with provenance manifests.
+bridge, rendered and exported with provenance manifests; the business
+templates also under the Muutto365 themes.
 
 Run: python examples/gallery.py  (writes to examples/out/, which is gitignored)
 
@@ -210,6 +211,30 @@ def template_specs() -> dict:
     return out
 
 
+#: Themes the reporting templates are also shown in (entry suffix -> theme).
+THEMED = {"report-light": "muutto365-report-light", "admin-dark": "muutto365-admin-dark"}
+THEMED_TEMPLATES = ("bar_comparison", "funnel", "timeseries")
+
+
+def themed_specs() -> dict[str, FigureSpec]:
+    """Reporting template examples under each Muutto365 theme. A template
+    with a ``theme`` parameter is built with it (so text it writes uses the
+    theme's number format); otherwise the built spec's theme is set."""
+    out = {}
+    for name in THEMED_TEMPLATES:
+        t = templates.get(name)
+        for suffix, theme in THEMED.items():
+            payload = t.example()
+            if t.parameter("theme") is not None:
+                payload["params"] = dict(payload["params"], theme=theme)
+                spec = t.build_payload(payload)
+            else:
+                spec = t.build_payload(payload)
+                spec.theme = theme
+            out[f"template-{name}--{suffix}"] = spec
+    return out
+
+
 def legacy_specs() -> dict[str, FigureSpec]:
     x, y = sp.symbols("x y")
     viz = Visualizer(N=200, colormap="viridis")
@@ -278,6 +303,7 @@ def network_specs() -> dict[str, NetworkSpec]:
 def all_specs() -> dict:
     specs = {name: build() for name, build in MARKS.items()}
     specs.update(template_specs())
+    specs.update(themed_specs())
     specs.update(legacy_specs())
     specs.update(network_specs())
     return specs
