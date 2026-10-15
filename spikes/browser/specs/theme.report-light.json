@@ -2,12 +2,12 @@
   "background": "#ffffff",
   "description": "Neutral, accessible light theme for email and print.",
   "diverging": [
-    "#007c47",
-    "#cecece",
-    "#9262b6"
+    "#0077bb",
+    "#d0d0d0",
+    "#cc3311"
   ],
-  "foreground": "#0a0a0a",
-  "grid": "#e2e2e2",
+  "foreground": "#1a1a1a",
+  "grid": "#dcdcdc",
   "grid_alpha": 1.0,
   "grid_below": true,
   "grid_show": true,
@@ -50,60 +50,61 @@
     "percent_sep": " ",
     "tag": "fi-FI"
   },
-  "muted": "#545454",
+  "muted": "#616161",
   "name": "report-light",
   "palette": [
-    "#007c47",
-    "#2f4380",
-    "#9262b6"
+    "#0077bb",
+    "#117733",
+    "#aa3377",
+    "#332288"
   ],
   "pending": [],
   "provenance": {
-    "background": "site --paper #ffffff",
-    "diverging": "palette ends with --ink at 20 % as the neutral midpoint",
-    "fonts": "The source UIs' web fonts are not bundled; DejaVu Sans ships with matplotlib, so a render is byte-identical on every machine.",
-    "foreground": "site --ink #0a0a0a",
-    "grid": "site --line rgba(10,10,10,.12) composited on --paper",
+    "background": "white",
+    "diverging": "palette blue / light neutral grey / Tol vibrant red",
+    "fonts": "DejaVu Sans ships with matplotlib, so a render is byte-identical on every machine; a host may list other families, the first installed one is used.",
+    "foreground": "near-black neutral (17.4:1)",
+    "grid": "light neutral grey (1.4:1)",
     "locale": "fi-FI",
-    "muted": "--ink at 70 % on --paper (site --text-dim-ink, ink at 55 %, is 4.4:1: below 4.5:1 for text)",
+    "muted": "neutral grey (6.2:1)",
     "palette": [
-      "site --mint-deep oklch(0.50 0.15 162) (link/emphasis colour on white)",
-      "admin --indigo hue at OKLCH lightness 0.40 (dark enough to stay apart from the purple under protan/deutan simulation)",
-      "admin --cyan hue darkened to 4.5:1 on white"
+      "Tol vibrant blue #0077bb",
+      "Tol muted green #117733",
+      "Tol bright purple #aa3377",
+      "Tol muted indigo #332288"
     ],
-    "roles": "forecast lines at 85 % opacity: at the renderer's default 75 % the purple series colour is 2.92:1 on white, below 3:1 for graphics",
-    "semantic": "admin --green / --red hues darkened to 4.5:1, signal as attention",
-    "sequential": "matplotlib viridis sampled on [0, 0.82] (high end visible on white)",
-    "signal": "admin --orange hue darkened to 3:1 on white; reserved",
-    "source": "a light site design-token set (CSS custom properties) and a dark dashboard design-token set (CSS custom properties)"
+    "semantic": "palette green (positive), Tol vibrant red (negative), signal as attention",
+    "sequential": "matplotlib cividis sampled on [0, 0.8] (high end visible on white)",
+    "signal": "dark amber, 5.0:1 on white; reserved, never a series colour",
+    "source": "designed for ieeVisualizer; series colours from Paul Tol, 'Colour Schemes' (SRON/EPS/TN/09-002, 2021)"
   },
   "roles": {
-    "forecast_fill_alpha": 0.85,
+    "forecast_fill_alpha": 0.75,
     "forecast_hatch": "///",
-    "forecast_line_alpha": 0.85,
+    "forecast_line_alpha": null,
     "forecast_linestyle": "dashed",
     "reference_alpha": 0.8,
-    "reference_color": "#545454",
+    "reference_color": "#616161",
     "reference_fill_alpha": 0.7,
     "reference_linewidth": 1.2
   },
   "semantic": {
-    "attention": "#cc8600",
-    "negative": "#d24539",
-    "positive": "#148759"
+    "attention": "#a65e00",
+    "negative": "#cc3311",
+    "positive": "#117733"
   },
   "sequential": [
-    "#440154",
-    "#482576",
-    "#404588",
-    "#34618d",
-    "#297a8e",
-    "#20938c",
-    "#25ac82",
-    "#4cc26c",
-    "#86d549"
+    "#00224e",
+    "#083370",
+    "#35456c",
+    "#4f576c",
+    "#666970",
+    "#7d7c78",
+    "#948e77",
+    "#aea371",
+    "#c8b866"
   ],
-  "signal": "#cc8600",
+  "signal": "#a65e00",
   "spines": [
     "left",
     "bottom"

@@ -71,7 +71,7 @@ def test_cvd_simulation_reference_value_is_linear_rgb_machado():
 
 def test_parse_hex_and_oklch():
     assert parse_color("#fff") == (1.0, 1.0, 1.0)
-    assert to_hex(parse_color("#6FD3A0")) == "#6fd3a0"
+    assert to_hex(parse_color("#44BB99")) == "#44bb99"
     assert to_hex(parse_color("oklch(1 0 0)")) == "#ffffff"
     assert to_hex(parse_color("oklch(0% 0 0)")) == "#000000"
     for bad in ("red", "#12345", "rgb(1,2,3)", None, 3):
@@ -81,6 +81,6 @@ def test_parse_hex_and_oklch():
 
 def test_blend_and_darken_to_contrast():
     assert to_hex(blend("#000000", "#ffffff", 0.5)) == "#808080"
-    out = darken_to_contrast("#9db8ff", "#ffffff", 4.5)
+    out = darken_to_contrast("#77aadd", "#ffffff", 4.5)
     assert 4.5 <= contrast_ratio(out, "#ffffff") < 4.6  # the lightest that passes
     assert darken_to_contrast("#000000", "#ffffff", 4.5) == "#000000"  # already passes

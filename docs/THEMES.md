@@ -15,7 +15,7 @@ themes.list_themes()                       # name, version, versions, title, des
 t = themes.get("report-light")             # latest; "name@1.0.0" pins a version
 t.record()                                 # {"name", "version", "sha256"}
 t.to_json(); themes.Theme.from_json(...)   # round-trips; sha256 is over the canonical JSON
-themes.describe("admin-dark")              # theme + hash + accessibility report
+themes.describe("dashboard-dark")              # theme + hash + accessibility report
 spec.theme = "report-light"                # or RenderRequest(theme=...) to override
 render(spec, t.request("email", "png"))    # 1200 x 750 px; "slide" = 1920 x 1080 px
 themes.format_quantity(1234.5, "EUR", t.locale)   # '1 234,50 €' (no-break spaces)
@@ -25,7 +25,8 @@ themes.format_quantity(1234.5, "EUR", t.locale)   # '1 234,50 €' (no-break spa
 
 `FigureSpec.theme` (or `RenderRequest.theme`, which overrides it) is
 `"name"` (highest registered version) or `"name@version"`. An unknown name
-renders with `default` and an `unknown_theme` warning, as before.
+renders with `default` and an `unknown_theme` warning, as before; it is not
+an error (see "Breaking changes" for the consequence for renamed themes).
 
 `RenderResult.theme` is the resolved theme's `{"name", "version",
 "sha256"}`. `export()` stores the full theme as `theme.json` next to the
@@ -112,56 +113,66 @@ before (84 renders compared). matplotlib's default colour
 cycle is not checked (`palette_unchecked`): tab10's orange and green differ
 by only 1.3 under simulated protanopia.
 
-### `admin-dark` 1.0.0
+### `dashboard-dark` 1.0.0 and `report-light` 1.0.0
 
-A worked example of deriving a chart theme from a dark dashboard's CSS
-design tokens (source values quoted in `tests/themes/test_builtin_themes.py`):
+Neutral themes with no organisation's identity in them: `dashboard-dark` for
+internal dashboards and slides, `report-light` for email and print. Series
+colours come from Paul Tol's published colour-vision-safe qualitative
+schemes ("vibrant", "muted", "bright", "light"; SRON/EPS/TN/09-002, 2021),
+colour maps from matplotlib's `cividis`, greys are plain neutrals chosen
+for contrast. Each value's origin is in the theme's `provenance`. The tests
+(`tests/themes/test_builtin_themes.py`) assert the properties below, not the
+hex values.
 
-| Slot | Value | Source |
+| Slot | `dashboard-dark` | `report-light` |
 |---|---|---|
-| background | `#08090a` | `--bg` |
-| foreground | `#d9d6cf` | `--text` (13.7:1) |
-| muted | `#95928a` | `--text2` (6.4:1); `--text3` is 3.0:1, too faint for text |
-| grid | `#1f1f1f` | `--border2` composited on `--bg` |
-| palette | `#9db8ff`, `#6fd3a0`, `#9d6ec2` | `--indigo`, `--green`, `--cyan`'s hue at OKLCH L 0.62 |
-| signal | `#ffb547` | `--orange`, "needs a person": reserved, not a series colour |
-| semantic | positive `--green`, negative `--red`, attention `--orange` | token comments |
-| sequential | viridis sampled on [0.25, 1] | low end visible on `--bg` |
+| background | `#16181d` | `#ffffff` |
+| foreground / muted | `#e8e8e8` (14.5:1) / `#a3a3a3` (7.0:1) | `#1a1a1a` (17.4:1) / `#616161` (6.2:1) |
+| grid | `#2b2e35` (1.3:1) | `#dcdcdc` (1.4:1) |
+| palette | Tol cyan `#33bbee`, magenta `#ee3377`, teal `#009988`, pink `#ffaabb` | Tol blue `#0077bb`, green `#117733`, purple `#aa3377`, indigo `#332288` |
+| signal (reserved, never a series colour) | Tol orange `#ee7733` (6.2:1) | dark amber `#a65e00` (5.0:1) |
+| semantic | positive `#44bb99`, negative `#ee6677`, attention = signal | positive `#117733`, negative `#cc3311`, attention = signal |
+| sequential | `cividis` on [0.3, 1] (low end visible on the ground) | `cividis` on [0, 0.8] (high end visible on white) |
+| diverging | cyan / grey `#6b6e76` / magenta | blue / grey `#d0d0d0` / red `#cc3311` |
 
-Finding: the token set's own first two series colours, `--indigo` and `--cyan`
-(lilac), are 17 CIEDE2000 apart for normal vision but **2.1 under
-protanopia and 1.8 under deuteranopia**: the same colour to a red-green
-dichromat (about 2 % of men) and hard to separate for many of the roughly
-8 % of men with a red-green deficiency. The theme keeps the hue and lowers
-its lightness.
-
-### `report-light` 1.0.0
-
-A neutral, accessible light theme for email and print, derived from a light
-site token set plus the dashboard hues above darkened to pass on white.
-Change it only by publishing a new version (or a new name); never change
-1.0.0 in place.
-
-| Slot | Value | Source |
-|---|---|---|
-| background, foreground | `#ffffff`, `#0a0a0a` | site `--paper`, `--ink` |
-| muted | `#545454` | `--ink` at 70 % (7.6:1); the site's `--text-dim-ink` (ink at 55 %) is 4.4:1 |
-| grid | `#e2e2e2` | site `--line` on `--paper` |
-| palette | `#007c47`, `#2f4380`, `#9262b6` | site `--mint-deep` `oklch(0.50 0.15 162)`; dashboard `--indigo` hue at OKLCH L 0.40; dashboard `--cyan` hue darkened to 4.5:1 |
-| signal / semantic | `#cc8600` / `#148759`, `#d24539` | dashboard `--orange` (3:1), `--green`, `--red` (4.5:1) darkened |
-| sequential | viridis sampled on [0, 0.82] | high end visible on white |
-
-Fonts: the source UIs' web fonts are not bundled; both themes use DejaVu
-Sans (shipped with matplotlib), so a render is byte-identical on every
-machine. A theme may list other
-families; the first installed one is used.
+Both use fi-FI number and date formatting, email (1200 x 750 px) and slide
+(1920 x 1080 px) targets, dashed and hatched forecasts at 75 % opacity, and
+DejaVu Sans (shipped with matplotlib), so a render is byte-identical on every
+machine. A theme may list other families; the first installed one is used.
 
 Measured (`themes.describe(name)["accessibility"]`):
 
 | | text | muted | palette vs ground | min pair ΔE00 | protan | deutan | tritan |
 |---|---|---|---|---|---|---|---|
-| admin-dark | 13.7 | 6.4 | 10.2, 10.9, 5.2 | 24.6 | 19.2 | 16.1 | 11.2 |
-| report-light | 19.8 | 7.6 | 5.3, 9.4, 4.5 | 22.2 | 15.5 | 18.9 | 17.3 |
+| dashboard-dark | 14.5 | 7.0 | 8.0, 4.6, 5.0, 9.9 | 22.9 | 13.7 | 16.5 | 13.6 |
+| report-light | 17.4 | 6.2 | 4.8, 5.7, 6.1, 12.2 | 26.4 | 11.2 | 18.0 | 11.6 |
+
+## Organisation themes
+
+This library ships no organisation's brand. An organisation publishes its
+themes from its own package and registers them at start-up with
+`ieeVisualizer.themes.register(theme)` (or `default_registry.register`, or a
+`ThemeRegistry` of its own). Registration runs the same structural and
+accessibility checks as the built-ins and refuses a second, different theme
+under an existing `name@version`. Register before rendering: a spec naming a
+theme that is not registered renders with `default` (see below).
+
+## Breaking changes
+
+* **2026-10-15, theme renames, no aliases.** The two organisation-named
+  built-in themes `<organisation>-admin-dark` and
+  `<organisation>-report-light` became `dashboard-dark` and `report-light`,
+  and both were redesigned as neutral themes (new palettes; the old values now
+  live with the organisation that owns them). The library is pre-1.0 and
+  unpublished, so the old names were removed outright rather than kept as
+  deprecated aliases.
+* **What an old name does now.** A spec or request naming a theme that is
+  not registered (including the removed names) **does not fail**: it renders
+  with `default` and the result carries an `unknown_theme` warning (with a
+  "did you mean" suggestion when a registered name is close). Callers that
+  must not fall back should treat an `unknown_theme` warning on
+  `RenderResult.warnings` as an error, or resolve the theme first with
+  `themes.get(name)`, which raises `ThemeError` (`unknown_theme`).
 
 ## Renderer additions used by the business templates
 

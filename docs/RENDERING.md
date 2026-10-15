@@ -41,7 +41,7 @@ artifact.artifact_id, artifact.variant("png").sha256
 | `format` | `"png"` | `png`, `svg`, `pdf` (matplotlib); `html` is a known format no current adapter supports |
 | `width`, `height`, `units` | `6.4`, `4.8`, `"in"` | `units="px"` converts with `dpi`; a PNG measures exactly `request.size_px` |
 | `dpi` | `100` | |
-| `theme` | `None` | overrides `spec.theme`; a registered theme `name` or `name@version` ([THEMES.md](THEMES.md)): `default`, `minimal`, `presentation`, `admin-dark`, `report-light` |
+| `theme` | `None` | overrides `spec.theme`; a registered theme `name` or `name@version` ([THEMES.md](THEMES.md)): `default`, `minimal`, `presentation`, `dashboard-dark`, `report-light` |
 | `adapter` | `None` | pin an adapter by name |
 
 `RenderResult` has `content`, `format`, `media_type`, `adapter_name`,

@@ -121,8 +121,8 @@ export function tokens(theme) {
     fontPx: ((t.typography?.size ?? 10) * 100) / 72,
     captionPx: ((t.typography?.caption ?? 8) * 100) / 72,
     referenceColor: t.roles?.reference_color ?? '#555555',
-    // Theme role token since the themes merge (0.85 in report-light);
-    // 0.75 is the Matplotlib renderer default when a theme leaves it out.
+    // Theme role token since the themes merge; 0.75 is the Matplotlib
+    // renderer default when a theme leaves it out (report-light does).
     forecastOpacity: t.roles?.forecast_line_alpha ?? 0.75,
     bandOpacity: 0.22,
   };

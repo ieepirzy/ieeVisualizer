@@ -23,7 +23,7 @@ diagrams, Manim and reporting integrations come after it and reuse its spec.
 | Decision | Default | Why |
 |---|---|---|
 | Core language | Python ≥ 3.9; serialized specs are plain JSON | Existing code is Python; JSON keeps a later TS/Vue host possible. |
-| Spec modelling | stdlib `dataclasses` + explicit validation | Keeps runtime deps at matplotlib/numpy/sympy. Revisited 2026-10-15 and kept; pydantic only where it validates something (see "Phase 2 onward", Foundation). |
+| Spec modelling | stdlib `dataclasses` + explicit validation; pydantic (v2) only as an optional extra, `ieeVisualizer[schemas]`, for the new schema features | The core runtime stays matplotlib/numpy/sympy, and nothing in the spec, render or artifact path imports pydantic. Revisited 2026-10-15: a hash-identical migration (PR #18, closed) validated nothing the dataclasses did not; pydantic is used only where it is the validator (see "Phase 2 onward", Foundation). |
 | Spec versioning | every serialized spec carries `schema_version` | Historical report figures must not silently change meaning. |
 | Package layout | `ieeVisualizer/spec/`, `render/`, `artifacts/`, `templates/`; legacy `core.Visualizer` kept | Separates spec / backend / export as §3.2 asks; existing API is bridged, not broken. |
 | First backend | Matplotlib only, headless (`Agg`) | Phase 1 scope. Browser backend chosen in Phase 2 after an evaluation. |
@@ -171,7 +171,8 @@ reviewable branches; order follows dependencies, not importance.
   explicit validator. A hash-identical migration of them (PR #18, closed)
   left pydantic validating nothing: every rule still lived in `validate()`,
   so it added a dependency and a second model layer for no checked property.
-  Pydantic (v2) is used where it is the validator: agent-contributed
+  Pydantic (v2), as the optional extra `ieeVisualizer[schemas]` and never a
+  core runtime dependency, is used where it is the validator: agent-contributed
   declarative template schemas, template parameter schemas, report and email
   configuration, and an exported pydantic view of the spec for FastAPI /
   JSON Schema consumers. That view is generated from, and tested against,
@@ -257,10 +258,10 @@ reviewable branches; order follows dependencies, not importance.
   metrics, templates and example wording live in the organisation's own
   repository and register through the theme and template registries
   (`ieeVisualizer.themes.register`,
-  `ieeVisualizer.templates.default_registry.register`). The
-  built-in themes are generic worked examples; a test fails if an
-  organisation's name appears in the package, tests, examples, skills or
-  spikes.
+  `ieeVisualizer.templates.default_registry.register`). The built-in
+  themes are neutral designs; `tests/test_no_org_specifics.py` fails if a
+  known organisation or product name appears in any tracked file other than
+  the three owner-authored vision documents.
 
 ### Domains
 
@@ -290,6 +291,16 @@ reviewable branches; order follows dependencies, not importance.
   Cairo/Pango), needs system Pango headers to build, LaTeX for typeset maths,
   and renders seconds per frame where Matplotlib takes tens of milliseconds.
   If heavy renders become common, run them in a separate render container.
+
+## Breaking changes
+
+* **2026-10-15:** the two organisation-named built-in themes
+  (`<organisation>-admin-dark`, `<organisation>-report-light`) were renamed
+  to `dashboard-dark` and `report-light` and redesigned as neutral themes, with no deprecated
+  aliases (pre-1.0, unpublished). An old name now renders with `default`
+  plus an `unknown_theme` warning, not an error. Organisation themes register
+  through `ieeVisualizer.themes.register`. Details: THEMES.md, "Breaking
+  changes".
 
 ## Out of scope for every branch above
 

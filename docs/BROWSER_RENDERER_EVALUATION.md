@@ -107,7 +107,10 @@ a provisional `band` mark that spec 1.0 cannot parse):
 All three top candidates got an adapter `figureSpecTo<Engine>(spec, theme)`
 (`spikes/browser/adapters/`); the top two were not separable on paper, so the
 third was cheaper to build than to argue about. Theme: `report-light`
-1.0.0 consumed directly as `Theme.to_json()`. ECharts and Vega render to SVG in
+1.0.0 consumed directly as `Theme.to_json()` (the theme was redesigned as a
+neutral palette after this evaluation; the spec files, `out/compare/`,
+`out/render-results.json` and both escape-check results were regenerated with
+it, the escape checks giving the same 13/13 and control 8/13). ECharts and Vega render to SVG in
 Node; Plotly renders in Chromium. All four PNGs are 800x500 px. Node ran with
 `TZ=America/New_York` and the browser with `timezoneId: America/New_York` on
 purpose.
@@ -141,8 +144,8 @@ What the images show (measured, after the adapter fixes listed below):
   The naive alternative, `new Date("2026-07-06T00:00:00+03:00")` in New York,
   is `Sun Jul 05 17:00` (measured): every weekly point would move a day.
 - **Forecast.** Dashed with doubled gaps, the theme's `roles.forecast_line_alpha`
-  as opacity (0.85 in `report-light`; 0.75, the Matplotlib default,
-  when a theme leaves it out), legend says
+  as opacity (0.75, the Matplotlib default, when a theme leaves it out, as
+  `report-light` now does), legend says
   "(forecast)", same colour as the observed series it continues (the
   Matplotlib rule). Equivalent in all three.
 - **Locale.** fi-FI grouping (`1 400`) works in all three: ECharts via a
@@ -483,9 +486,10 @@ to an exact version and vendored, so the `js/` workspace is a build input,
 not a set of published `@ieevisualizer` packages; question 5, accessibility
 is **very strict for mobile and tablet viewports** (reporting emails are
 Matplotlib PNG plus HTML tables, since mail clients run no JavaScript), while
-screen-reader and CVD support is not a current requirement; question 7, the
-spec models stay stdlib dataclasses (no pydantic migration). The remaining
-questions are open.
+screen-reader and CVD support is not a current requirement. Questions 1, 4,
+6, 7 and 8 remain open. Question 7's premise changed: the spec models stay
+stdlib dataclasses (no pydantic migration), so the band shape is fixed when
+`band` is promoted from a provisional mark into the spec, not by a migration.
 
 1. Is ECharts' release cadence (two core releases since January 2025)
    acceptable for the primary engine, given the mitigations above?
@@ -500,9 +504,10 @@ questions are open.
    which WCAG level)?
 6. 3D: accept echarts-gl as a lazily loaded UMD script, or plan Plotly/Three.js
    as the 3D specialist adapter from the start?
-7. The provisional band shape used here (`y_lower`/`y_upper` encoding plus
-   `interval_level`/`interval_kind` on the mark): confirm or change it before
-   the wire format is fixed.
+7. **Open.** The provisional band shape used here (`y_lower`/`y_upper`
+   encoding plus `interval_level`/`interval_kind` on the mark): confirm or
+   change it before `band` enters the spec and its wire format (and
+   `schema_version`) is fixed.
 8. Dates: always show the data's timezone (as Matplotlib does now), or offer
    viewers a switch to their own zone with the zone named on the axis?
 

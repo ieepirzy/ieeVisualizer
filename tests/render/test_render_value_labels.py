@@ -1,4 +1,4 @@
-"""Bar value labels and "no data" notes as drawn at the derived themes'
+"""Bar value labels and "no data" notes as drawn at the neutral themes'
 email size: labels never overlap and each sits on its own bar; "no data"
 notes stay inside the axes on negative data; the auto legend never covers a
 value label; the result is deterministic."""
@@ -11,7 +11,7 @@ from ieeVisualizer import templates, themes
 from ieeVisualizer.render import RenderRequest, build_figure, render
 from ieeVisualizer.spec import BarMark, DataSnapshot, FigureSpec
 
-DARK = "admin-dark"
+DARK = "dashboard-dark"
 LIGHT = "report-light"
 TOL = 0.5  # px
 

@@ -1,6 +1,6 @@
 """Gallery: every built-in template example, every mark type and the legacy
 bridge, rendered and exported with provenance manifests; the business
-templates also under the admin-dark and report-light themes.
+templates also under the dashboard-dark and report-light themes.
 
 Run: python examples/gallery.py  (writes to examples/out/, which is gitignored)
 
@@ -220,12 +220,12 @@ def template_specs() -> dict:
 
 
 #: Themes the reporting templates are also shown in (entry suffix -> theme).
-THEMED = {"report-light": "report-light", "admin-dark": "admin-dark"}
+THEMED = {"report-light": "report-light", "dashboard-dark": "dashboard-dark"}
 THEMED_TEMPLATES = ("bar_comparison", "funnel", "timeseries")
 
 
 def themed_specs() -> dict[str, FigureSpec]:
-    """Reporting template examples under each derived theme. A template
+    """Reporting template examples under each neutral built-in theme. A template
     with a ``theme`` parameter is built with it (so text it writes uses the
     theme's number format); otherwise the built spec's theme is set."""
     out = {}

@@ -1,63 +1,52 @@
-"""The built-in themes: derived colours recomputed from the cited tokens, and
-the pre-theme presets unchanged.
-
-The source token values (a dark dashboard token set and a light site token
-set) are quoted here; every derived theme value is recomputed from them.
+"""The built-in themes: the properties the neutral themes promise (contrast,
+distinctness, provenance that quotes what it measured), and the pre-theme
+presets unchanged. The tests assert properties, not hex values, so a palette
+can be redesigned without rewriting them.
 """
+
+import re
 
 import pytest
 
 from ieeVisualizer import themes
 from ieeVisualizer.render.mpl.style import theme_rc
-from ieeVisualizer.themes.color import (
-    blend,
-    contrast_ratio,
-    darken_to_contrast,
-    parse_color,
-    to_hex,
-    with_lightness,
-)
+from ieeVisualizer.themes.color import blend, contrast_ratio, delta_e2000, to_hex
 
-ADMIN = {"bg": "#08090a", "text": "#d9d6cf", "text2": "#95928a", "text3": "#5f5d58",
-         "green": "#6fd3a0", "orange": "#ffb547", "red": "#ff6e5e", "indigo": "#9db8ff",
-         "cyan": "#d7a6ff", "border2": "#ece8e0"}  # border2 = rgba(236,232,224,0.1)
-SITE = {"paper": "#ffffff", "ink": "#0a0a0a", "mint-deep": "oklch(0.50 0.15 162)"}
+NEUTRAL = ["dashboard-dark", "report-light"]
 
 
-def test_admin_dark_is_derived_from_admin_tokens():
-    t = themes.get("admin-dark")
-    assert (t.background, t.foreground, t.muted) == (ADMIN["bg"], ADMIN["text"], ADMIN["text2"])
-    assert t.grid == to_hex(blend(ADMIN["border2"], ADMIN["bg"], 0.1))
-    assert t.palette == (ADMIN["indigo"], ADMIN["green"], with_lightness(ADMIN["cyan"], 0.62))
-    assert t.signal == ADMIN["orange"] and ADMIN["orange"] not in t.palette
-    assert ADMIN["red"] not in t.palette
-    assert t.semantic == {"positive": ADMIN["green"], "negative": ADMIN["red"],
-                          "attention": ADMIN["orange"]}
-    assert t.diverging[1] == ADMIN["text3"]
-    assert "design-token set" in t.provenance["source"]
-
-
-def test_report_light_reuses_site_and_admin_hues_only_where_they_pass():
-    t = themes.get("report-light")
-    white = SITE["paper"]
-    assert (t.background, t.foreground) == (SITE["paper"], SITE["ink"])
-    assert t.muted == to_hex(blend(SITE["ink"], white, 0.7))
-    assert t.grid == to_hex(blend(SITE["ink"], white, 0.12))
-    assert t.palette == (to_hex(parse_color(SITE["mint-deep"])),
-                         with_lightness(ADMIN["indigo"], 0.40),
-                         darken_to_contrast(ADMIN["cyan"], white, 4.5))
-    assert t.signal == darken_to_contrast(ADMIN["orange"], white, 3.0)
-    assert t.semantic["negative"] == darken_to_contrast(ADMIN["red"], white, 4.5)
-    assert t.semantic["positive"] == darken_to_contrast(ADMIN["green"], white, 4.5)
-    # none of the admin's own (dark-UI) hues passes 3:1 on white as they are
-    assert all(contrast_ratio(ADMIN[k], white) < 3 for k in
-               ("green", "orange", "red", "indigo", "cyan"))
+@pytest.mark.parametrize("name", NEUTRAL)
+def test_neutral_themes_reserve_the_signal_and_keep_the_grid_quiet(name):
+    t = themes.get(name)
+    assert len(t.palette) >= 4
+    assert t.signal not in t.palette
+    # the reserved emphasis colour must not read as one more series
+    assert min(delta_e2000(t.signal, c) for c in t.palette) >= 15
+    assert t.semantic["attention"] == t.signal
+    assert t.semantic["positive"] != t.semantic["negative"]
+    # visible, but never competing with data or text
+    assert 1.1 <= contrast_ratio(t.grid, t.background) < 1.6
+    assert t.roles.reference_color == t.muted
     assert t.pending == ()
-    assert "design-token set" in t.provenance["source"]
 
 
-@pytest.mark.parametrize("name", ["admin-dark", "report-light"])
-def test_derived_themes_pass_every_check(name):
+@pytest.mark.parametrize("name", NEUTRAL)
+def test_provenance_covers_every_colour_slot_and_quotes_measured_contrast(name):
+    t = themes.get(name)
+    for slot in ("background", "foreground", "muted", "grid", "palette", "signal", "semantic",
+                 "sequential", "diverging"):
+        assert t.provenance.get(slot), slot
+    assert len(t.provenance["palette"]) == len(t.palette)
+    for slot in ("foreground", "muted", "grid", "signal"):
+        quoted = re.findall(r"([0-9]+(?:\.[0-9]+)?):1", t.provenance[slot])
+        for q in quoted:
+            assert float(q) == round(contrast_ratio(getattr(t, slot), t.background), 1), slot
+    for i, note in enumerate(t.provenance["palette"]):
+        assert t.palette[i] in note
+
+
+@pytest.mark.parametrize("name", NEUTRAL)
+def test_neutral_themes_pass_every_check(name):
     t = themes.get(name)
     assert [i for i in themes.check_theme(t) if i.severity != "info"] == []
     rep = themes.report(t)
@@ -67,7 +56,7 @@ def test_derived_themes_pass_every_check(name):
     assert t.locale.tag == "fi-FI" and set(t.targets) == {"email", "slide"}
 
 
-@pytest.mark.parametrize("name", ["admin-dark", "report-light"])
+@pytest.mark.parametrize("name", NEUTRAL)
 def test_forecast_lines_keep_graphics_contrast(name):
     # measured on the line actually drawn, not on the theme's declaration
     from matplotlib import colors as mcolors
@@ -97,14 +86,3 @@ def test_presets_map_to_the_former_rcparams_exactly():
     assert theme_rc(themes.get("presentation")) == {
         "font.size": 13, "axes.titlesize": 16, "axes.labelsize": 14, "lines.linewidth": 2.2,
         "axes.spines.top": False, "axes.spines.right": False}
-
-
-def test_report_light_provenance_quotes_the_measured_dim_ink_contrast():
-    import re
-
-    note = themes.get("report-light").provenance["muted"]
-    quoted = float(re.search(r"ink at 55 %, is ([0-9.]+):1", note).group(1))
-    dim = blend(SITE["ink"], SITE["paper"], 0.55)
-    # 4.40:1 composited exactly, 4.42:1 once quantized to #787878: 4.4 either way
-    assert quoted == round(contrast_ratio(dim, SITE["paper"]), 1) == 4.4
-    assert quoted == round(contrast_ratio(to_hex(dim), SITE["paper"]), 1)

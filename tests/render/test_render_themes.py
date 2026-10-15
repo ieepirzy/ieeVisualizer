@@ -21,7 +21,7 @@ from ieeVisualizer.spec import (
 from ieeVisualizer.themes import RoleStyle, Theme
 
 S = " "
-DARK = "admin-dark"
+DARK = "dashboard-dark"
 LIGHT = "report-light"
 
 
@@ -52,7 +52,7 @@ def test_palette_and_ground_come_from_the_theme():
     t = themes.get(DARK)
     built = build_figure(three_lines(DARK))
     lines = [built.layer_artists[i][0] for i in range(3)]
-    assert hexes(lines) == list(t.palette)
+    assert hexes(lines) == list(t.palette)[:3]
     assert mcolors.to_hex(built.figure.get_facecolor()) == t.background
     assert mcolors.to_hex(built.axes.get_facecolor()) == t.background
     built.figure.canvas.draw()
@@ -72,15 +72,17 @@ def test_default_theme_keeps_matplotlib_colours():
 def test_more_series_than_palette_colours_warns():
     # one warning for the wrap, whatever the palette's length (the theme's
     # palette is the colour cycle; there is no second, theme-specific code)
-    data = DataSnapshot.from_columns({"t": [0, 1], **{c: [1.0, 2.0] for c in "abcd"}})
+    palette = list(themes.get(DARK).palette)
+    names = [f"s{i}" for i in range(len(palette) + 1)]
+    data = DataSnapshot.from_columns({"t": [0, 1], **{c: [1.0, 2.0] for c in names}})
     spec = FigureSpec(datasets={"d": data}, theme=DARK, layers=[
-        LineMark(data="d", encoding={"x": "t", "y": c}, name=c) for c in "abcd"])
+        LineMark(data="d", encoding={"x": "t", "y": c}, name=c) for c in names])
     built = build_figure(spec)
     assert [w.code for w in built.warnings].count("colour_cycle_wrapped") == 1
-    # the fourth line repeats the first colour and is told apart by its dashes
-    lines = [built.layer_artists[i][0] for i in range(4)]
-    assert hexes(lines) == list(themes.get(DARK).palette) + [hexes(lines)[0]]
-    assert [ln.get_linestyle() for ln in lines] == ["-", "-", "-", "--"]
+    # the extra line repeats the first colour and is told apart by its dashes
+    lines = [built.layer_artists[i][0] for i in range(len(names))]
+    assert hexes(lines) == palette + [palette[0]]
+    assert [ln.get_linestyle() for ln in lines] == ["-"] * len(palette) + ["--"]
     assert "colour_cycle_wrapped" not in [
         w.code for w in build_figure(three_lines(DARK)).warnings]
 
@@ -205,8 +207,8 @@ def forecast_dashes_default(linestyle):
 
 
 def test_forecast_and_reference_styling_come_from_the_theme():
-    reg_theme = Theme(name="dotted-forecast", version="1.0.0", palette=("#2f4380",),
-                      roles=RoleStyle(forecast_linestyle="dotted", reference_color="#545454",
+    reg_theme = Theme(name="dotted-forecast", version="1.0.0", palette=("#332288",),
+                      roles=RoleStyle(forecast_linestyle="dotted", reference_color="#616161",
                                       reference_alpha=0.9))
     if "dotted-forecast" not in themes.default_registry:
         themes.register(reg_theme)
@@ -219,8 +221,8 @@ def test_forecast_and_reference_styling_come_from_the_theme():
     fc, ref = built.layer_artists[0][0], built.layer_artists[1][0]
     # the theme's forecast pattern (dotted), with its gaps doubled
     assert fc._unscaled_dash_pattern == forecast_dashes_default(":")
-    assert mcolors.to_hex(ref.get_color()) == "#545454" and ref.get_alpha() == 0.9
-    assert mcolors.to_hex(built.annotation_artists[0].get_color()) == "#545454"
+    assert mcolors.to_hex(ref.get_color()) == "#616161" and ref.get_alpha() == 0.9
+    assert mcolors.to_hex(built.annotation_artists[0].get_color()) == "#616161"
     # the default theme keeps the former look
     built = build_figure(FigureSpec(datasets={"d": data}, layers=spec.layers))
     assert built.layer_artists[0][0]._unscaled_dash_pattern == forecast_dashes_default("--")
@@ -267,13 +269,13 @@ def test_result_and_manifest_record_the_theme():
 
 def test_a_new_theme_version_gives_a_new_artifact_id():
     reg = themes.default_registry
-    v1 = Theme(name="versioned-test", version="1.0.0", palette=("#2f4380",))
+    v1 = Theme(name="versioned-test", version="1.0.0", palette=("#332288",))
     if "versioned-test" not in reg:
         reg.register(v1)
     spec = three_lines("versioned-test")
     a = export(spec, ["svg"], MemoryWriter())
     if "versioned-test@1.1.0" not in reg:
-        reg.register(Theme(name="versioned-test", version="1.1.0", palette=("#007c47",)))
+        reg.register(Theme(name="versioned-test", version="1.1.0", palette=("#117733",)))
     b = export(spec, ["svg"], MemoryWriter())
     assert a.theme["version"] == "1.0.0" and b.theme["version"] == "1.1.0"
     assert a.artifact_id != b.artifact_id
