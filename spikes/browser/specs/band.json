@@ -1,0 +1,240 @@
+{
+ "schema_version": "1.0",
+ "title": "Daily volume with 90 % prediction interval",
+ "caption": "Shaded: 90 % prediction interval (provisional band mark). Day 25 interval missing.",
+ "theme": "muutto365-report-light",
+ "datasets": {
+  "d": {
+   "type": "snapshot",
+   "columns": {
+    "day": {
+     "dtype": "int",
+     "unit": "d",
+     "values": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30
+     ]
+    },
+    "observed": {
+     "dtype": "float",
+     "unit": "m3",
+     "values": [
+      100.0,
+      102.0,
+      109.0,
+      106.0,
+      108.0,
+      115.0,
+      112.0,
+      114.0,
+      121.0,
+      118.0,
+      120.0,
+      127.0,
+      124.0,
+      126.0,
+      133.0,
+      130.0,
+      132.0,
+      139.0,
+      136.0,
+      138.0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    "median": {
+     "dtype": "float",
+     "unit": "m3",
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      140.0,
+      142.0,
+      144.0,
+      146.0,
+      148.0,
+      150.0,
+      152.0,
+      154.0,
+      156.0,
+      158.0,
+      160.0
+     ]
+    },
+    "lower": {
+     "dtype": "float",
+     "unit": "m3",
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      140.0,
+      138.5,
+      139.20090102538958,
+      139.96818693071657,
+      140.77669662022325,
+      null,
+      142.47637078129856,
+      143.35670183307303,
+      144.25297124372517,
+      145.16298891623688,
+      146.08507647913578
+     ]
+    },
+    "upper": {
+     "dtype": "float",
+     "unit": "m3",
+     "values": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      140.0,
+      145.5,
+      148.79909897461042,
+      152.03181306928343,
+      155.22330337977675,
+      null,
+      161.52362921870144,
+      164.64329816692697,
+      167.74702875627483,
+      170.83701108376312,
+      173.91492352086422
+     ]
+    }
+   }
+  }
+ },
+ "layers": [
+  {
+   "type": "band",
+   "data": "d",
+   "role": "forecast",
+   "name": "90 % prediction interval",
+   "encoding": {
+    "x": "day",
+    "y_lower": "lower",
+    "y_upper": "upper"
+   },
+   "interval_level": 0.9,
+   "interval_kind": "prediction",
+   "style": {
+    "color_of": "Forecast"
+   }
+  },
+  {
+   "type": "line",
+   "data": "d",
+   "encoding": {
+    "x": "day",
+    "y": "observed"
+   },
+   "name": "Observed"
+  },
+  {
+   "type": "line",
+   "data": "d",
+   "encoding": {
+    "x": "day",
+    "y": "median"
+   },
+   "name": "Forecast",
+   "role": "forecast"
+  }
+ ],
+ "axes": {
+  "x": {
+   "label": "Day",
+   "unit": "d"
+  },
+  "y": {
+   "label": "Volume",
+   "unit": "m3"
+  }
+ }
+}

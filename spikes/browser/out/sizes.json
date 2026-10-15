@@ -1,0 +1,98 @@
+[
+  {
+    "entry": "echarts-figurespec.js",
+    "raw": 798702,
+    "gzip": 271109,
+    "brotli": 225892
+  },
+  {
+    "entry": "echarts-full.js",
+    "raw": 1141526,
+    "gzip": 383557,
+    "brotli": 312087
+  },
+  {
+    "entry": "echarts-minimal-line-svg.js",
+    "raw": 522789,
+    "gzip": 179966,
+    "brotli": 152945
+  },
+  {
+    "entry": "observable-plot.js",
+    "raw": 393854,
+    "gzip": 134188,
+    "brotli": 113613
+  },
+  {
+    "entry": "plotly-figurespec-3d.js",
+    "raw": 1850650,
+    "gzip": 614327,
+    "brotli": 491268
+  },
+  {
+    "entry": "plotly-figurespec.js",
+    "raw": 1258812,
+    "gzip": 438372,
+    "brotli": 355695
+  },
+  {
+    "entry": "plotly-full.js",
+    "raw": 4812317,
+    "gzip": 1477750,
+    "brotli": 1111011
+  },
+  {
+    "entry": "plotly-minimal-scatter.js",
+    "raw": 1116658,
+    "gzip": 386550,
+    "brotli": 316763
+  },
+  {
+    "entry": "uplot.js",
+    "raw": 52013,
+    "gzip": 23192,
+    "brotli": 20851
+  },
+  {
+    "entry": "vega-embed-full.js",
+    "raw": 842177,
+    "gzip": 291971,
+    "brotli": 247736
+  },
+  {
+    "entry": "vega-lite-no-embed.js",
+    "raw": 782049,
+    "gzip": 270510,
+    "brotli": 230221
+  },
+  {
+    "entry": "vega-runtime-only.js",
+    "raw": 518632,
+    "gzip": 184976,
+    "brotli": 157513
+  },
+  {
+    "entry": "plotly.js-dist-min/plotly.min.js (as shipped)",
+    "raw": 4834409,
+    "gzip": 1488283,
+    "brotli": 1115402
+  },
+  {
+    "entry": "plotly.js/dist/plotly-basic.min.js (as shipped)",
+    "raw": 1198523,
+    "gzip": 400961,
+    "brotli": 331839
+  },
+  {
+    "entry": "plotly.js/dist/plotly-cartesian.min.js (as shipped)",
+    "raw": 1507990,
+    "gzip": 503527,
+    "brotli": 412777
+  },
+  {
+    "entry": "echarts/dist/echarts.min.js (as shipped)",
+    "raw": 1121883,
+    "gzip": 369080,
+    "brotli": 298840
+  }
+]

@@ -19,12 +19,11 @@ member, with no extra or missing members.
 
 from __future__ import annotations
 
-import copy
 import re
 from collections.abc import Sequence
 from typing import Any
 
-from ._common import PatchError, SpecValidationError, ValidationIssue
+from ._common import PatchError, SpecValidationError, ValidationIssue, copy_tree, ptr_join
 from .figure import FigureSpec
 from .serialize import from_dict, to_dict
 from .validate import validate
@@ -107,7 +106,7 @@ def _apply_one(doc: Any, op: dict[str, Any], where: str) -> Any:
     parts = _parse_pointer(path, where)
     if kind in ("add", "replace", "test") and "value" not in op:
         raise _err(where, "invalid_op", f"{kind} operation needs a 'value'.")
-    value = copy.deepcopy(op.get("value"))
+    value = copy_tree(op.get("value"), ptr_join(where, "value"), "the value")
     if not parts:  # whole document
         if kind == "remove":
             raise _err(where, "invalid_op", "cannot remove the whole spec.")
