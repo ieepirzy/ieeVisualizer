@@ -73,7 +73,7 @@ from ieeVisualizer import templates
 from ieeVisualizer.artifacts import LocalDirectoryWriter, export
 from ieeVisualizer.spec import DataSnapshot
 
-print([t["name"] for t in templates.list_templates()])  # ['timeseries', 'vector_field_2d']
+print([t["name"] for t in templates.list_templates()])  # ['dependency_map', 'network', 'org_chart', 'timeseries', 'vector_field_2d']
 data = DataSnapshot.from_columns({"day": [1, 2, 3, 4], "load": [3.2, 3.9, None, 4.4]},
                                  units={"day": "d", "load": "kWh"})
 spec = templates.build("timeseries", data, {"time_column": "day", "value_columns": ["load"]})
@@ -83,6 +83,8 @@ print(artifact.artifact_id)  # out/<artifact_id>/{figure.png,figure.svg,spec.jso
 
 `templates.describe(name)` returns a template's inputs, parameters and an
 example payload; see [docs/TEMPLATES.md](docs/TEMPLATES.md).
+Graphs and networks (org charts, dependency maps, force layouts, adjacency
+matrices) have their own spec and renderer; see [docs/NETWORKS.md](docs/NETWORKS.md).
 
 ## Rendering a spec
 
