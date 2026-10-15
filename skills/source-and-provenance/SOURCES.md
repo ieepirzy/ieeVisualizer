@@ -10,9 +10,6 @@ finding only, no text taken).
 - **K-Dense, `scientific-writing` skill, `references/source_ledger.md`** <https://github.com/K-Dense-AI/scientific-agent-skills/tree/main/skills/scientific-writing> (commit a1043ef)
   - Licence: MIT
   - Use: adapted — the source-ledger idea: each factual statement grounded in a recorded source with version and review date. Paraphrased.
-- **Author's own dashboard-audit notes, "Numbers and explanations are separate" (same owner, unpublished)** <https://github.com/ieepirzy>
-  - Licence: Same owner (internal)
-  - Use: adapted — a citation attributes the explanation, never the value; no default or fallback agent name.
 - **ieeVisualizer docs/SPEC.md and docs/RENDERING.md** <https://github.com/ieepirzy/ieeVisualizer/tree/main/docs>
   - Licence: MIT
   - Use: adapted — provenance fields, content hashes and manifest contents. Same project.

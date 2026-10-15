@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -43,23 +44,63 @@ class MirrorError(Exception):
 def source_files(source: Path) -> list[str]:
     """Relative POSIX paths to mirror. Git-tracked files when ``source`` is a
     git work tree (so stray local files never leak into the mirror), else a
-    directory walk."""
+    directory walk. A symbolic link anywhere is an error: copying through one
+    could publish a file from outside the repository (in CI, the deploy key)."""
     try:
         out = subprocess.run(
-            ["git", "-C", str(source), "ls-files", "-z", "--", *MIRROR_DIRS, *MIRROR_FILES],
+            ["git", "-C", str(source), "ls-files", "-s", "-z", "--",
+             *MIRROR_DIRS, *MIRROR_FILES],
             check=True, capture_output=True,
         ).stdout.decode("utf-8")
-        tracked = [p for p in out.split("\0") if p]
-        if tracked:
+        entries = [e for e in out.split("\0") if e]
+        if entries:
+            links = []
+            tracked = []
+            for entry in entries:
+                meta, path = entry.split("\t", 1)
+                (links if meta.split()[0] == "120000" else tracked).append(path)
+            if links:
+                raise MirrorError("refusing to mirror tracked symlinks: " + ", ".join(links))
             return sorted(tracked)
     except (OSError, subprocess.CalledProcessError):
         pass
-    files = [f for f in MIRROR_FILES if (source / f).is_file()]
+    files = [f for f in MIRROR_FILES if (source / f).is_file() or (source / f).is_symlink()]
+    links = [f for f in files if (source / f).is_symlink()]
     for d in MIRROR_DIRS:
-        for p in (source / d).rglob("*"):
-            if p.is_file() and not SKIP_PARTS & set(p.parts):
-                files.append(p.relative_to(source).as_posix())
+        top = source / d
+        if top.is_symlink():
+            links.append(d)
+            continue
+        for dirpath, dirnames, filenames in os.walk(top, followlinks=False):
+            dirnames[:] = [n for n in dirnames if n not in SKIP_PARTS]
+            for name in dirnames + filenames:
+                p = Path(dirpath) / name
+                if p.is_symlink():
+                    links.append(p.relative_to(source).as_posix())
+                elif name in filenames and name not in SKIP_PARTS:
+                    files.append(p.relative_to(source).as_posix())
+    if links:
+        raise MirrorError("refusing to mirror symlinks: " + ", ".join(sorted(links)))
     return sorted(files)
+
+
+def safe_source_path(source: Path, rel: str) -> Path:
+    """``source / rel``, refused unless it is a regular file reached without
+    passing through any symlink (checked on disk at copy time, not only from
+    the git index)."""
+    path = source / rel
+    real = Path(os.path.realpath(path))
+    if path.is_symlink() or real != Path(os.path.realpath(source)) / rel or not real.is_file():
+        raise MirrorError(f"refusing to mirror {rel}: not a regular file inside the "
+                          "source (symlink or missing)")
+    return path
+
+
+def load_json(path: Path, label: str) -> tuple[object, list[str]]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")), []
+    except (ValueError, UnicodeDecodeError) as e:
+        return None, [f"{label} is not valid JSON: {e}"]
 
 
 def readme(sha: str, target_repo: str) -> str:
@@ -92,11 +133,18 @@ def check_marketplace(root: Path) -> list[str]:
     market_path = root / ".claude-plugin" / "marketplace.json"
     if not market_path.is_file():
         return [".claude-plugin/marketplace.json is missing"]
-    market = json.loads(market_path.read_text(encoding="utf-8"))
+    market, problems = load_json(market_path, ".claude-plugin/marketplace.json")
+    if problems:
+        return problems
+    if not isinstance(market, dict):
+        return [".claude-plugin/marketplace.json must be a JSON object"]
     plugins = market.get("plugins") or []
     if not plugins:
         problems.append("marketplace.json lists no plugins")
     for entry in plugins:
+        if not isinstance(entry, dict):
+            problems.append(f"plugin entry {entry!r} is not an object")
+            continue
         name, src = entry.get("name"), entry.get("source")
         if not isinstance(src, str):
             problems.append(f"plugin {name!r}: source {src!r} is not a relative path")
@@ -114,7 +162,11 @@ def check_marketplace(root: Path) -> list[str]:
         if not manifest.is_file():
             problems.append(f"plugin {name!r}: {src!r} has no .claude-plugin/plugin.json")
             continue
-        declared = json.loads(manifest.read_text(encoding="utf-8")).get("name")
+        plugin, bad = load_json(manifest, f"{src}/.claude-plugin/plugin.json")
+        if bad:
+            problems += bad
+            continue
+        declared = plugin.get("name") if isinstance(plugin, dict) else None
         if declared != name:
             problems.append(f"plugin {name!r}: plugin.json at {src!r} is named {declared!r}")
         if not any((plugin_root / "skills").glob("*/SKILL.md")):
@@ -133,7 +185,7 @@ def build(source: Path, dest: Path, sha: str, target_repo: str) -> list[str]:
         stage = Path(tmp)
         for rel in files:
             (stage / rel).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source / rel, stage / rel)
+            shutil.copy2(safe_source_path(source, rel), stage / rel, follow_symlinks=False)
         (stage / "README.md").write_text(readme(sha, target_repo), encoding="utf-8")
         problems = check_marketplace(stage)
         if problems:

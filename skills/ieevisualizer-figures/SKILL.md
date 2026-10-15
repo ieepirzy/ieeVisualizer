@@ -118,4 +118,6 @@ Runnable examples (template and composed): `references/examples.md`.
 | `CapabilityError` | no adapter can draw this | simplify, or climb the ladder |
 | `RenderError` `empty_series` | a layer has no complete row | drop the layer and say why |
 
+Adapted in part from ieeVisualizer's own documentation (`docs/`, MIT);
+changed: rewritten as an agent workflow with an inspection list.
 Sources and licences: `SOURCES.md`.

@@ -83,5 +83,6 @@ exception example.
 - [ ] Every figure supports a stated claim; none decorative.
 
 Adapted in part from Anthropic's `analyze` and `validate-data` skills
-(Apache-2.0); changed: restructured around decision depth and the four-line
-top block, examples replaced. Sources and licences: `SOURCES.md`.
+(Apache-2.0) and ieeVisualizer's `docs/REPORTING_DECISION_LOOP.md` (MIT);
+changed: restructured around decision depth and the four-line top block,
+examples replaced. Sources and licences: `SOURCES.md`.

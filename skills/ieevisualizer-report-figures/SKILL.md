@@ -125,4 +125,6 @@ one figure for the conversion change with its caveat, and a decision request.
 - [ ] Follow-ups reuse frozen artifacts; refreshed analyses are new artifacts.
 - [ ] Nothing added for completeness; nothing sent without the host's approval.
 
+Adapted in part from ieeVisualizer's own documentation (`docs/`, MIT);
+changed: rewritten as an agent procedure with generic examples.
 Sources and licences: `SOURCES.md`.

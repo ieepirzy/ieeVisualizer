@@ -106,6 +106,7 @@ Good: "Band: 90% range of weekly orders in 2023–2025 for the same week"
 - [ ] Reported precision matches the interval width.
 - [ ] If no estimate of uncertainty exists, the figure says so.
 
-Adapted in part from K-Dense `scientific-visualization` and
-`uncertainty-and-units` (MIT) and Hullman et al. 2015 (CC BY 4.0); changed:
-rewritten and condensed, examples replaced. Sources and licences: `SOURCES.md`.
+Adapted in part from ieeVisualizer's own docs (MIT), K-Dense
+`scientific-visualization` and `uncertainty-and-units` (MIT) and Hullman et
+al. 2015 (CC BY 4.0); changed: rewritten and condensed, examples replaced.
+Sources and licences: `SOURCES.md`.

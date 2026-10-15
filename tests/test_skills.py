@@ -27,7 +27,7 @@ ALLOWED_KEYS = set(REQUIRED_KEYS) | {"compatibility", "allowed-tools"}
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 # Licences whose terms allow adapting (paraphrasing/restructuring) text here.
-ADAPTABLE = {"Apache-2.0", "MIT", "OGL-UK-3.0", "CC-BY-4.0", "CC0-1.0", "Same owner (internal)"}
+ADAPTABLE = {"Apache-2.0", "MIT", "OGL-UK-3.0", "CC-BY-4.0", "CC0-1.0"}
 # Adapted third-party material under these licences must be attributed in NOTICE.md
 # (under the heading given here) and in the skill's closing "Adapted in part
 # from ...; changed: ..." line, which must name the licence (pattern given here).
@@ -132,6 +132,10 @@ def test_sources(skill_dir):
         assert e["licence"], f"no licence for {e['head']!r}"
         assert re.search(r"<https?://[^>]+>", e["head"]), f"no URL for {e['head']!r}"
         assert e["use"] and re.match(r"^(adapted|cited)\b", e["use"]), e["head"]
+        # Original work of this repository is not a source; unpublished or
+        # private material cannot be cited in a public library.
+        assert not re.search(r"same owner|unpublished|internal|private", e["head"] + e["licence"],
+                             re.I), e["head"]
         if e["use"].startswith("adapted"):
             assert e["licence"] in ADAPTABLE, (
                 f"{e['head']!r} is marked adapted but its licence {e['licence']!r} "
@@ -155,8 +159,9 @@ def closing_attribution(body: str) -> str | None:
 def test_adapted_sources_are_attributed(skill_dir):
     entries = parse_sources((skill_dir / "SOURCES.md").read_text(encoding="utf-8"))
     adapted = [e for e in entries if e["use"].startswith("adapted")]
-    third_party = [e for e in adapted if e["licence"] in NEEDS_NOTICE
-                   and "github.com/ieepirzy" not in e["head"]]
+    # Uniform: every adapted source under a licence that requires notice is
+    # attributed, this repository's own MIT docs included.
+    third_party = [e for e in adapted if e["licence"] in NEEDS_NOTICE]
     if not third_party:
         return
     sections = notice_sections()
@@ -200,8 +205,9 @@ def test_readme_catalogue_matches_skills():
 
 
 # The library is public: no names, paths or metrics from private projects.
-# Stored ROT13-encoded so that this file does not itself contain the terms
-# (a plain-text grep for them over the repository should come back empty).
+# Stored ROT13-encoded so that this file does not itself contain the terms.
+# The scan covers every file this library adds (PUBLIC_PATHS below); files
+# outside it, such as the package's built-in themes, are out of its scope.
 # Matched case-insensitively as substrings; add to the list, never remove.
 _BANNED_ROT13 = (
     "zhhggb",                    # a private company / product name
@@ -213,15 +219,20 @@ _BANNED_ROT13 = (
     "zveneha",                  # a private system name
 )
 BANNED_TERMS = tuple(codecs.decode(t, "rot13") for t in _BANNED_ROT13)
-PUBLIC_DIRS = ("skills", ".claude-plugin")
+PUBLIC_PATHS = ("skills", ".claude-plugin", ".github", "tools", "docs/SKILLS_MIRROR.md",
+                "tests/test_skills.py", "tests/test_mirror_skills.py",
+                "tests/test_mirror_workflow.py")
+TEXT_SUFFIXES = {".md", ".json", ".txt", ".yml", ".yaml", ".py", ".sh"}
 
 
 def banned_term_hits(root: Path) -> list[str]:
     """``path:line: term`` for every banned term in the public skill files."""
     hits = []
-    for d in PUBLIC_DIRS:
-        for path in sorted((root / d).rglob("*")):
-            if not path.is_file() or path.suffix not in {".md", ".json", ".txt"}:
+    for name in PUBLIC_PATHS:
+        base = root / name
+        paths = [base] if base.is_file() else sorted(base.rglob("*"))
+        for path in paths:
+            if not path.is_file() or path.suffix not in TEXT_SUFFIXES:
                 continue
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 low = line.lower()
@@ -234,13 +245,14 @@ def test_no_internal_references():
     assert not hits, "internal references in the public skills library:\n" + "\n".join(hits)
 
 
-def test_banned_terms_are_detected(tmp_path):
-    """Guard the guard: a planted term (in any case) is found."""
-    (tmp_path / "skills" / "x").mkdir(parents=True)
-    (tmp_path / ".claude-plugin").mkdir()
-    (tmp_path / "skills" / "x" / "SKILL.md").write_text(
-        "ok\nsee the " + BANNED_TERMS[0].upper() + " notes\n", encoding="utf-8")
-    assert banned_term_hits(tmp_path) == [f"skills/x/SKILL.md:2: {BANNED_TERMS[0]}"]
+@pytest.mark.parametrize("rel", ["skills/x/SKILL.md", ".github/workflows/w.yml",
+                                 "tools/t.py", "docs/SKILLS_MIRROR.md"])
+def test_banned_terms_are_detected(tmp_path, rel):
+    """Guard the guard: a planted term (in any case) is found in each scope."""
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True)
+    path.write_text("ok\nsee the " + BANNED_TERMS[0].upper() + " notes\n", encoding="utf-8")
+    assert banned_term_hits(tmp_path) == [f"{rel}:2: {BANNED_TERMS[0]}"]
 
 
 def test_licence_files_present():

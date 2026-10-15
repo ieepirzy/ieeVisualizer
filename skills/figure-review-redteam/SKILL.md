@@ -42,10 +42,10 @@ it is to find what is wrong before they do.
 
 | Level | Meaning | Example |
 |---|---|---|
-| **S1** | Asserts something false | €0 tile for a failed sync; "conversion fell" when every segment rose and the title implies close rates fell |
-| **S2** | Unsupported precision or invented value | interval with no level; forecast drawn as data; "record" without full history |
-| **S3** | Misleading framing of true numbers | truncated bars; partial week compared with full; cherry-picked window |
-| **S4** | Cosmetic, unlikely to change a decision | tick density; legend order; caption wording |
+| **S1** | States something untrue | €0 tile for a failed sync; "conversion fell" when every segment rose and the title implies close rates fell |
+| **S2** | Shows a value or precision the evidence does not contain | interval with no level; forecast drawn as data; "record" without full history |
+| **S3** | True numbers, framed to mislead | truncated bars; partial week compared with full; cherry-picked window |
+| **S4** | Presentation only; no decision would change | tick density; legend order; caption wording |
 
 Verdict: **ship** (S4 only), **ship with caveats** (S3 items fixed by a stated
 caveat the reader will see), **revise** (any S1/S2, or S3 that a caveat

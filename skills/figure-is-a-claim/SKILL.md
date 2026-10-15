@@ -4,12 +4,14 @@ description: "Use before putting any number, KPI tile, chart, table cell or spar
 license: CC-BY-4.0
 ---
 
-# A figure on screen is a claim
+# Every drawn value is a claim
 
-Every number, bar, line and tile asserts "this was measured, and this is what it
-was". A reader cannot tell a measured €0 from a failed query that defaulted to
-€0; the two look identical and mean opposite things. This skill is the gate
-every other skill sits behind.
+Anything you draw (a digit in a tile, the height of a bar, a point on a line)
+tells the reader that someone measured it and got that value. When a broken
+data feed falls back to zero, the reader sees a zero and reasons from it;
+nothing on the page separates it from a genuine zero. Decide what each value
+is before drawing it. The other skills in this library assume that decision
+was made here.
 
 ## The five states of a value
 
@@ -20,7 +22,7 @@ Classify every value before drawing it. Only the first is drawn as a number.
 | **Measured** | Source returned a value for this period/segment | the value, with unit |
 | **Measured zero** | Source returned, and the count/sum really is 0 | `0`, and say it is real if it is surprising |
 | **Missing** | Should exist, did not arrive (export failed, late batch) | a gap + note naming the cause |
-| **Not collected** | Nothing records it (yet) | omit the panel, or a plain no-data state |
+| **Not collected** | Nothing records it (yet) | omit the panel, or one sentence saying there is no data |
 | **Not applicable** | Undefined (rate with zero denominator, budget not set) | `n/a` or "no budget set", never 0 |
 
 A nullable budget column where null means "no budget set" is not 0, and a
@@ -43,13 +45,13 @@ burn rate against it is undefined, not 0%.
    (see `numbers-style`).
 5. **Partial periods are labelled or dropped.** The current week on Wednesday
    is not a week (see `when-numbers-lie-audit`).
-6. **The UI is not the issue tracker.** A no-data state is short and plain:
-   "No ad-spend data for this period." It does not explain which backend
-   table is missing or what an engineer should build. Gaps go to the issue
-   tracker; the reader gets the fact that there is no data.
-7. **The number comes from computation; the agent explains the number.**
-   An agent never types a figure into a chart or sentence that a query did
-   not return. Narrative cites the computed value; it is not its source.
+6. **Keep engineering notes off the page.** When a panel has nothing to
+   show, say so in one plain sentence ("No ad-spend data for this period.")
+   and stop. Which table is missing and what someone should build belongs
+   in the team's backlog, not in front of the reader.
+7. **Values are computed; words interpret them.** Every number in a chart
+   or a sentence comes out of a query or calculation. An agent writing the
+   narrative quotes those results and never supplies a number of its own.
 8. **Placeholders never ship.** Mock arrays, example values and template
    defaults are removed or visibly marked before a figure leaves the
    workspace. A synthetic dataset says "synthetic" in its provenance.

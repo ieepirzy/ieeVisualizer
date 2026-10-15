@@ -1,12 +1,14 @@
-# One-way mirror of skills/ and .claude-plugin/ into the private repository
-# Muutto365/skills, which serves them as a team Claude Code plugin marketplace.
-# Setup (deploy key + secret): docs/SKILLS_MIRROR.md.
+# One-way mirror of skills/ and .claude-plugin/ into a private repository
+# that serves them as a team Claude Code plugin marketplace. The target is
+# the repository variable SKILLS_MIRROR_TARGET (owner/name); setup, including
+# the protected environment and its deploy-key secret: docs/SKILLS_MIRROR.md.
 #
-# pull_request: dry run only. Builds the mirror tree and shows it; never
+# pull_request: dry run only. Builds the mirror tree and lists it; never
 #   pushes and never references the deploy-key secret.
-# push to main / workflow_dispatch (on main): clones the target over SSH with
-#   the write-enabled deploy key in SKILLS_MIRROR_DEPLOY_KEY, replaces its
-#   contents with the mirror, and commits only if something changed.
+# push to main / workflow_dispatch (on main): builds the mirror before any
+#   credential exists on the runner, then clones the target over SSH with the
+#   write-enabled deploy key (environment secret), commits only if something
+#   changed, and pushes.
 name: Mirror skills
 
 on:
@@ -28,67 +30,77 @@ on:
 permissions:
   contents: read
 
-env:
-  TARGET_REPO: Muutto365/skills
-
 jobs:
   dry-run:
+    name: Mirror dry run
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     concurrency:
       group: mirror-skills-dry-run-${{ github.ref }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - name: Build the mirror tree
+      - name: Build and list the mirror tree (nothing is pushed)
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python3 tools/mirror_skills.py --dest "$RUNNER_TEMP/mirror" --sha "$HEAD_SHA" --target-repo "$TARGET_REPO"
-      - name: Compare with the target, if it is readable without credentials
         run: |
-          if GIT_TERMINAL_PROMPT=0 git clone --quiet --depth 1 \
-              "https://github.com/${TARGET_REPO}.git" "$RUNNER_TEMP/target" 2>/dev/null; then
-            rm -rf "$RUNNER_TEMP/mirror/.git"
-            mv "$RUNNER_TEMP/target/.git" "$RUNNER_TEMP/mirror/.git"
-            git -C "$RUNNER_TEMP/mirror" add -A
-            echo "Changes a push to main would mirror into ${TARGET_REPO}:"
-            git -C "$RUNNER_TEMP/mirror" diff --cached --stat
-          else
-            echo "${TARGET_REPO} is private and this dry run uses no credentials;"
-            echo "listing the mirror tree instead (nothing is pushed):"
-            (cd "$RUNNER_TEMP/mirror" && find . -type f -not -path './.git/*' | sort)
-          fi
+          python3 tools/mirror_skills.py --dest "$RUNNER_TEMP/mirror" --sha "$HEAD_SHA" \
+            --target-repo OWNER/REPO
+          (cd "$RUNNER_TEMP/mirror" && find . -type f | sort)
 
   mirror:
+    name: Mirror to the private marketplace
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # The deploy key is an environment secret; restrict the environment's
+    # deployment branches to main (docs/SKILLS_MIRROR.md).
+    environment: skills-mirror
     # One mirror run at a time; a newer run waits instead of racing.
     concurrency:
       group: mirror-skills
       cancel-in-progress: false
+    env:
+      TARGET_REPO: ${{ vars.SKILLS_MIRROR_TARGET }}
     steps:
-      - name: Require the deploy-key secret
+      - name: Require the target variable and the deploy key
         env:
           DEPLOY_KEY: ${{ secrets.SKILLS_MIRROR_DEPLOY_KEY }}
         run: |
-          if [ -z "$DEPLOY_KEY" ]; then
-            echo "::error title=Missing secret SKILLS_MIRROR_DEPLOY_KEY::Create an ed25519 key pair (ssh-keygen -t ed25519 -N \"\" -f mirror_key), add mirror_key.pub as a deploy key WITH write access on ${TARGET_REPO}, and save the private key mirror_key as the repository secret SKILLS_MIRROR_DEPLOY_KEY on ${GITHUB_REPOSITORY}. See docs/SKILLS_MIRROR.md."
+          if ! printf '%s' "$TARGET_REPO" | grep -Eq '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$'; then
+            echo "::error title=SKILLS_MIRROR_TARGET not set::Set the repository variable SKILLS_MIRROR_TARGET to the private mirror repository as owner/name (got '${TARGET_REPO}'). See docs/SKILLS_MIRROR.md."
             exit 1
           fi
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+          if [ -z "$DEPLOY_KEY" ]; then
+            echo "::error title=Missing secret SKILLS_MIRROR_DEPLOY_KEY::Create an ed25519 key pair (ssh-keygen -t ed25519 -N \"\" -f mirror_key), add mirror_key.pub as a deploy key WITH write access on ${TARGET_REPO}, and save the private key mirror_key as the secret SKILLS_MIRROR_DEPLOY_KEY of the environment skills-mirror (deployment branches: main only) on ${GITHUB_REPOSITORY}. See docs/SKILLS_MIRROR.md."
+            exit 1
+          fi
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - name: Skip unless this commit is still the tip of main
         id: tip
         run: |
-          tip=$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | cut -f1)
+          if ! remote=$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main); then
+            echo "::error::git ls-remote failed; cannot tell whether ${GITHUB_SHA} is still the tip of main."
+            exit 1
+          fi
+          tip=$(printf '%s\n' "$remote" | cut -f1)
+          if [ -z "$tip" ]; then
+            echo "::error::git ls-remote returned no refs/heads/main; refusing to guess."
+            exit 1
+          fi
           if [ "$tip" != "$GITHUB_SHA" ]; then
             echo "main has moved on to $tip; a later run mirrors it. Skipping $GITHUB_SHA."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
-      - name: Clone the target over SSH
+      - name: Build the mirror (no credentials on disk)
+        if: steps.tip.outputs.skip != 'true'
+        run: |
+          python3 tools/mirror_skills.py --dest "$RUNNER_TEMP/mirror" --sha "$GITHUB_SHA" \
+            --target-repo "$TARGET_REPO"
+      - name: Clone the target, commit if changed, push
         if: steps.tip.outputs.skip != 'true'
         env:
           DEPLOY_KEY: ${{ secrets.SKILLS_MIRROR_DEPLOY_KEY }}
@@ -99,15 +111,12 @@ jobs:
           # GitHub's published SSH host key (docs: "GitHub's SSH key fingerprints").
           echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" \
             > "$RUNNER_TEMP/ssh/known_hosts"
-          echo "GIT_SSH_COMMAND=ssh -i $RUNNER_TEMP/ssh/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/ssh/known_hosts -o StrictHostKeyChecking=yes" >> "$GITHUB_ENV"
-          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/ssh/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/ssh/known_hosts -o StrictHostKeyChecking=yes" \
-            git clone --quiet "git@github.com:${TARGET_REPO}.git" "$RUNNER_TEMP/target"
-      - name: Mirror, commit if changed, push
-        if: steps.tip.outputs.skip != 'true'
-        run: |
-          python3 tools/mirror_skills.py --dest "$RUNNER_TEMP/target" --sha "$GITHUB_SHA" \
-            --target-repo "$TARGET_REPO"
-          cd "$RUNNER_TEMP/target"
+          export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/ssh/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/ssh/known_hosts -o StrictHostKeyChecking=yes"
+          git clone --quiet --no-checkout "git@github.com:${TARGET_REPO}.git" "$RUNNER_TEMP/target"
+          # The mirror tree was built before the key existed; give it the
+          # target's history and commit the difference.
+          mv "$RUNNER_TEMP/target/.git" "$RUNNER_TEMP/mirror/.git"
+          cd "$RUNNER_TEMP/mirror"
           git add -A
           if git diff --cached --quiet; then
             echo "Mirror already matches ${GITHUB_REPOSITORY}@${GITHUB_SHA}; nothing to commit."

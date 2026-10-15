@@ -43,6 +43,12 @@ The full licence texts with their copyright notices are in `LICENSES/`.
   Copyright (c) 2025 Joe Amditis — `LICENSES/MIT-jamditis.txt`.
   Adapted in: `statistical-claims`, `editorial-voice-wsj-like`, `numbers-style`,
   `headline-and-deck`, `source-and-provenance`.
+- **ieeVisualizer documentation** (`docs/` of this repository),
+  <https://github.com/ieepirzy/ieeVisualizer>. Copyright (c) 2026 Ilari
+  Pirkkalainen — `../LICENSE` (MIT). Adapted in: `company-report-structure`,
+  `ieevisualizer-figures`, `ieevisualizer-report-figures`,
+  `scientific-figure-production`, `source-and-provenance`,
+  `uncertainty-display`.
 
 ## Open Government Licence v3.0
 

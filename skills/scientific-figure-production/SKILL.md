@@ -86,6 +86,7 @@ checked readable at 600 px display width.
 - [ ] Spec, data hash and render settings stored with the output (manifest).
 - [ ] Exported file opened and inspected for clipping, overlap and missing series.
 
-Adapted in part from K-Dense `scientific-visualization` (MIT), Rougier et al.
-2014 (CC0) and Weissgerber et al. 2015 (CC BY 4.0); changed: rewritten and
-condensed, ieeVisualizer mapping added. Sources and licences: `SOURCES.md`.
+Adapted in part from ieeVisualizer's own docs (MIT), K-Dense
+`scientific-visualization` (MIT), Rougier et al. 2014 (CC0) and Weissgerber et
+al. 2015 (CC BY 4.0); changed: rewritten and condensed, ieeVisualizer mapping
+added. Sources and licences: `SOURCES.md`.

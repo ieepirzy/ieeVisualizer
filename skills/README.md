@@ -3,8 +3,8 @@
 Agent skills for making figures and reports that are honest, rigorous and
 useful for a decision: corporate reporting held to a scientist's standard of
 evidence. The question running through all of them is *when do the numbers
-lie?*, and the house rule behind them is that **a figure on screen is a
-claim**.
+lie?*, and the principle behind them is that **anything drawn on screen
+claims to have been measured**.
 
 The library is packaged as a Claude Code plugin (`.claude-plugin/plugin.json`
 at the repository root; skills are discovered from this `skills/` directory).
@@ -103,13 +103,17 @@ filled-in provenance, contrast, alt text — is guarded only by the skills.
   a closing checklist.
 - Examples are generic and self-contained: no names, paths, issue numbers,
   metric definitions or incidents from private projects or organisations.
-  `tests/test_skills.py` fails if a listed internal term appears anywhere
-  under `skills/` or `.claude-plugin/`.
+  `tests/test_skills.py` fails if a listed term from a private project
+  appears in `skills/`, `.claude-plugin/`, the mirror workflow, script, docs
+  or tests. Rules that originate with the author are this library's own
+  work and are not listed as sources.
 - `SOURCES.md`: one bullet per source with URL, `Licence:` and `Use:`
   (`adapted` or `cited`). `adapted` is allowed only for Apache-2.0, MIT,
-  OGL-UK-3.0, CC-BY-4.0, CC0-1.0 or same-owner sources; everything else is
-  `cited` (ideas only, our own words).
-- Skills adapting Apache-2.0 text end with a line stating the change.
+  OGL-UK-3.0, CC-BY-4.0 or CC0-1.0 sources (this repository's own MIT docs
+  included); everything else is `cited` (ideas only, our own words).
+- Every skill that adapts text under a licence requiring notice is listed in
+  `NOTICE.md` and ends with an "Adapted in part from …; changed: …" line
+  naming that licence.
 - `tests/test_skills.py` checks all of the above, validates the plugin
   manifests, and runs the Python examples in
   `ieevisualizer-figures/references/examples.md` against the library.

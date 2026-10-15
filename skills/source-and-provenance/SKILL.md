@@ -38,11 +38,11 @@ artifact manifest and the report's methodology note.
    snapshot. A later re-query is a new analysis with its own timestamp; never
    silently overwrite what recipients saw. If numbers changed, say what
    changed and why ("finance restated September after late refunds").
-4. **Value provenance and explanation provenance are different.** The number
-   comes from computation and cites its query. An agent's explanation of
-   the number cites the agent run that produced it. A citation never makes
-   the agent look like the source of the value, and there is no fallback
-   author: if the producing run is unknown, show no citation.
+4. **Keep "where the number came from" apart from "who explained it".**
+   A value cites the query that computed it. An explanation written by an
+   agent cites the run that wrote it, and nothing in that citation may
+   suggest the agent produced the value. If nobody knows which run wrote an
+   explanation, leave it uncited rather than naming a default author.
 5. **Identity is content, not location.** Identify a figure by spec hash and
    data hash (artifact id), not by a URL or file path.
 6. **Methodology note for every report.** Sources, coverage dates,
@@ -95,6 +95,7 @@ restated from €182,400 to €184,100 (late refunds, finance, 12 Oct)".
 - [ ] Explanations cite the producing run; no fallback author.
 - [ ] Methodology note written.
 
-Adapted in part from jamditis `data-journalism` (MIT) and K-Dense
-`scientific-writing` (MIT); changed: rewritten for figure and report
-provenance, ieeVisualizer mapping added. Sources and licences: `SOURCES.md`.
+Adapted in part from ieeVisualizer's own docs (MIT), jamditis
+`data-journalism` (MIT) and K-Dense `scientific-writing` (MIT); changed:
+rewritten for figure and report provenance, ieeVisualizer mapping added.
+Sources and licences: `SOURCES.md`.

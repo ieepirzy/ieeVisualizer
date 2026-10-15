@@ -13,6 +13,3 @@ finding only, no text taken).
 - **ieeVisualizer docs/CONVERSATIONAL_UI_AND_REPORTING.md, §1** <https://github.com/ieepirzy/ieeVisualizer/blob/main/docs/CONVERSATIONAL_UI_AND_REPORTING.md>
   - Licence: MIT
   - Use: adapted — reference workflow, permission filtering before view data, fail gracefully, frozen snapshots. Same project.
-- **Author's own dashboard-review rules and audit notes (same owner, unpublished)** <https://github.com/ieepirzy>
-  - Licence: Same owner (internal)
-  - Use: adapted — a figure on screen is a claim; the UI is not the issue tracker; the number comes from computation and the agent explains it. Restated as generic examples (the metric-traps table uses a generic online shop).
