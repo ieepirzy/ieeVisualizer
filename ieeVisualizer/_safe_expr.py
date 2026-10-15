@@ -34,6 +34,13 @@ evaluated. The limits:
 Anything outside the limits raises :class:`UnsafeExpression` quickly; the
 caller turns it into its own structured error.
 
+Separately, a node that evaluates to an undefined or infinite constant --
+``zoo`` (``1/0``, ``tan(pi/2)``, ``log(0)``, ``gamma(0)``), ``oo``, ``-oo``,
+``nan`` or an ``AccumBounds`` (``atan(1/0)``) -- raises
+:class:`UndefinedExpression`. Such an expression is not a function that can
+be sampled (SymPy's NumPy printer cannot even print it), so callers report
+it as an invalid expression rather than drawing a gap or crashing later.
+
 This module is deliberately self-contained (SymPy imported lazily) so the
 render and template packages can share the same rules.
 """
@@ -61,6 +68,11 @@ _LITERAL = re.compile(r"(?<![A-Za-z_0-9.])(\d+\.?\d*|\.\d+)(?:[eE]([+-]?\d+))?")
 
 class UnsafeExpression(ValueError):
     """The expression would need unbounded exact arithmetic (or is too big)."""
+
+
+class UndefinedExpression(ValueError):
+    """Part of the expression evaluates to an undefined or infinite constant
+    (``zoo``, ``oo``, ``-oo``, ``nan``, ``AccumBounds``)."""
 
 
 def check_text(text: str) -> None:
@@ -95,7 +107,7 @@ def parse_unevaluated(text: str, local_dict: dict[str, Any]):
 def build_bounded(expr, substitutions: dict | None = None):
     """Evaluate the unevaluated ``expr`` bottom-up within the module limits,
     replacing atoms per ``substitutions`` first. Raises
-    :class:`UnsafeExpression`."""
+    :class:`UnsafeExpression` or :class:`UndefinedExpression`."""
     import sympy
 
     if not isinstance(expr, sympy.Expr):
@@ -126,6 +138,7 @@ def _build(node, subs, sympy, combinatorial):
     if not node.args:
         out = subs.get(node, node)
         _check_numbers(out, "the number")
+        _check_defined(node, out, sympy)
         return out
     args = [_build(a, subs, sympy, combinatorial) for a in node.args]
     if isinstance(node, sympy.Pow):
@@ -140,7 +153,19 @@ def _build(node, subs, sympy, combinatorial):
                     f"number; its argument must be within +-{MAX_FACTORIAL_ARG}.")
     out = node.func(*args)
     _check_numbers(out, "an intermediate result")
+    _check_defined(node, out, sympy)
     return out
+
+
+def _check_defined(node, out, sympy) -> None:
+    """Refuse a node whose value is (or contains) an infinite or undefined
+    constant. Checked per node, so ``1/0`` is refused even where SymPy would
+    go on to fold it into something else (``0*(1/0)``, ``exp(-1/0)``)."""
+    bad = (sympy.S.ComplexInfinity, sympy.S.Infinity, sympy.S.NegativeInfinity, sympy.S.NaN)
+    if out.has(*bad) or out.has(sympy.AccumBounds):
+        raise UndefinedExpression(
+            f"{_short(node)} evaluates to {_short(out)}, which is undefined or infinite "
+            "(e.g. a division by zero, tan(pi/2), log(0) or gamma(0)).")
 
 
 def _digits(n) -> float:

@@ -123,3 +123,50 @@ def test_any_float64_parameter_is_accepted(value):
                      parameters={"a": value})
     expr, _ = parse(m, "/layers/0")
     assert {s.name for s in expr.free_symbols} == {"x"}
+
+
+@pytest.mark.parametrize("expression", [
+    "tan(pi/2)*x", "1/0*x", "x+1/0", "log(0)*x", "x*0^-1", "x+sec(pi/2)", "x+gamma(0)",
+    "atan(1/0)+x",        # AccumBounds, which the NumPy printer cannot print either
+    "exp(-1/0)+x",        # SymPy would fold exp(zoo) further; the 1/0 is refused
+    "1/(x-x)",            # the denominator only becomes 0 on evaluation
+    "x/k", "x+log(k)",    # a parameter substituted to 0
+])
+def test_undefined_or_infinite_constant_is_an_invalid_expression(expression):
+    spec = FigureSpec(
+        layers=[FunctionMark(expression=expression, variables=["x"], domain={"x": [0.1, 1.0]},
+                             parameters={"k": 0.0} if "k" in expression else {})],
+        axes={"x": Axis(label="x"), "y": Axis(label="y")})
+    with pytest.raises(RenderError) as e:
+        build_figure(spec)
+    assert [(i.path, i.code) for i in e.value.issues] == [
+        ("/layers/0/expression", "invalid_expression")]
+    assert "undefined or infinite" in e.value.issues[0].message
+
+
+def test_safe_expr_refuses_undefined_constants_directly():
+    import sympy
+
+    from ieeVisualizer._safe_expr import UndefinedExpression, build_bounded, parse_unevaluated
+
+    x = sympy.Symbol("x")
+    for text in ("x + 1/0", "log(0)", "tan(pi/2)", "x*0**-1"):
+        with pytest.raises(UndefinedExpression):
+            build_bounded(parse_unevaluated(text, {"x": x}))
+    assert build_bounded(parse_unevaluated("x + 1/2", {"x": x})) == x + sympy.Rational(1, 2)
+
+
+def test_lambdify_failure_is_a_render_error(monkeypatch):
+    import sympy
+
+    def broken(*a, **k):
+        raise KeyError("ComplexInfinity")
+
+    monkeypatch.setattr(sympy, "lambdify", broken)
+    spec = FigureSpec(
+        layers=[FunctionMark(expression="x", variables=["x"], domain={"x": [0.0, 1.0]})],
+        axes={"x": Axis(label="x"), "y": Axis(label="y")})
+    with pytest.raises(RenderError) as e:
+        build_figure(spec)
+    assert [(i.path, i.code) for i in e.value.issues] == [
+        ("/layers/0/expression", "invalid_expression")]

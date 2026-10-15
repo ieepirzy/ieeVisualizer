@@ -71,19 +71,72 @@ has no position); null heatmap cells stay blank. Each case adds a
 `null_values_omitted` warning. A layer or series with no complete row is a
 `RenderError` (`empty_series`).
 
-**Quiver scale.** A 2D quiver without `scale` gets one so the longest arrow
-spans one grid cell (the smaller of the x and y extents divided by the
-number of distinct positions minus one), drawn in data coordinates
-(`angles="xy"`), and the view is widened to include every arrow tip, so no
-arrow runs out of the plot. In 3D the default length factor is 1.
+**Quiver scale.** A 2D quiver without `scale` whose positions form a
+complete rectilinear grid (every (x, y) pair exactly once, as for a sampled
+3D surface) on two linear numeric axes gets one so the longest arrow spans
+one grid cell (the smaller of the x and y extents divided by the number of
+distinct positions minus one), drawn in data coordinates (`angles="xy"`),
+and the view is widened to include every arrow tip, so no arrow runs out of
+the plot. Otherwise (a log axis, scattered or incomplete positions)
+matplotlib's own arrow autoscaling is used: arrows are sized relative to
+the plot, equal vectors look equal, and the view follows the arrow tails
+only. In 3D the default length factor is 1.
 
-**Roles.** `forecast` is always distinguishable: dashed lines (a solid style
-is overridden with a warning), hollow markers, hatched bars/areas, and the
-legend label says "forecast". `reference` is lighter and thinner.
+**Huge numbers.** The spec stores exact integers of any size, but a column
+value beyond the float64 range (e.g. `10**400`) cannot be drawn: `validate()`
+reports it as a `number_out_of_range` error, so a render refuses it with
+`SpecValidationError` (and the renderer itself raises a structured
+`value_out_of_range` `RenderError`, never a raw `OverflowError`, should such a
+column reach it unvalidated).
+
+**Bars.** Bar groups of one layer (`series`/categorical `color`) sit side by
+side in each slot. Bar layers of the same orientation that share a category
+(or position) are dodged the same way, in layer order, instead of being
+drawn over each other; a bar layer that shares no position with another is
+laid out exactly as a single layer. Every slot with no bar -- a null value,
+or a (category, group) or (category, layer) combination with no row -- is
+labelled "no data", so an absent bar never reads as 0.
+
+**Roles.** `forecast` is always distinguishable, whatever style it asks for:
+a forecast line uses the requested dash pattern (`solid` or unspecified
+count as `dashed`; a solid request is overridden with a warning) with every
+gap doubled, a pattern no observed `linestyle` produces, and is drawn at
+0.75 times the requested opacity; markers are hollow, bars/areas hatched,
+and the legend label says "forecast". So a dotted forecast bound never looks
+like a dotted observed bound. `reference` is lighter and thinner.
 
 **Style keys** `color`, `colormap`, `linewidth`, `linestyle`, `marker`,
 `opacity`. Unknown keys (`unknown_style_key`), keys the mark does not use
 (`style_key_ignored`) and invalid values (`invalid_style_value`) are warnings.
+
+**Many series.** Series take colours from matplotlib's 10-colour cycle.
+When it wraps, a `colour_cycle_wrapped` warning is given once, and observed
+lines / scatter points of later rounds get a dashed, dotted, dash-dot
+linestyle or a different marker (unless the style chose one) so no two
+series look the same; bars, areas and histograms repeat colours.
+
+**Paired colours.** `color_of: "<layer name>"` (line, scatter, area, bar,
+histogram, function) draws each series group of the layer in the colour of
+the named layer's series with the same group, e.g. uncertainty-bound lines
+in the colour of the value they bound (the timeseries template sets it). The
+name must match exactly one other, non-reference layer; otherwise
+`unknown_color_of` is a warning and the layer gets its own colour. An
+explicit `color` wins (`style_key_ignored` on `color_of`). Legend entries
+with the same label that look identical (e.g. a lower and an upper bound
+line both named "range") are shown once.
+
+**Legend placement.** An explicit `legend.position` is used as given. For
+`"auto"`, matplotlib's `"best"` spot inside the axes is kept only when the
+legend has at most five entries and, at that spot, overlaps no plotted data
+(a line's drawn segments or markers, a bar or span, a filled area or an
+unfilled area's outline, a scatter or quiver point, a heatmap mesh, an
+annotation's text). Otherwise the legend goes outside the axes: to the
+right, or below in as many columns as fit for a figure at least 1.6 times as
+wide as tall, or when a right-hand legend would take more than 40% of the
+width. Constrained layout makes room for it, so neither the legend nor tick
+or axis labels are clipped. The choice is computed from the figure's own
+geometry, so it is deterministic; a figure whose legend stays inside renders
+byte-identically to before this rule.
 
 **Functions.** Expressions are checked before SymPy sees them: only numbers,
 `+ - * / ^ ( )`, the mark's variables and parameters, and an allow-list of
@@ -97,6 +150,10 @@ checked: exponents at most 1000 in magnitude, no number beyond about
 10^+-330 (outside float64's range anyway), `gamma` arguments within
 +-1000, at most 1000 characters, 500 terms and 100 levels of nesting.
 Anything else is an `expression_too_large` error, raised immediately.
+A sub-expression that evaluates to an undefined or infinite constant
+(`1/0`, `tan(pi/2)`, `log(0)`, `gamma(0)`, a parameter making a
+denominator zero) is an `invalid_expression` error: it is not a function
+that can be sampled, so it is refused rather than drawn as a gap.
 
 **Determinism.** Rendering runs under matplotlib's default style plus a fixed
 `rc_context` (`svg.hashsalt`, `svg.fonttype="path"`), with dates stripped
@@ -119,7 +176,11 @@ spec equivalent of `visualize()` / `visualize_vf()` from the same samples
 symbol names in the axis labels, optional `units=` by axis (`"vector"` for
 field components), and provenance recording the input (SymPy expression
 string, or the callable's `module.qualname`, never its address-bearing
-`repr`), domain, `n`, sampling mode, per-call integer seed and the number of
+`repr`; a `functools.partial` as the wrapped callable plus its arguments
+when they are plain literals; a `sympy.lambdify` function as "generated by
+sympy.lambdify" with its generated source), domain, `n`, sampling mode, the
+integer seed (`seed_scope` `"call"` for a per-call `rng=`, `"visualizer"`
+for the constructor's, whose samples depend on call order) and the number of
 non-finite points (stored as null). The layer role defaults to `reference`
 (a computed formula, drawn lighter). `Visualizer.export(fn, out, dim=...)`
 renders and stores it with a manifest, so the figure can be re-rendered
@@ -162,13 +223,27 @@ temporary directory under `root` and swaps it in for `<root>/<artifact_id>`
 (the old directory is moved aside, then deleted), so an artifact directory
 always holds exactly the files its `manifest.json` lists: exporting again
 under the same id replaces the directory as a whole and never leaves files
-from an earlier export behind. `MemoryWriter` does the same for its dict.
+from an earlier export behind. Concurrent exports of one id (threads or
+processes) are serialised by a per-id lock file `<root>/.lock-<id>`, which
+stays in place; if the directory already holds exactly the same files (the
+usual case for a content-addressed id) nothing is rewritten. A failed export
+leaves the previous version and no staging directories; leftovers of a killed
+export are removed by the next export of that id. While *different* content
+replaces a directory, a reader may briefly find `<root>/<id>` missing (there
+is no portable atomic directory exchange). `MemoryWriter` does the same for
+its dict.
 A custom writer with only `write` gets one call per file, manifest last.
 
 ## Known gaps
 
 - No downsampling: more than `max_points` (1,000,000) points is refused, not
   thinned.
+- Drawing time grows with sizes an agent can choose, so they are bounded:
+  a histogram may have at most `max_bins` (10,000) bins (`bins` or
+  `bin_edges`; a capability, so more is a `CapabilityError` before anything
+  is drawn) and a category axis at most 5,000 distinct values
+  (`too_many_categories`). Above 50 categories only every n-th tick label is
+  drawn (`category_labels_thinned` warning); the bars are all drawn.
 - Reference lines/bands are not drawn in 3D (warning); log scales in 3D are
   refused.
 - Forecast heatmaps, quivers and surfaces are distinguished only by

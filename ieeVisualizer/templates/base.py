@@ -60,6 +60,7 @@ carries them.
 from __future__ import annotations
 
 import copy
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -193,7 +194,14 @@ def column_path(name: str) -> str:
 
 
 def _is_number(v: Any) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
+    """A finite int or float (not a bool). NaN and infinities are refused
+    here, in ``check()``, rather than later by the spec built from them."""
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return False
+    try:
+        return math.isfinite(v)
+    except OverflowError:  # an int beyond float64
+        return False
 
 
 def coerce_data(data: Any, issues: Issues) -> DataSnapshot | None:
@@ -445,17 +453,17 @@ def _coerce_param(p: Parameter, v: Any, issues: Issues) -> Any:
             return bad("an integer")
     elif t == "number":
         if not _is_number(v):
-            return bad("a number")
+            return bad("a finite number")
     elif t == "boolean":
         if not isinstance(v, bool):
             return bad("true or false")
     elif t == "scalar":
         if not (_is_number(v) or isinstance(v, str)):
-            return bad("a number or an ISO-8601 string")
+            return bad("a finite number or an ISO-8601 string")
     elif t == "range":
         if (not isinstance(v, (list, tuple)) or len(v) != 2
                 or not all(_is_number(x) for x in v) or not v[0] < v[1]):
-            return bad("[min, max] with two numbers and min < max")
+            return bad("[min, max] with two finite numbers and min < max")
         v = [float(v[0]), float(v[1])]
     elif t == "grid":
         if isinstance(v, int) and not isinstance(v, bool):
@@ -467,7 +475,7 @@ def _coerce_param(p: Parameter, v: Any, issues: Issues) -> Any:
     elif t == "number_map":
         if not isinstance(v, Mapping) or not all(
                 isinstance(k, str) and _is_number(x) for k, x in v.items()):
-            return bad("an object mapping names to numbers")
+            return bad("an object mapping names to finite numbers")
         v = dict(v)
     else:  # pragma: no cover - template authoring error
         raise ValueError(f"unknown parameter type {t!r}")

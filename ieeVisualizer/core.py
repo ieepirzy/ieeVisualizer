@@ -7,7 +7,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ._domain import as_rng, make_grid, normalize_bounds
+from ._domain import as_rng, int_seed, make_grid, normalize_bounds
 from ._evaluate import as_symbol_tuple, evaluate, to_numeric
 
 _SUPPORTED_DIMS = (2, 3)
@@ -76,6 +76,8 @@ class Visualizer:
         self.style = style
         self.colormap = colormap
         self.rng = as_rng(rng)
+        # kept for provenance: the generator above is shared by every call
+        self.rng_seed = int_seed(rng)
 
     # -- helpers ---------------------------------------------------------------
 

@@ -11,8 +11,14 @@ code                       meaning
 unsupported_schema_version spec.schema_version not readable by this library
 invalid_value              a field holds a value outside its allowed set
 invalid_type               a field holds a value of the wrong JSON type (the same
-                           value would be refused by from_dict after to_dict)
-non_finite_number          NaN or an infinity where a number is stored
+                           value would be refused by from_dict after to_dict), or
+                           a list/dict holds something other than the spec class
+                           it should (e.g. a dict among the layers)
+invalid_values             a column's values do not fit its dtype (or each other)
+non_finite_number          NaN or an infinity where a number is stored; for one
+                           put into a column's values after construction, an
+                           infinity is an error and a NaN a warning (it is
+                           stored as null, as on construction)
 too_deep                   free-form JSON (metadata, style, provenance extra)
                            nested deeper than ``MAX_JSON_DEPTH``
 no_layers                  the figure has nothing to draw
@@ -27,13 +33,23 @@ unknown_column             encoding names a column the dataset lacks
 all_null_column            encoded column has no non-null value
 unverified_reference       (info) DatasetRef without declared columns
 log_scale_nonpositive      log axis but data/limit/domain <= 0
-scale_dtype_mismatch       axis scale incompatible with the column dtype
+scale_dtype_mismatch       axis scale incompatible with the column dtype, or a
+                           limit/annotation coordinate of the wrong kind for the
+                           axis (a number on a time axis, a string on a numeric one)
 axis_unit_conflict         layers on one axis disagree on unit
 unknown_axis               axis key not valid for the coordinate system
 invalid_limits / invalid_domain / invalid_samples / invalid_variables /
 invalid_bins / function_source_conflict / function_source_missing /
 missing_field              mark- or annotation-specific shape problems
+                           (invalid_limits also: a limit on a time axis that is
+                           not an ISO-8601 date/time, or reversed date limits)
 ========================== =====================================================
+
+Time axes: an axis with ``scale="time"``, or with no scale whose bound columns
+are declared ``datetime`` (see :func:`figure.time_axes`), takes ISO-8601
+strings as limits and annotation coordinates. A number there is an error
+(``scale_dtype_mismatch``), not an epoch offset: numbers have no unit or
+timezone, so their meaning on a date axis would be renderer-defined.
 """
 
 from __future__ import annotations
@@ -51,16 +67,29 @@ from ._common import (
     ptr,
     suggest,
 )
-from .data import Column, ColumnSchema, DatasetRef, DataSnapshot
+from .data import (
+    DTYPES,
+    Column,
+    ColumnSchema,
+    DatasetRef,
+    DataSnapshot,
+    Provenance,
+    normalize_values,
+)
 from .figure import (
+    ANNOTATION_TYPES,
     LEGEND_POSITIONS,
     SCALES,
     Annotation,
     Axis,
     FigureSpec,
+    Legend,
     ReferenceBand,
     ReferenceLine,
     TextAnnotation,
+    annotation_axes,
+    parse_time_coordinate,
+    time_axes,
 )
 from .marks import (
     ALLOWED_CHANNELS,
@@ -93,13 +122,22 @@ class _Ctx:
         self.axis_keys = ("x", "y", "z") if spec.coordinate_system == "cartesian3d" else ("x", "y")
         # axis -> list of (path, unit) for unit-conflict detection
         self.units: dict[str, list[tuple[str, str]]] = {a: [] for a in AXIS_CHANNELS}
+        # Containers as the checks iterate them: a container of the wrong type
+        # is reported once (in _check_containers) and then treated as empty.
+        self.datasets = spec.datasets if isinstance(spec.datasets, dict) else {}
+        self.axes = spec.axes if isinstance(spec.axes, dict) else {}
+        self.layers = spec.layers if isinstance(spec.layers, list) else []
+        self.annotations = spec.annotations if isinstance(spec.annotations, list) else []
+        self.times = time_axes(spec)
+        # id() of columns whose types/values were reported; not checked further.
+        self.bad_columns: set[int] = set()
 
     def add(self, path: str, code: str, message: str, severity: str = "error") -> None:
         self.issues.append(ValidationIssue(path, code, message, severity))
 
-    def scale(self, axis: str) -> str | None:
-        a = self.spec.axes.get(axis)
-        return a.scale if a is not None else None
+    def scale(self, axis: Any) -> str | None:
+        a = self.axes.get(axis) if isinstance(axis, str) else None
+        return a.scale if isinstance(a, Axis) and isinstance(a.scale, str) else None
 
 
 # --------------------------------------------------------------------------
@@ -121,6 +159,8 @@ def _t_number(c: _Ctx, path: str, v: Any, what: str, optional: bool = False) -> 
         return True
     if not is_number(v):
         return _bad_type(c, path, what, "a number", v)
+    if _beyond_float64(v):
+        return _out_of_range(c, path, what, v)
     if not math.isfinite(v):
         c.add(path, "non_finite_number",
               f"{what} is {v!r}; NaN and infinities cannot be stored in JSON. Use a finite "
@@ -132,9 +172,19 @@ def _t_number(c: _Ctx, path: str, v: Any, what: str, optional: bool = False) -> 
 def _t_int(c: _Ctx, path: str, v: Any, what: str, optional: bool = False) -> bool:
     if v is None and optional:
         return True
+    if is_number(v) and _beyond_float64(v):
+        return _out_of_range(c, path, what, v)
     if not (is_number(v) and math.isfinite(v) and float(v).is_integer()):
         return _bad_type(c, path, what, "an integer", v)
     return True
+
+
+def _out_of_range(c: _Ctx, path: str, what: str, v: Any) -> bool:
+    c.add(path, "number_out_of_range",
+          f"{what} {_short_int(v)} is beyond the float64 range (about +-1.8e308), so it cannot "
+          "be stored as a number that readers can hold; rescale it (e.g. change the unit) "
+          "upstream.")
+    return False
 
 
 def _t_bool(c: _Ctx, path: str, v: Any, what: str) -> bool:
@@ -168,21 +218,161 @@ def _t_all(*results: bool) -> bool:
     return all(results)  # every check above has already run and reported
 
 
+def _check_containers(c: _Ctx) -> None:
+    """Each collection must be of its JSON type and hold the spec class it is
+    declared to hold (a dict among the layers would crash serialization)."""
+    spec = c.spec
+    for key, want, kind in (("datasets", dict, "a JSON object"), ("axes", dict, "a JSON object"),
+                            ("layers", list, "an array"), ("annotations", list, "an array")):
+        if not isinstance(getattr(spec, key), want):
+            _bad_type(c, "/" + key, key, kind, getattr(spec, key))
+    for key, items in (("datasets", c.datasets), ("axes", c.axes)):
+        for name in items:
+            if not isinstance(name, str):
+                c.add("/" + key, "invalid_type", f"{key} keys must be strings, got {name!r}.")
+    for key, items, cls, what in (
+        ("datasets", c.datasets.items(), (DataSnapshot, DatasetRef),
+         "a DataSnapshot or DatasetRef"),
+        ("axes", c.axes.items(), Axis, "an Axis"),
+        ("layers", enumerate(c.layers), Mark, "a mark (e.g. LineMark)"),
+        ("annotations", enumerate(c.annotations), Annotation,
+         "an annotation (TextAnnotation, ReferenceLine or ReferenceBand)"),
+    ):
+        for name, v in items:
+            if not isinstance(v, cls):
+                c.add(ptr(key, name), "invalid_type",
+                      f"{key} entries must be {what}, got {type(v).__name__} {v!r}; "
+                      "build it with the class (from_dict accepts the JSON form).")
+    if not isinstance(spec.legend, Legend):
+        _bad_type(c, "/legend", "legend", "a Legend", spec.legend)
+
+
 def _check_figure_types(c: _Ctx) -> None:
     spec = c.spec
+    _check_containers(c)
     for k in ("id", "title", "caption", "theme"):
         _t_str(c, "/" + k, getattr(spec, k), k, optional=True)
     _t_json_object(c, "/metadata", spec.metadata, "metadata")
     lg = spec.legend
-    _t_all(_t_bool(c, "/legend/show", lg.show, "legend show"),
-           _t_str(c, "/legend/title", lg.title, "legend title", optional=True))
-    for name, ds in spec.datasets.items():
+    if isinstance(lg, Legend):
+        _t_all(_t_bool(c, "/legend/show", lg.show, "legend show"),
+               _t_str(c, "/legend/title", lg.title, "legend title", optional=True))
+    for name, ds in c.datasets.items():
         if isinstance(ds, DataSnapshot):
-            pp = ptr("datasets", name, "provenance")
-            for k in ("source", "query", "retrieved_at", "source_version", "timezone",
-                      "run_id", "notes"):
-                _t_str(c, f"{pp}/{k}", getattr(ds.provenance, k), k, optional=True)
-            _t_json_object(c, pp + "/extra", ds.provenance.extra, "provenance extra")
+            _snapshot_types_ok(c, ptr("datasets", name), ds)
+        elif isinstance(ds, DatasetRef):
+            _ref_types_ok(c, ptr("datasets", name), ds)
+
+
+_PROV_FIELDS = ("source", "query", "retrieved_at", "source_version", "timezone", "run_id",
+                "notes")
+_SCHEMA_STR_FIELDS = ("unit", "description", "denominator", "aggregation")
+
+
+def _snapshot_types_ok(c: _Ctx, p: str, ds: DataSnapshot) -> bool:
+    checks = []
+    pp = p + "/provenance"
+    if isinstance(ds.provenance, Provenance):
+        checks += [_t_str(c, f"{pp}/{k}", getattr(ds.provenance, k), k, optional=True)
+                   for k in _PROV_FIELDS]
+        checks.append(_t_json_object(c, pp + "/extra", ds.provenance.extra, "provenance extra"))
+    else:
+        checks.append(_bad_type(c, pp, "provenance", "a Provenance", ds.provenance))
+    if not isinstance(ds.columns, dict):
+        return _bad_type(c, p + "/columns", "columns", "a JSON object of Column", ds.columns)
+    for name, col in ds.columns.items():
+        checks.append(_column_ok(c, f"{p}/columns/{ptr(name)[1:]}", col, Column))
+    return _t_all(*checks)
+
+
+def _ref_types_ok(c: _Ctx, p: str, ds: DatasetRef) -> bool:
+    checks = [_t_str(c, p + "/kind", ds.kind, "kind"), _t_str(c, p + "/id", ds.id, "id")]
+    checks += [_t_str(c, f"{p}/{k}", getattr(ds, k), k, optional=True)
+               for k in ("query", "version", "retrieved_at")]
+    if ds.columns is not None:
+        if not isinstance(ds.columns, dict):
+            return _bad_type(c, p + "/columns", "columns", "a JSON object of ColumnSchema",
+                             ds.columns)
+        for name, col in ds.columns.items():
+            checks.append(_column_ok(c, f"{p}/columns/{ptr(name)[1:]}", col, ColumnSchema))
+    return _t_all(*checks)
+
+
+def _column_ok(c: _Ctx, cp: str, col: Any, cls: type) -> bool:
+    """Type-check a column (or column schema) and, for an inline column,
+    re-normalise its values against its dtype exactly as construction and
+    from_dict do, so values changed after construction are caught here."""
+    ok = _column_types_ok(c, cp, col, cls)
+    if not ok:
+        c.bad_columns.add(id(col))
+    return ok
+
+
+def _beyond_float64(v: Any) -> bool:
+    """An exact number (e.g. a Python int) too large for a float64."""
+    try:
+        float(v)
+    except OverflowError:
+        return True
+    return False
+
+
+def _short_int(v: Any) -> str:
+    try:
+        s = str(v)
+    except ValueError:  # beyond Python's int -> str digit limit
+        return "(a very large integer)"
+    return s if len(s) <= 24 else f"{s[:12]}... ({len(s)} digits)"
+
+
+def _column_types_ok(c: _Ctx, cp: str, col: Any, cls: type) -> bool:
+    if not isinstance(col, cls):
+        return _bad_type(c, cp, "a column", f"a {cls.__name__}", col)
+    ok = _t_all(*(_t_str(c, f"{cp}/{k}", getattr(col, k), k, optional=True)
+                  for k in _SCHEMA_STR_FIELDS))
+    dtype = col.dtype
+    if dtype is not None and not isinstance(dtype, str):
+        ok = _bad_type(c, cp + "/dtype", "dtype", "a string or null", dtype)
+    elif dtype is not None and dtype not in DTYPES:
+        c.add(cp + "/dtype", "invalid_value",
+              f"dtype {dtype!r} is unknown.{suggest(dtype, DTYPES)} Use one of "
+              f"{', '.join(DTYPES)}.")
+        ok = False
+    if cls is ColumnSchema or not ok:
+        return ok
+    values = col.values
+    if isinstance(values, (str, bytes)) or not hasattr(values, "__iter__"):
+        return _bad_type(c, cp + "/values", "values", "an array", values)
+    try:
+        items = list(values)
+    except Exception:  # noqa: BLE001 - an iterable that fails to iterate is a bad type
+        return _bad_type(c, cp + "/values", "values", "an array", values)
+    for i, v in enumerate(items):
+        if is_number(v) and _beyond_float64(v):
+            c.add(f"{cp}/values/{i}", "number_out_of_range",
+                  f"value {_short_int(v)} is beyond the float64 range (about +-1.8e308), so "
+                  "it can be stored but never drawn or compared reliably; rescale it (e.g. "
+                  "change the unit) upstream.")
+            ok = False
+        elif is_number(v) and math.isinf(v):
+            c.add(f"{cp}/values/{i}", "non_finite_number",
+                  f"value {v!r} was put into the column after construction; JSON has no "
+                  "infinity, and an infinity is a value, not a missing one. Use None for a "
+                  "missing value or fix the computation upstream.")
+            ok = False
+        elif is_number(v) and v != v:  # noqa: PLR0124 - NaN
+            c.add(f"{cp}/values/{i}", "non_finite_number",
+                  f"value {v!r} was put into the column after construction; it is stored as "
+                  "null (missing), as on construction. Use None to say so explicitly.",
+                  "warning")
+    if not ok:
+        return False
+    try:
+        normalize_values(values, dtype)
+    except (ValueError, TypeError) as e:
+        c.add(cp + "/values", "invalid_values", str(e))
+        return False
+    return True
 
 
 def _axis_types_ok(c: _Ctx, p: str, axis: Axis) -> bool:
@@ -259,6 +449,11 @@ def _t_number_list(c: _Ctx, path: str, v: Any, what: str, optional: bool = False
 def _annotation_types_ok(c: _Ctx, p: str, a: Annotation) -> bool:
     checks = [_t_str(c, p + "/label", a.label, "label", optional=True),
               _t_json_object(c, p + "/style", a.style, "style")]
+    declared = next((k for k, cls in ANNOTATION_TYPES.items() if type(a) is cls), None)
+    if declared is not None and a.type != declared:
+        c.add(p + "/type", "invalid_value",
+              f"a {type(a).__name__} has type {declared!r}, got {a.type!r}; do not reassign it.")
+        checks.append(False)
     if isinstance(a, TextAnnotation):
         checks.append(_t_str(c, p + "/text", a.text, "text"))
     if isinstance(a, (ReferenceLine, ReferenceBand)):
@@ -287,29 +482,33 @@ def validate(spec: FigureSpec) -> list[ValidationIssue]:
               f"{suggest(spec.coordinate_system, COORDINATE_SYSTEMS)} Use one of "
               f"{', '.join(COORDINATE_SYSTEMS)}.")
     _check_axes(c)
-    if not isinstance(spec.legend.position, str):
-        _bad_type(c, "/legend/position", "legend position", "a string", spec.legend.position)
-    elif spec.legend.position not in LEGEND_POSITIONS:
+    position = spec.legend.position if isinstance(spec.legend, Legend) else "auto"
+    if not isinstance(position, str):
+        _bad_type(c, "/legend/position", "legend position", "a string", position)
+    elif position not in LEGEND_POSITIONS:
         c.add("/legend/position", "invalid_value",
-              f"legend position {spec.legend.position!r} is unknown; use one of "
+              f"legend position {position!r} is unknown; use one of "
               f"{', '.join(LEGEND_POSITIONS)}.")
-    for name, ds in spec.datasets.items():
-        _check_dataset(c, name, ds)
-    if not spec.layers:
+    for name, ds in c.datasets.items():
+        if isinstance(ds, (DataSnapshot, DatasetRef)):
+            _check_dataset(c, name, ds)
+    if isinstance(spec.layers, list) and not spec.layers:
         c.add("/layers", "no_layers",
               "the figure has no layers; add at least one mark (e.g. a line) bound to a dataset.")
-    for i, mark in enumerate(spec.layers):
-        _check_mark(c, i, mark)
+    for i, mark in enumerate(c.layers):
+        if isinstance(mark, Mark):
+            _check_mark(c, i, mark)
     _check_units(c)
-    for i, ann in enumerate(spec.annotations):
-        _check_annotation(c, i, ann)
+    for i, ann in enumerate(c.annotations):
+        if isinstance(ann, Annotation):
+            _check_annotation(c, i, ann)
     return c.issues
 
 
 def _check_axes(c: _Ctx) -> None:
-    for key, axis in c.spec.axes.items():
+    for key, axis in c.axes.items():
         p = ptr("axes", key)
-        if not _axis_types_ok(c, p, axis):
+        if not isinstance(axis, Axis) or not _axis_types_ok(c, p, axis):
             continue
         if key not in c.axis_keys:
             c.add(p, "unknown_axis",
@@ -322,9 +521,12 @@ def _check_axes(c: _Ctx) -> None:
         lim = axis.limits
         if lim is not None:
             lo, hi = lim
-            if _num(lo) and _num(hi) and lo >= hi:
-                c.add(p + "/limits", "invalid_limits",
-                      f"limits [{lo}, {hi}] are empty or reversed; min must be below max.")
+            kinds_ok = _t_all(*(_check_coordinate(c, f"{p}/limits/{i}", key, v, "a limit",
+                                                  "invalid_limits")
+                                for i, v in enumerate(lim)))
+            if kinds_ok and axis.scale != "category":
+                _check_order(c, p + "/limits", lo, hi,
+                             f"limits [{lo}, {hi}] are empty or reversed; min must be below max.")
             if axis.scale == "log" and any(_num(v) and v <= 0 for v in lim):
                 c.add(p + "/limits", "log_scale_nonpositive",
                       "a log axis cannot include values <= 0; raise the lower limit above 0 or "
@@ -335,10 +537,13 @@ def _check_dataset(c: _Ctx, name: str, ds: DataSnapshot | DatasetRef) -> None:
     p = ptr("datasets", name)
     if isinstance(ds, DatasetRef):
         for k in ("kind", "id"):
-            if not getattr(ds, k):
+            if isinstance(getattr(ds, k), str) and not getattr(ds, k):
                 c.add(f"{p}/{k}", "missing_field", f"a dataset reference needs a non-empty {k}.")
         return
-    lens = ds.lengths()
+    if not isinstance(ds.columns, dict):
+        return  # reported as invalid_type
+    lens = {n: len(col.values) for n, col in ds.columns.items()
+            if isinstance(col, Column) and hasattr(col.values, "__len__")}
     if not lens or all(n == 0 for n in lens.values()):
         c.add(p, "empty_dataset",
               f"dataset {name!r} has no rows; supply data or remove the dataset and the layers "
@@ -356,6 +561,9 @@ def _check_dataset(c: _Ctx, name: str, ds: DataSnapshot | DatasetRef) -> None:
 
 def _check_mark(c: _Ctx, i: int, m: Mark) -> None:
     p = f"/layers/{i}"
+    if not isinstance(m.type, str):
+        _bad_type(c, p + "/type", "type", "a string", m.type)
+        return
     cls = MARK_TYPES.get(m.type)
     if cls is None or not isinstance(m, cls):
         c.add(p + "/type", "unknown_mark_type",
@@ -476,12 +684,17 @@ def _check_bindings(c: _Ctx, p: str, m: Mark) -> None:
         c.add(p + "/data", "missing_data",
               "the layer is not bound to a dataset; set /data to a key of /datasets.")
         return
-    ds = spec.datasets.get(m.data)
+    ds = c.datasets.get(m.data)
     if ds is None:
+        names = [n for n in c.datasets if isinstance(n, str)]
         c.add(p + "/data", "unknown_dataset",
-              f"dataset {m.data!r} does not exist.{suggest(m.data, spec.datasets)} Available: "
-              f"{', '.join(sorted(spec.datasets)) or '(none)'}.")
+              f"dataset {m.data!r} does not exist.{suggest(m.data, names)} Available: "
+              f"{', '.join(sorted(names)) or '(none)'}.")
         return
+    if not isinstance(ds, (DataSnapshot, DatasetRef)) or not (
+        isinstance(ds.columns, dict) or (isinstance(ds, DatasetRef) and ds.columns is None)
+    ):
+        return  # reported as invalid_type; its columns cannot be looked up
     if isinstance(ds, DatasetRef) and ds.columns is None:
         c.add(p + "/data", "unverified_reference",
               f"dataset {m.data!r} is an external reference without declared columns, so "
@@ -490,8 +703,13 @@ def _check_bindings(c: _Ctx, p: str, m: Mark) -> None:
     for ch, enc in m.encoding.items():
         if ch not in allowed:
             continue
+        if isinstance(enc, str):  # shorthand assigned after construction; to_dict normalises
+            enc = Encoding(field=enc)
         ep = f"{p}/encoding/{ch}"
         col = _lookup(ds, enc.field)
+        if col is not None and (not isinstance(col, (Column, ColumnSchema))
+                                or id(col) in c.bad_columns):
+            continue  # reported as invalid_type / invalid_values
         if col is None:
             names = ds.columns.keys()
             c.add(ep + "/field", "unknown_column",
@@ -532,7 +750,8 @@ def _check_axis_binding(c: _Ctx, ep: str, axis: str, name: str, col: Any) -> Non
 
 def _check_units(c: _Ctx) -> None:
     for axis, seen in c.units.items():
-        declared = c.spec.axes[axis].unit if axis in c.spec.axes else None
+        a = c.axes.get(axis)
+        declared = a.unit if isinstance(a, Axis) and isinstance(a.unit, str) else None
         ref_unit = declared
         ref_where = f"/axes/{axis}/unit" if declared is not None else None
         for path, unit in seen:
@@ -546,10 +765,63 @@ def _check_units(c: _Ctx) -> None:
                       "to its own figure. Units are never converted implicitly.")
 
 
-def _check_annotation(c: _Ctx, i: int, a: Any) -> None:
-    p = f"/annotations/{i}"
-    if isinstance(a, Annotation) and not _annotation_types_ok(c, p, a):
+def _check_coordinate(c: _Ctx, path: str, axis: Any, v: Any, what: str, code: str) -> bool:
+    """Check that coordinate ``v`` (already type-checked as number, string or
+    None) is the right kind for ``axis``: an ISO-8601 date/time string on a
+    time axis (see :func:`figure.time_axes`), a number on a linear/log/symlog
+    axis. ``code`` is reported for a string that is not a date/time."""
+    if v is None:
+        return True
+    if axis in c.times:
+        if is_number(v):
+            c.add(path, "scale_dtype_mismatch",
+                  f"axis {axis} is a time axis, so {what} must be an ISO-8601 date/time "
+                  f"string (e.g. \"2026-01-01\"), got the number {v!r}. Numbers are not "
+                  "read as timestamps.")
+            return False
+        if parse_time_coordinate(v) is None:
+            c.add(path, code,
+                  f"{what} {v!r} is not an ISO-8601 date/time, which axis {axis} (a time axis) "
+                  "needs; use YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS[.ffffff]] with an optional Z "
+                  "or +HH:MM offset.")
+            return False
+        return True
+    scale = c.scale(axis)
+    if scale in ("linear", "log", "symlog") and isinstance(v, str):
+        hint = (" For dates, use scale 'time'." if parse_time_coordinate(v) is not None
+                else " For categories, use scale 'category'.")
+        c.add(path, "scale_dtype_mismatch",
+              f"axis {axis} has a {scale} scale, so {what} must be a number, got the string "
+              f"{v!r}.{hint}")
+        return False
+    return True
+
+
+def _check_order(c: _Ctx, path: str, lo: Any, hi: Any, message: str) -> None:
+    """Report ``lo >= hi`` for two numbers or two date/time strings (compared
+    as instants, not as text). Other combinations are not ordered here."""
+    if _num(lo) and _num(hi):
+        if lo >= hi:
+            c.add(path, "invalid_limits", message)
         return
+    a, b = parse_time_coordinate(lo), parse_time_coordinate(hi)
+    if a is None or b is None:
+        return
+    if (a.utcoffset() is None) != (b.utcoffset() is None):
+        c.add(path, "invalid_limits",
+              f"{lo!r} and {hi!r} mix a timezone-aware and a naive date/time, which cannot be "
+              "ordered; give both an offset (e.g. +00:00) or neither.")
+    elif a >= b:
+        c.add(path, "invalid_limits", message)
+
+
+def _check_annotation(c: _Ctx, i: int, a: Annotation) -> None:
+    p = f"/annotations/{i}"
+    if not _annotation_types_ok(c, p, a):
+        return
+    coords_ok = _t_all(*(
+        _check_coordinate(c, f"{p}/{k}", axis, getattr(a, k), k, "invalid_value")
+        for k, axis in annotation_axes(a).items() if hasattr(a, k)))
     if isinstance(a, TextAnnotation):
         if not a.text:
             c.add(p + "/text", "missing_field", "a text annotation needs non-empty text.")
@@ -562,7 +834,9 @@ def _check_annotation(c: _Ctx, i: int, a: Any) -> None:
                       f"axis {k} is log-scaled; the annotation at {k} = {v} cannot be placed.")
         return
     if not isinstance(a, (ReferenceLine, ReferenceBand)):
-        c.add(p + "/type", "invalid_value", f"unknown annotation type {a.type!r}.")
+        c.add(p + "/type", "invalid_value",
+              f"unknown annotation type {a.type!r}; use TextAnnotation, ReferenceLine or "
+              "ReferenceBand.")
         return
     if a.axis not in c.axis_keys:
         c.add(p + "/axis", "unknown_axis",
@@ -575,5 +849,6 @@ def _check_annotation(c: _Ctx, i: int, a: Any) -> None:
         elif c.scale(a.axis) == "log" and _num(v) and v <= 0:
             c.add(f"{p}/{k}", "log_scale_nonpositive",
                   f"axis {a.axis} is log-scaled; {k} {v} cannot be drawn.")
-    if isinstance(a, ReferenceBand) and _num(a.start) and _num(a.end) and a.start >= a.end:
-        c.add(p, "invalid_limits", "reference band start must be below end.")
+    if isinstance(a, ReferenceBand) and coords_ok and c.scale(a.axis) != "category":
+        _check_order(c, p, a.start, a.end,
+                     f"reference band start {a.start!r} must be below end {a.end!r}.")

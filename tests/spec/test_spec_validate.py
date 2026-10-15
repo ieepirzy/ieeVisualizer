@@ -159,8 +159,11 @@ def test_log_scale_limits_and_function_domain():
 def test_scale_dtype_mismatch():
     spec = timeseries_spec()
     spec.axes["x"].scale = "linear"
+    # The holiday band's date strings cannot be placed on a linear axis either.
     assert codes(spec) == [("/layers/0/encoding/x", "scale_dtype_mismatch"),
-                           ("/layers/1/encoding/x", "scale_dtype_mismatch")]
+                           ("/layers/1/encoding/x", "scale_dtype_mismatch"),
+                           ("/annotations/1/start", "scale_dtype_mismatch"),
+                           ("/annotations/1/end", "scale_dtype_mismatch")]
 
 
 def test_function_mark_shapes():

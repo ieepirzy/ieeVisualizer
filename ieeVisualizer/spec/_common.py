@@ -140,9 +140,11 @@ def expect_number(value: Any, path: str, what: str, optional: bool = False) -> f
         return None
     if not is_number(value):
         raise fail(path, "invalid_type", f"{what} must be a number, got {_jtype(value)}.")
+    if beyond_float64(value):
+        raise out_of_range_error(path, what, value)
     if not math.isfinite(value):
         raise non_finite_error(path, what, value)
-    return canon_float(value)
+    return canon_float(value, path, what)
 
 
 def expect_int(value: Any, path: str, what: str, optional: bool = False) -> int | None:
@@ -152,9 +154,11 @@ def expect_int(value: Any, path: str, what: str, optional: bool = False) -> int 
         return None
     if not is_number(value):
         raise fail(path, "invalid_type", f"{what} must be an integer, got {_jtype(value)}.")
+    if beyond_float64(value):
+        raise out_of_range_error(path, what, value)
     if not math.isfinite(value):
         raise non_finite_error(path, what, value)
-    out = canon_int(value)
+    out = canon_int(value, path, what)
     if not isinstance(out, int):
         raise fail(path, "invalid_type", f"{what} must be an integer, got {value!r}.")
     return out
@@ -164,6 +168,37 @@ def non_finite_error(path: str, what: str, value: Any) -> SpecParseError:
     return fail(path, "non_finite_number",
                 f"{what} is {value!r}; NaN and infinities are not valid JSON numbers. Use a "
                 "finite number, or null where the field allows it.")
+
+
+def beyond_float64(v: Any) -> bool:
+    """An exact number (e.g. a Python int such as ``10**400``) too large for a
+    float64. JSON itself has no limit, but no reader that parses numbers as
+    doubles (JavaScript, numpy, the renderer) can hold it."""
+    if not is_number(v):
+        return False
+    try:
+        float(v)
+    except OverflowError:
+        return True
+    return False
+
+
+def out_of_range_error(path: str, what: str, value: Any) -> SpecParseError:
+    """``number_out_of_range`` for a value :func:`beyond_float64` refuses."""
+    return fail(path, "number_out_of_range",
+                f"{what} {short_number(value)} is beyond the float64 range (about +-1.8e308), "
+                "so it cannot be stored as a number that readers can hold; rescale it (e.g. "
+                "change the unit) upstream.")
+
+
+def short_number(v: Any) -> str:
+    """``str(v)``, shortened for a message (and safe beyond Python's int ->
+    str digit limit)."""
+    try:
+        s = str(v)
+    except ValueError:  # beyond Python's int -> str digit limit
+        return "(a very large integer)"
+    return s if len(s) <= 24 else f"{s[:12]}... ({len(s)} digits)"
 
 
 # --------------------------------------------------------------------------
@@ -183,21 +218,29 @@ def _is_np_bool(v: Any) -> bool:
     return type(v).__name__ in ("bool_", "bool") and type(v).__module__ == "numpy"
 
 
-def canon_float(v: Any) -> Any:
+def canon_float(v: Any, path: str = "", what: str = "value") -> Any:
     """Canonical float for a declared-numeric field; other values are returned
     unchanged (the validator reports them). Raises ``ValueError`` for NaN/inf,
-    which no JSON document can hold."""
+    which no JSON document can hold, and :class:`SpecParseError`
+    (``number_out_of_range`` at ``path``, also a ``ValueError``) for a number
+    beyond the float64 range, such as ``10**400``."""
     if not is_number(v):
         return v
+    if beyond_float64(v):
+        raise out_of_range_error(path, what, v)
     f = float(v)
     if not math.isfinite(f):
         raise ValueError(f"{v!r} is not a finite number; NaN and infinities cannot be stored.")
     return f + 0.0  # -0.0 + 0.0 == +0.0
 
 
-def canon_int(v: Any) -> Any:
+def canon_int(v: Any, path: str = "", what: str = "value") -> Any:
     """Canonical int for a declared-integer field: integral numbers (``3``,
-    ``3.0``, ``numpy.int64(3)``) become ``int``; anything else is unchanged."""
+    ``3.0``, ``numpy.int64(3)``) become ``int``; anything else is unchanged.
+    Raises :class:`SpecParseError` (``number_out_of_range``) as
+    :func:`canon_float` does."""
+    if beyond_float64(v):
+        raise out_of_range_error(path, what, v)
     if is_number(v) and math.isfinite(v) and float(v).is_integer():
         return int(v)
     return v
