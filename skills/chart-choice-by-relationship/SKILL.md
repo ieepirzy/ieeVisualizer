@@ -35,9 +35,10 @@ probably needs no chart.
 | Spatial | Where? | map only when location matters to the decision | table by region | choropleth of raw counts (map population instead) |
 | Uncertainty | How sure? | see `uncertainty-display` | | |
 
-Limits above are guidance from public-sector style guides, not hard rules:
-about four lines per line chart, four parts per stack, four bars per cluster,
-five slices per pie. Beyond them, use small multiples or highlight one series
+Limits above are guidance, not hard rules: the UK Analysis Function suggests
+about four lines per line chart, four parts per stack, four bars per cluster
+and five slices per pie; summaries of Wong's guide report the same limit of
+about four lines (never more than five). Beyond them, use small multiples or highlight one series
 and grey the rest.
 
 ## Step 2: map to ieeVisualizer (spec 1.0)

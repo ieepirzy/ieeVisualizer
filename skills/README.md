@@ -11,6 +11,9 @@ at the repository root; skills are discovered from this `skills/` directory).
 Each skill is `skills/<name>/SKILL.md` in the Agent Skills format, with a
 `SOURCES.md` listing every upstream source, its licence and what was taken.
 
+Company figures in the examples (Muutto365 and other moving-company cases)
+are invented for illustration; they are not real company data.
+
 ## Install
 
 ```text
@@ -79,7 +82,8 @@ slots, `empty_series`), units are never converted (`mixed_units`,
 `axis_unit_conflict`), forecasts are always drawn distinctly
 (`role="forecast"`), templates never invent uncertainty, dual y-axes cannot be
 expressed, and every export carries a provenance manifest. Required interval
-level and kind are planned (ROADMAP "Phase 2 onward"). Everything else —
+level and kind are planned ([ROADMAP](../docs/ROADMAP.md) "Phase 2 onward").
+Everything else —
 zero baselines for bars, complete periods, fair comparisons, truthful titles,
 filled-in provenance, contrast, alt text — is guarded only by the skills.
 

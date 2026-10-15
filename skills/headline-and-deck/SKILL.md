@@ -17,6 +17,8 @@ as a set of claims.
 - **Deck**: the next fact the reader needs to not be misled: the comparison
   base, the main caveat, or the decision at stake. One sentence.
 
+Illustrative example (figures invented):
+
 > Headline: Conversion fell to 24% as the lead mix shifted toward Meta ads
 > Deck: Every channel converted at least as well as in August; Meta's share
 > of quotes rose from 18% to 29%, and it converts at half the referral rate.
@@ -49,27 +51,35 @@ computed field, value, period, source) or it is cut.
 5. **Headline and figure agree.** The direction and size claimed are visible
    in the chart, over the window the chart shows.
 6. **Monitoring is allowed to be dull.** "Bookings in line with last year"
-   is a valid headline; do not manufacture tension.
+   is a valid headline if the report states what counts as "in line" (e.g.
+   within ±5%); do not manufacture tension, and do not turn an inconclusive
+   test into "no change" (`statistical-claims` Rule 5).
 7. **Specific beats clever.** No puns or idioms that a non-native reader or
    a translation would lose.
 8. **Same number, same rounding** in headline, deck, body and chart.
 
-## Muutto365 examples
+## Muutto365 examples (illustrative; figures invented)
 
 Bad: "Record month as new campaign drives bookings surge"
 - "Record": data since March 2024 only. "drives": before/after, no control.
   "surge": +13%.
 
-Good: "Bookings rose 13% in September, the most since March 2024"
+Good: "Bookings rose 13% in September, the most since records began in March 2024"
 Deck: "The rise came in the first full month of the Google campaign; seasonal
 demand also peaks in September, so the campaign's share is not yet known."
 
 ## AI-research example
 
 Bad: "New method beats baseline on all benchmarks"
-- "beats": 2 of 5 paired intervals include zero.
+- "beats": five benchmarks means five comparisons; with a Bonferroni
+  correction for the five (99% paired intervals for a 95% family level),
+  2 of the 5 intervals include zero.
 
-Good: "New method leads on 3 of 5 benchmarks; the other two are ties"
+Good: "New method leads on 3 of 5 benchmarks; on the other two the
+difference is not distinguishable from zero"
+Deck: "Paired 99% intervals over items and seeds (Bonferroni, 95% across the
+five benchmarks). The two inconclusive intervals span gains and losses that would
+matter, so they are not ties (`statistical-claims` Rules 3 and 5)."
 
 ## Checklist
 

@@ -27,8 +27,16 @@ NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 # Licences whose terms allow adapting (paraphrasing/restructuring) text here.
 ADAPTABLE = {"Apache-2.0", "MIT", "OGL-UK-3.0", "CC-BY-4.0", "CC0-1.0", "Same owner (internal)"}
-# Adapted third-party material under these licences must be attributed in NOTICE.md.
-NEEDS_NOTICE = {"Apache-2.0", "MIT", "OGL-UK-3.0", "CC-BY-4.0", "CC0-1.0"}
+# Adapted third-party material under these licences must be attributed in NOTICE.md
+# (under the heading given here) and in the skill's closing "Adapted in part
+# from ...; changed: ..." line, which must name the licence (pattern given here).
+NEEDS_NOTICE = {
+    "Apache-2.0": ("## Apache License 2.0", r"Apache-2\.0"),
+    "MIT": ("## MIT License", r"\bMIT\b"),
+    "OGL-UK-3.0": ("## Open Government Licence v3.0", r"\bOGL\b"),
+    "CC-BY-4.0": ("## Creative Commons Attribution 4.0", r"CC BY 4\.0"),
+    "CC0-1.0": ("## CC0 1.0", r"\bCC0\b"),
+}
 
 SKILL_DIRS = sorted(p for p in SKILLS.iterdir() if p.is_dir() and p.name not in NON_SKILL_DIRS)
 SKILL_IDS = [p.name for p in SKILL_DIRS]
@@ -129,19 +137,39 @@ def test_sources(skill_dir):
                 "does not allow it; cite it instead")
 
 
+def notice_sections() -> dict[str, str]:
+    """NOTICE.md split into its ``## `` sections, keyed by heading line."""
+    text = (SKILLS / "NOTICE.md").read_text(encoding="utf-8")
+    parts = re.split(r"(?m)^(## .+)$", text)
+    return {parts[i].strip(): parts[i + 1] for i in range(1, len(parts), 2)}
+
+
+def closing_attribution(body: str) -> str | None:
+    """The skill's closing "Adapted in part from ...; changed: ..." paragraph."""
+    m = re.search(r"(?m)^Adapted in part from (?:.+\n)*?.*changed:", body)
+    return m.group(0) if m else None
+
+
 @pytest.mark.parametrize("skill_dir", SKILL_DIRS, ids=SKILL_IDS)
 def test_adapted_sources_are_attributed(skill_dir):
     entries = parse_sources((skill_dir / "SOURCES.md").read_text(encoding="utf-8"))
     adapted = [e for e in entries if e["use"].startswith("adapted")]
     third_party = [e for e in adapted if e["licence"] in NEEDS_NOTICE
                    and "github.com/ieepirzy" not in e["head"]]
-    notice = (SKILLS / "NOTICE.md").read_text(encoding="utf-8")
-    if third_party:
-        assert f"`{skill_dir.name}`" in notice, f"{skill_dir.name} missing from NOTICE.md"
-    if any(e["licence"] == "Apache-2.0" for e in adapted):
-        body = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
-        assert re.search(r"Adapted in part from[^\n]*(\n[^\n]+)*?Apache-2\.0[\s\S]*?changed:",
-                         body), "a skill adapting Apache-2.0 text must state that it was changed"
+    if not third_party:
+        return
+    sections = notice_sections()
+    body = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    line = closing_attribution(body)
+    assert line, (f"{skill_dir.name} adapts third-party text but has no closing "
+                  "'Adapted in part from ...; changed: ...' line")
+    for licence in sorted({e["licence"] for e in third_party}):
+        heading, pattern = NEEDS_NOTICE[licence]
+        assert f"`{skill_dir.name}`" in sections.get(heading, ""), (
+            f"{skill_dir.name} adapts {licence} text but is not listed under "
+            f"{heading!r} in NOTICE.md")
+        assert re.search(pattern, line), (
+            f"the closing attribution line of {skill_dir.name} does not name {licence}")
 
 
 @pytest.mark.parametrize("skill_dir", SKILL_DIRS, ids=SKILL_IDS)
@@ -190,11 +218,117 @@ def test_plugin_manifests():
     assert entry["version"] == plugin["version"]
 
 
+PACKAGE = ROOT / "ieeVisualizer"
+
+# Backticked identifiers in the skills that are *not* ieeVisualizer API, so are
+# exempt from test_library_facts_exist. Keep each entry commented.
+NOT_LIBRARY = {
+    # Example data: query, column and flag names from the invented company cases.
+    "weekly_confirmed_bookings", "is_internal", "conv_rate",
+    # A nullable column in the Muutto365 admin schema, quoted as an example.
+    "budget_total_cents",
+    # Matplotlib colormap name, not an ieeVisualizer identifier.
+    "RdBu",
+    # Floating-point "not a number", not an identifier.
+    "NaN",
+}
+# Documented in the skills as *planned* (docs/ROADMAP.md "Phase 2 onward").
+# test_planned_names_not_shipped fails as soon as one appears in the package:
+# then update the skills that call it planned and drop it from this set.
+PLANNED = {"interval_level", "interval_kind", "y_lower", "y_upper", "ViewSpec"}
+
+SNAKE_RE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$")
+CAMEL_RE = re.compile(r"^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+$")
+FILE_RE = re.compile(r"^[\w./-]+\.(?:py|md|json|txt|toml)$")
+
+
+def skill_texts() -> dict[Path, str]:
+    """Every SKILL.md and references/*.md, keyed by path."""
+    paths = [*SKILLS.glob("*/SKILL.md"), *SKILLS.glob("*/references/*.md")]
+    return {p: p.read_text(encoding="utf-8") for p in sorted(paths)}
+
+
+def backticked_identifiers(text: str) -> set[str]:
+    """snake_case and CamelCase identifiers inside inline code spans.
+
+    Fenced code blocks are dropped first (the runnable ones are executed by
+    test_ieevisualizer_examples_run). Inside a span, every identifier token is
+    considered, so `style.color_of` yields ``color_of``.
+    """
+    text = re.sub(r"```.*?```", "", text, flags=re.S)
+    out: set[str] = set()
+    for span in re.findall(r"`([^`\n]+)`", text):
+        if FILE_RE.match(span):  # a file path such as `tests/test_skills.py`
+            continue
+        for tok in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", span):
+            if SNAKE_RE.match(tok) or CAMEL_RE.match(tok):
+                out.add(tok)
+    return out
+
+
+def package_source() -> str:
+    return "\n".join(p.read_text(encoding="utf-8") for p in sorted(PACKAGE.rglob("*.py")))
+
+
+def in_source(name: str, source: str) -> bool:
+    return re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", source) is not None
+
+
+def test_library_facts_exist():
+    """Warning/error codes, field names and API names the skills cite in
+    backticks must exist in the ieeVisualizer package, so a rename in the
+    library fails here instead of silently leaving the skills wrong."""
+    source = package_source()
+    missing = {}
+    for path, text in skill_texts().items():
+        for name in backticked_identifiers(text) - NOT_LIBRARY - PLANNED:
+            if not in_source(name, source):
+                missing.setdefault(name, []).append(str(path.relative_to(ROOT)))
+    assert not missing, f"cited in skills but absent from ieeVisualizer/: {missing}"
+
+
+def test_library_facts_are_collected():
+    """Guard the collector itself: a known code from each family is found."""
+    found = set().union(*(backticked_identifiers(t) for t in skill_texts().values()))
+    for name in ("null_values_omitted", "mixed_units", "log_scale_nonpositive",
+                 "RenderResult", "SpecValidationError", "apply_patch"):
+        assert name in found, name
+    assert len(found - NOT_LIBRARY - PLANNED) >= 30
+
+
+def test_planned_names_not_shipped():
+    source = package_source()
+    shipped = sorted(n for n in PLANNED if in_source(n, source))
+    assert not shipped, (f"{shipped} now exist in ieeVisualizer/: update the skills "
+                         "that call them planned, then remove them from PLANNED")
+
+
+def test_planned_names_are_called_planned():
+    """Each PLANNED name is cited somewhere, and every mention says 'planned'
+    (in its table row, or in its paragraph for prose)."""
+    seen = set()
+    for path, text in skill_texts().items():
+        for block in re.split(r"\n\s*\n", text):
+            for unit in ([ln for ln in block.splitlines()]
+                         if block.lstrip().startswith("|") else [block]):
+                for name in PLANNED & backticked_identifiers(unit):
+                    seen.add(name)
+                    assert "planned" in unit.lower(), (
+                        f"{path.relative_to(ROOT)} cites `{name}` without saying it is planned")
+    assert seen == PLANNED, f"PLANNED names never cited: {PLANNED - seen}"
+
+
 def _python_blocks(path: Path) -> list[str]:
     return re.findall(r"```python\n(.*?)```", path.read_text(encoding="utf-8"), re.S)
 
 
 EXAMPLES = SKILLS / "ieevisualizer-figures" / "references" / "examples.md"
+
+
+def test_ieevisualizer_examples_exist():
+    # Without this, losing every block would turn the test below into zero
+    # parametrized cases and pass silently.
+    assert len(_python_blocks(EXAMPLES)) >= 1
 
 
 @pytest.mark.parametrize("index", range(len(_python_blocks(EXAMPLES))))

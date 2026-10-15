@@ -16,7 +16,13 @@ Report the size of the effect in the reader's units, with an interval, before
 any test statistic.
 
 Good: "The new quote form raised quote-to-booking conversion by 3.1 percentage
-points (95% CI 0.4 to 5.8; 1,840 quotes, randomised)."
+points (95% CI 0.4 to 5.8; 4,000 quotes, randomised)."
+
+(Illustrative; figures invented but consistent: 2,000 quotes per arm, 24.0%
+vs 27.1%. SE = √(0.240·0.760/2,000 + 0.271·0.729/2,000) ≈ 1.38 pp, and
+3.1 ± 1.96 × 1.38 = 0.4 to 5.8 pp, normal approximation. With only 920
+quotes per arm the same rates give ±4.0 pp, an interval of −0.9 to 7.1.)
+
 Bad: "The new quote form had a significant effect (p = 0.03)."
 
 ## Rule 2: say what a p-value is, and nothing more
@@ -34,7 +40,8 @@ Bad: "The new quote form had a significant effect (p = 0.03)."
 - State how many segments, metrics, time windows or variants were examined,
   not only the one that moved. Ten segments at the 5% level give a good chance
   of at least one false alarm (about 40% if independent).
-- Either correct (Holm, Benjamini–Hochberg; say which) or label the result
+- Either correct (Bonferroni or Holm for a family-wise level,
+  Benjamini–Hochberg for the false discovery rate; say which) or label the result
   **exploratory**, to be confirmed on new data.
 - Pre-specified primary metric beats post-hoc winner.
 
@@ -60,8 +67,8 @@ State the minimum detectable effect the design could find.
 | Cross-sectional or observational correlation | associated with, higher among, predicts | drives, leads to, results in |
 | Single anomaly | was unusual, departed from | anything causal |
 
-Business example: conversion rose from 22% to 26% the week the new pricing
-page launched, but August→September is also seasonal and a campaign changed
+Business example (illustrative; figures invented): conversion rose from 22%
+to 26% the week the new pricing page launched, but August→September is also seasonal and a campaign changed
 the traffic mix. Write "Conversion rose after the pricing page launch; the
 season and a change in traffic mix may account for part of it. A holdout
 would separate them."

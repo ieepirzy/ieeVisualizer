@@ -47,7 +47,8 @@ and uses none of its fonts or logos. Numeric limits below are guidance, not hard
 - **Scale with intent.** Choose the y-range so the line uses most of the plot
   height (summaries of Wong report roughly two thirds) unless the zero
   baseline is the point; bars always from zero.
-- **Few series.** About three or four lines (at most about five); a handful of
+- **Few series.** About four lines, never more than five (both the UK
+  Analysis Function guidance and summaries of Wong say so); a handful of
   bars, each about twice as wide as the gap between bars; pies only with few
   slices. More: highlight and grey, or split.
 - **Legend last resort.** Order legend entries as the series appear in the

@@ -15,4 +15,4 @@ finding only, no text taken).
   - Use: cited — the idea of organising chart choice by relationship (deviation, correlation, ranking, distribution, change over time, magnitude, part-to-whole, spatial, flow). No poster content, wording or images used.
 - **Dona M. Wong, *The Wall Street Journal Guide to Information Graphics* (Norton, 2010)**, via secondary summary by Ataccama <https://www.ataccama.com/blog/top-10-takeaways-from-wsj-guide-to-information-graphics>
   - Licence: Copyrighted (book)
-  - Use: cited — reported guidance: avoid pies with many or missing slices; limit lines and bars. Numeric limits treated as guidance. No book text used.
+  - Use: cited [V, via Ataccama] — reported guidance: avoid pies with many or missing slices; about four lines per chart, never more than five; limit bars. Numeric limits treated as guidance. No book text used.

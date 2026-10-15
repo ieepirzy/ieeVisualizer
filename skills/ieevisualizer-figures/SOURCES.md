@@ -10,6 +10,6 @@ finding only, no text taken).
 - **ieeVisualizer docs/SPEC.md, docs/TEMPLATES.md, docs/RENDERING.md and source on `main`** <https://github.com/ieepirzy/ieeVisualizer/tree/main/docs>
   - Licence: MIT
   - Use: adapted — API, validation codes, enforcement behaviour. Examples verified by running them against `main` (executed in `tests/test_skills.py`). Same project.
-- **ieeVisualizer docs/ROADMAP.md, "Phase 2 onward" (branch `claude/roadmap-phase2`)** <https://github.com/ieepirzy/ieeVisualizer>
+- **ieeVisualizer docs/ROADMAP.md, "Phase 2 onward: decided direction"** <https://github.com/ieepirzy/ieeVisualizer/blob/main/docs/ROADMAP.md>
   - Licence: MIT
   - Use: adapted — what is planned (interval metadata, band/errorbar marks, ViewSpec diagrams). Same project.

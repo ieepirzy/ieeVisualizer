@@ -41,7 +41,12 @@ set of eval items. Report it so a reader can tell a real gap from noise.
    chosen on validation data. Say which split selected what.
 8. **Bold only what is distinguishable.** Bold the best entry only if its
    paired difference from the runner-up excludes zero at the stated level;
-   otherwise bold all entries tied within the interval, or none.
+   otherwise bold every entry whose difference from the best is not
+   distinguishable from zero, or none. "Not distinguishable" is not "tied":
+   the interval may still allow a gap that matters. Across several
+   benchmarks or metrics, adjust for the number of comparisons (e.g.
+   Bonferroni-adjusted intervals; say which) or label the bolding
+   exploratory.
 9. **Training curves state their axes and smoothing.** x in steps, tokens or
    FLOPs (say which); smoothing named ("EMA, α = 0.9; raw in light colour");
    band named ("min–max over 5 seeds").
@@ -67,8 +72,9 @@ bootstrap interval over items and seeds."
 ## Good / bad
 
 Bad: "Our method achieves SOTA (**71.3** vs 70.9)" from one seed each.
-Good: "71.3 vs 70.9 (paired Δ +0.4 pp, 95% CI −1.1 to +1.9; 5 seeds): no
-detectable difference."
+Good: "71.3 vs 70.9 (paired Δ +0.4 pp, 95% CI −1.1 to +1.9; 5 seeds): the
+difference is not distinguishable from zero, and the interval still allows
+up to 1.9 pp either way, so this is not evidence the two are equal."
 
 Bad: RL return curve, mean of 3 seeds, band unlabelled, smoothed with an
 unknown window.

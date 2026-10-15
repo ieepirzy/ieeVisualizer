@@ -94,6 +94,6 @@ weighting, and whether a declared `denominator` is the right one.
 - [ ] Bars/areas include zero; no dual axes; panel scales shared or flagged.
 - [ ] One number recomputed by an independent path.
 
-Adapted in part from Anthropic's `validate-data` skill (Apache-2.0); changed:
-reorganised into a comparison/population/encoding audit, rewritten, examples
-replaced. Sources and licences: `SOURCES.md`.
+Adapted in part from Anthropic's `validate-data` skill (Apache-2.0) and UK
+Analysis Function chart guidance (OGL v3.0); changed: reorganised into a
+comparison/population/encoding audit, rewritten, examples replaced. Sources and licences: `SOURCES.md`.

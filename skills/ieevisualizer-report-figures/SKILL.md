@@ -57,7 +57,7 @@ explorations, then method. Prose in `editorial-voice-wsj-like`; numbers in
 `numbers-style`; every headline checked by `headline-and-deck`; final pass
 with `figure-review-redteam`.
 
-## Metric traps (Muutto365-like examples)
+## Metric traps (Muutto365-like examples, illustrative)
 
 | Metric | Define | Common trap |
 |---|---|---|

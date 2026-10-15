@@ -13,7 +13,7 @@ affiliation or endorsement and uses no Journal text, fonts or logos.
 
 - **Poynter, "The Nut Graf, Part I" (2003)** <https://www.poynter.org/archive/2003/the-nut-graf-part-i/>
   - Licence: Copyrighted (article)
-  - Use: cited [V, re-read 2026-10-15] — the nut graf (context paragraph right after the lead saying what the story is about and why it matters, often why now); Kilgore's 1941 ban on "today"/"yesterday" in leads and the move to trend stories; write it first in one or two sentences and rewrite it during reporting; one paragraph, two or three at most; it makes an argument and needs evidence; Jack Hart's framing "Why should I bother with this story?". Paraphrased; only that short attributed phrase quoted.
+  - Use: cited [V, re-read 2026-10-15] — the nut graf (context paragraph right after the lead saying what the story is about and why it matters, often why now); Kilgore's 1941 ban on "today"/"yesterday" in leads and the move to trend stories; one paragraph, two or three at most; it makes an argument and needs evidence; Jack Hart's framing "Why should I bother with this story?". Paraphrased; only that short attributed phrase quoted. The advice to write the nut graf first, in one or two sentences, and rewrite it as evidence comes in is our own, not the article's.
 - **Chip Scanlan, "Covering the Bases: Bill Blundell's Story Blocks", Poynter (13 Mar 2003)** <https://poynter.org/?p=8177>
   - Licence: Copyrighted (article)
   - Use: cited [V, read 2026-10-15] — Blundell's six blocks (history, scope, central reasons, impacts, contrary forces, future) and their use as a reporting roadmap. Restated in our own words with new examples.
@@ -25,7 +25,7 @@ affiliation or endorsement and uses no Journal text, fonts or logos.
   - Use: cited [V, read 2026-10-15] — the formula lede → nut graf → body → kicker; Ken Wells (a Journal Page One editor) on the nut graf as the paragraph saying what the story is about and why to read it; misuses (too early, giving away the outcome, formula by default). Paraphrased.
 - **Talking Biz News, "WSJ is eliminating usage of courtesy titles" (2023)** <https://talkingbiznews.com/media-news/wsj-is-eliminating-usage-of-courtesy-titles/>
   - Licence: Copyrighted (article)
-  - Use: cited [S] — reported: courtesy titles dropped in May 2023, occupational titles kept.
+  - Use: cited [S] — reported: courtesy titles (honorifics such as Mr. and Ms.) dropped in May 2023. Only that is credited to the source; keeping occupational titles is our own rule.
 - **Talking Biz News, "WSJ dropping company suffixes" (2023)** <https://talkingbiznews.com/media-news/wsj-dropping-company-suffixes/>
   - Licence: Copyrighted (article)
   - Use: cited [S] — reported: Inc./Corp. suffixes dropped in 2023.

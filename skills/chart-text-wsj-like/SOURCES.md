@@ -32,4 +32,4 @@ and are presented as guidance.
   - Use: cited — secondary description. No text used.
 - **UK Government Analysis Function, "Data visualisation: charts"** <https://analysisfunction.civilservice.gov.uk/policy-store/data-visualisation-charts/>
   - Licence: OGL-UK-3.0
-  - Use: adapted — headline title plus statistical subtitle; label axes and series; horizontal text only; thousands separators; direct labelling over legends with legend order matching the chart; about ten light-grey gridlines at most. Paraphrased; no images used.
+  - Use: adapted — headline title plus statistical subtitle; label axes and series; horizontal text only; thousands separators; direct labelling over legends with legend order matching the chart; about ten light-grey gridlines at most; about four lines per line chart (also reported for Wong, above). Paraphrased; no images used.

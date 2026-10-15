@@ -35,8 +35,9 @@ trends rather than the calendar.
 2. **Nut graf (right after the lede; by paragraph 2–4 at the latest).** One
    paragraph that steps back from the case to the pattern and answers "why
    should I bother with this?": what changed, how big, why now, what it means
-   for a decision. Write it first, as one or two sentences, before drafting;
-   rewrite it as the evidence comes in, because it exposes gaps. It is an
+   for a decision. Our own practice (not from the cited sources): write it
+   first, as one or two sentences, before drafting, and rewrite it as the
+   evidence comes in, because it exposes gaps. It is an
    argument, so every clause in it needs evidence in the body. One paragraph;
    two or three at the very most. If you cannot write it, there is no story
    yet: send a monitoring update instead.
@@ -59,7 +60,7 @@ organised material around six blocks (as described by Chip Scanlan at
 Poynter). Use them as a reporting checklist for any exception or analysis,
 and as the skeleton of the body. Skip a block only deliberately.
 
-| Block | Question | Muutto365 example: conversion fell to 24% |
+| Block | Question | Muutto365 example (figures invented): conversion fell to 24% |
 |---|---|---|
 | **History** | When did it start; what led here? | first week below 28% since March; price list v7 on 28 Sep |
 | **Scope** | How big; how many affected; how much money? | 412 quotes a week; about €12,000 a month per point |
@@ -91,10 +92,11 @@ future (open questions, what would falsify it).
   sentence; most sentences under about 25 words. Delete "very", "really",
   "significantly" (unless statistical, and then define it).
 - **Names.** Full name and role at first mention, surname after; no
-  courtesy titles (Mr., Ms., Dr. as an honorific); occupational titles are
-  kept ("analyst", "CFO"). (The Journal reportedly made the same change in
-  2023.) In an internal founders' briefing, first names
-  are acceptable if used consistently.
+  courtesy titles (Mr., Ms., Dr. as an honorific). The Journal reportedly
+  dropped courtesy titles in 2023. Occupational titles are kept ("analyst",
+  "CFO"); that part is our own rule, not something the reports describe.
+  In an internal founders' briefing, first names are acceptable if used
+  consistently.
 - **Company names** without legal suffixes (Inc., Corp., Oy, Ab) in running
   text unless the legal entity matters (also reportedly dropped by the
   Journal in 2023).
@@ -128,7 +130,7 @@ Bad:
 > This week we saw some really interesting developments in conversion,
 > which dropped significantly, probably due to the new pricing.
 
-Good:
+Good (illustrative; Muutto365-style figures invented):
 > Quote-to-booking conversion fell to 24% in the week to 4 October, from 31%
 > a week earlier, on 412 quotes, according to the booking service.
 >
@@ -155,4 +157,6 @@ Good:
 - [ ] No courtesy titles; no legal suffixes in running text.
 - [ ] Editing introduced no new facts; numbers re-verified.
 
-Sources and licences: `SOURCES.md`.
+Adapted in part from jamditis `data-journalism` (MIT); changed: the
+observation/interpretation split and evidence-matched wording rewritten into
+sentence rules, examples replaced. Sources and licences: `SOURCES.md`.

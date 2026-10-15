@@ -22,6 +22,6 @@ finding only, no text taken).
 - **NeurIPS Paper Checklist, item "Experiment statistical significance"** <https://neurips.cc/public/guides/PaperChecklist>
   - Licence: Copyrighted (web page)
   - Use: cited — state the source of variability, the method, whether bars are SD or SE, and avoid symmetric bars that imply impossible values. No text used.
-- **ieeVisualizer docs/ROADMAP.md, "Phase 2 onward" (branch `claude/roadmap-phase2`)** <https://github.com/ieepirzy/ieeVisualizer>
+- **ieeVisualizer docs/ROADMAP.md, "Phase 2 onward: decided direction"** <https://github.com/ieepirzy/ieeVisualizer/blob/main/docs/ROADMAP.md>
   - Licence: MIT
   - Use: adapted — the planned interval metadata (`interval_level`, `interval_kind`) and its validation rule. Same project.

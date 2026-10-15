@@ -7,9 +7,10 @@ license: CC-BY-4.0
 # Showing uncertainty
 
 An estimate without its uncertainty invites the reader to treat it as exact.
-An interval without a label is worse: SD, SE and a 95% CI differ by more than a
-factor of two for typical n, and the reader cannot tell which they are
-looking at.
+An interval without a label is worse: SD and SE differ by a factor of √n,
+and a 95% CI is about ±2 SE (1.96 for a normal approximation), so the same
+data can give three very different bars and the reader cannot tell which
+they are looking at.
 
 ## Rule 1: every interval states five things
 

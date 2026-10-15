@@ -96,4 +96,7 @@ Good: cell shows `—` with footnote "run timed out after 6 h; not scored".
 - [ ] `RenderResult.warnings` were read; each `null_values_omitted` is
       explained in the caption or text.
 
-Sources and licences: see `SOURCES.md`.
+Adapted in part from K-Dense `scientific-visualization` (MIT) and UK
+Analysis Function chart guidance (OGL v3.0); changed: rewritten around the
+measured/zero/missing distinction, examples replaced. Sources and licences:
+`SOURCES.md`.
