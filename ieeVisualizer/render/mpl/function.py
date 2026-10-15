@@ -9,7 +9,9 @@ the offending identifier. SymPy evaluates exactly while it builds, so the
 text is parsed unevaluated and rebuilt under the limits of
 :mod:`ieeVisualizer._safe_expr` (powers, factorial-like functions, number
 size, expression size); ``9^9^9`` is an ``expression_too_large`` error
-instead of a hang.
+instead of a hang. A sub-expression that evaluates to an undefined or
+infinite constant (``1/0``, ``tan(pi/2)``, ``log(0)``) is an
+``invalid_expression`` error.
 
 Sampling reuses the legacy :func:`ieeVisualizer._evaluate.evaluate` rule:
 non-finite outputs are masked (gaps, reported as a warning) and an
@@ -23,7 +25,12 @@ import warnings as _warnings
 
 import numpy as np
 
-from ..._safe_expr import UnsafeExpression, build_bounded, parse_unevaluated
+from ..._safe_expr import (
+    UndefinedExpression,
+    UnsafeExpression,
+    build_bounded,
+    parse_unevaluated,
+)
 from ...spec import FunctionMark
 from ..base import RenderError, RenderWarning, issue
 
@@ -81,6 +88,9 @@ def parse(mark: FunctionMark, path: str):
         raise RenderError([issue(p, "expression_too_large",
                                  f"expression {expr_s!r} cannot be evaluated safely: {e} "
                                  "Simplify it or use smaller constants.")]) from None
+    except UndefinedExpression as e:
+        raise RenderError([issue(p, "invalid_expression",
+                                 f"expression {expr_s!r} cannot be drawn: {e}")]) from None
     except Exception as e:  # untrusted input: any SymPy failure is a parse error
         raise RenderError([issue(p, "invalid_expression",
                                  f"expression {expr_s!r} could not be parsed: {e}")]) from None
@@ -110,7 +120,12 @@ def sample(mark: FunctionMark, path: str, log_axes: tuple[bool, ...],
         axes_1d.append(np.geomspace(lo, hi, mark.samples) if is_log
                        else np.linspace(lo, hi, mark.samples))
     inputs = list(np.meshgrid(*axes_1d)) if len(axes_1d) == 2 else axes_1d
-    fn = sp.lambdify(syms, expr, modules="numpy")
+    try:
+        fn = sp.lambdify(syms, expr, modules="numpy")
+    except Exception as e:  # noqa: BLE001 - untrusted input: a printer failure is reported
+        raise RenderError([issue(path + "/expression", "invalid_expression",
+                                 f"expression {mark.expression!r} cannot be converted to a "
+                                 f"numeric function: {type(e).__name__}: {e}")]) from None
     with _warnings.catch_warnings(record=True) as caught:
         _warnings.simplefilter("always")
         try:

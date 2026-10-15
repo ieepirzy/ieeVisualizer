@@ -267,3 +267,197 @@ def test_request_validation():
     with pytest.raises(ValueError):
         RenderRequest(units="cm")
     assert RenderRequest(width=800, height=600, units="px", dpi=200).size_in == (4.0, 3.0)
+
+
+# ------------------------------------------------- forecast distinctness / pairing
+
+_LINESTYLES = [None, "solid", "dashed", "dotted", "dashdot"]
+
+
+def _obs_fc(obs_style, fc_style):
+    spec = revenue_spec(**fc_style)
+    spec.layers[0].style = dict(obs_style)
+    return spec
+
+
+@pytest.mark.parametrize("fc_ls", _LINESTYLES)
+@pytest.mark.parametrize("obs_ls", _LINESTYLES)
+def test_forecast_line_never_looks_like_an_observed_line(obs_ls, fc_ls):
+    obs_style = {} if obs_ls is None else {"linestyle": obs_ls}
+    fc_style = {} if fc_ls is None else {"linestyle": fc_ls}
+    built = build_figure(_obs_fc(obs_style, fc_style))
+    (obs,) = built.layer_artists[0]
+    (fc,) = built.layer_artists[1]
+    assert fc.get_color() == obs.get_color()  # same series ...
+    # ... but a dash pattern no observed linestyle has, and lighter
+    assert fc._unscaled_dash_pattern != obs._unscaled_dash_pattern
+    assert fc.get_linestyle() != "-"
+    assert obs.get_alpha() is None and 0 < fc.get_alpha() < 1
+
+
+def test_forecast_line_markers_are_hollow():
+    built = build_figure(_obs_fc({"marker": "o"}, {"marker": "o", "linestyle": "dotted"}))
+    (obs,) = built.layer_artists[0]
+    (fc,) = built.layer_artists[1]
+    assert obs.get_markerfacecolor() != "none"
+    assert fc.get_markerfacecolor() == "none"
+
+
+def _bounds_spec(names=("v range", "v range"), color_of="v", fc_color_of="v (forecast)"):
+    from ieeVisualizer.spec import DataSnapshot
+
+    def snap(days, vals):
+        n = len(days)
+        return DataSnapshot.from_columns(
+            {"t": days * 2, "s": ["A"] * n + ["B"] * n, "v": vals,
+             "lo": [x - 1 for x in vals], "hi": [x + 1 for x in vals]},
+            units={"v": "m", "lo": "m", "hi": "m"})
+
+    def line(part, fld, name, ref=None):
+        return LineMark(data=part, encoding={"x": "t", "y": fld, "series": "s"}, role=part,
+                        name=name, style={"linestyle": "dotted", **(
+                            {"color_of": ref} if ref else {})})
+
+    return FigureSpec(
+        datasets={"observed": snap([1, 2, 3], [1.0, 2, 3, 4, 5, 6]),
+                  "forecast": snap([4, 5], [3.0, 4, 6, 7])},
+        layers=[line("observed", "v", "v"),
+                line("observed", "lo", names[0], color_of),
+                line("observed", "hi", names[1], color_of),
+                line("forecast", "v", "v (forecast)"),
+                line("forecast", "lo", names[0], fc_color_of),
+                line("forecast", "hi", names[1], fc_color_of)])
+
+
+def test_color_of_pairs_bounds_with_their_value_series_per_group():
+    built = build_figure(_bounds_spec())
+    colours = [[ln.get_color() for ln in built.layer_artists[i]] for i in range(6)]
+    assert colours[0][0] != colours[0][1]  # series A and B differ
+    for k in (1, 2, 3, 4, 5):
+        assert colours[k] == colours[0], k  # bounds and forecast share A/B colours
+    assert not [w for w in built.warnings if w.code == "unknown_color_of"]
+    # forecast bounds are forecast-styled even though observed bounds are dotted too
+    obs_lo, fc_lo = built.layer_artists[1][0], built.layer_artists[4][0]
+    assert fc_lo._unscaled_dash_pattern != obs_lo._unscaled_dash_pattern
+    assert fc_lo.get_alpha() < 1
+
+
+def test_color_of_with_bound_layer_drawn_before_its_target():
+    spec = _bounds_spec()
+    spec.layers = [spec.layers[1], spec.layers[0]]  # bound first, value after
+    spec.datasets.pop("forecast")
+    built = build_figure(spec)
+    assert [ln.get_color() for ln in built.layer_artists[0]] == \
+        [ln.get_color() for ln in built.layer_artists[1]]
+
+
+def test_identical_bound_entries_share_one_legend_entry():
+    fig = build_figure(_bounds_spec()).figure
+    labels = [t.get_text() for t in fig.axes[0].get_legend().get_texts()]
+    # one "range" entry per series and role, not one per bound line
+    assert labels.count("v range: A") == 1 and labels.count("v range: B") == 1
+    assert labels.count("v range: A (forecast)") == 1
+
+
+@pytest.mark.parametrize("ref,why", [("nope", "no other layer"), ("v range", "several")])
+def test_unknown_or_ambiguous_color_of_warns_and_falls_back(ref, why):
+    built = build_figure(_bounds_spec(color_of=ref, fc_color_of="v (forecast)"))
+    w = [w for w in built.warnings if w.code == "unknown_color_of"]
+    assert {x.path for x in w} == {"/layers/1/style/color_of", "/layers/2/style/color_of"}
+    assert why in w[0].message
+    colours = [[ln.get_color() for ln in built.layer_artists[i]] for i in range(3)]
+    assert colours[1] != colours[0]  # own colour, not a guessed one
+
+
+def test_explicit_color_beats_color_of_with_a_warning():
+    spec = _bounds_spec()
+    spec.layers[1].style["color"] = "black"
+    built = build_figure(spec)
+    assert all(ln.get_color() == "black" for ln in built.layer_artists[1])
+    assert any(w.code == "style_key_ignored" and w.path == "/layers/1/style/color_of"
+               for w in built.warnings)
+
+
+# ----------------------------------------------------------------- size limits
+
+_SIZE_CHILD = """
+import json, sys, time
+sys.path.insert(0, "tests/render")
+from render_examples import one_layer
+from ieeVisualizer.render import RenderError, RenderRequest, render
+from ieeVisualizer.spec import BarMark, HistogramMark
+kind, n = sys.argv[1], int(sys.argv[2])
+if kind == "bins":
+    spec = one_layer(HistogramMark(encoding={"x": "a"}, bins=n), {"a": [0.1, 0.5, 0.9]})
+elif kind == "edges":
+    spec = one_layer(HistogramMark(encoding={"x": "a"},
+                                   bin_edges=[k / n for k in range(n + 1)]),
+                     {"a": [0.1, 0.5, 0.9]})
+else:
+    spec = one_layer(BarMark(encoding={"x": "k", "y": "v"}),
+                     {"k": [f"c{k}" for k in range(n)], "v": [1.0] * n})
+t = time.perf_counter()
+try:
+    render(spec, RenderRequest(format="svg"))
+    out = {"issues": []}
+except RenderError as e:
+    out = {"issues": [[i.path, i.code] for i in e.issues], "type": type(e).__name__,
+           "message": str(e)}
+out["seconds"] = time.perf_counter() - t
+print(json.dumps(out))
+"""
+
+
+def _render_in_child(kind: str, n: int) -> dict:
+    import json
+    import os
+    import subprocess
+    import sys
+
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    proc = subprocess.run([sys.executable, "-c", _SIZE_CHILD, kind, str(n)],
+                          capture_output=True, text=True, timeout=60, cwd=root,
+                          env=dict(os.environ, PYTHONPATH=root))
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.parametrize("kind,n", [("bins", 10_001), ("bins", 200_000),
+                                    ("bins", 20_000_000), ("edges", 10_001)])
+def test_histogram_bin_count_is_capped_by_capability(kind, n):
+    out = _render_in_child(kind, n)
+    assert out["type"] == "CapabilityError", out
+    assert f"{n} histogram bins (max 10000)" in out["message"]
+    assert out["seconds"] < 5.0, out
+
+
+def test_bins_are_part_of_the_requirements():
+    from ieeVisualizer.spec import HistogramMark
+
+    spec = one_layer(HistogramMark(encoding={"x": "a"}, bins=64), {"a": [0.1, 0.5]})
+    reqs = requirements_for(spec, RenderRequest(format="svg"))
+    assert reqs.bins == 64 and "64 histogram bins" in reqs.describe()
+    assert requirements_for(function_spec(), RenderRequest()).bins == 0
+    assert MatplotlibAdapter().capabilities.to_dict()["max_bins"] == 10_000
+
+
+def test_too_many_categories_is_a_structured_error_fast():
+    out = _render_in_child("cats", 5_001)
+    assert out["issues"] == [["/axes/x", "too_many_categories"]], out
+    assert out["seconds"] < 5.0, out
+
+
+def test_many_category_labels_are_thinned_with_a_warning():
+    n = 120
+    spec = one_layer(BarMark(encoding={"x": "k", "y": "v"}),
+                     {"k": [f"c{k}" for k in range(n)], "v": [1.0] * n})
+    built = build_figure(spec)
+    ticks = built.axes.get_xticks()
+    labels = [t.get_text() for t in built.axes.get_xticklabels()]
+    assert len(ticks) <= 50 and labels[:2] == ["c0", "c3"]
+    assert [w.path for w in built.warnings if w.code == "category_labels_thinned"] == ["/axes/x"]
+    few = one_layer(BarMark(encoding={"x": "k", "y": "v"}),
+                    {"k": [f"c{k}" for k in range(50)], "v": [1.0] * 50})
+    built = build_figure(few)
+    assert len(built.axes.get_xticks()) == 50
+    assert not [w for w in built.warnings if w.code == "category_labels_thinned"]

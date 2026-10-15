@@ -8,7 +8,11 @@ Canonical form rules (so equal specs serialize to identical bytes):
   including defaults such as ``role: "observed"``, is written explicitly, so a
   stored spec keeps its meaning even if a library default changes later;
 * encoding shorthand (``"y": "col"``) is accepted on input and normalised to
-  ``{"field": "col"}``.
+  ``{"field": "col"}``;
+* column values are re-normalised against their dtype, and date/time strings
+  on time axes (limits, annotation coordinates) are written in the one
+  canonical datetime form, so values assigned after construction serialize
+  like freshly constructed ones.
 """
 
 from __future__ import annotations

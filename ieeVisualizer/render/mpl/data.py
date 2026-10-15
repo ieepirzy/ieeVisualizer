@@ -15,12 +15,16 @@ Axis kinds are decided per axis from every column bound to it:
 * ``numeric`` otherwise.
 
 Mixing kinds on one axis (e.g. strings and numbers without
-``scale: "category"``) is refused rather than guessed.
+``scale: "category"``) is refused rather than guessed. A category axis with
+more than :data:`MAX_CATEGORIES` distinct values is refused
+(``too_many_categories``): drawing time grows with it and the labels could
+not be read anyway.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,6 +36,8 @@ from ...spec._common import ptr
 from ..base import RenderError, RenderWarning, issue
 
 AXES = ("x", "y", "z")
+#: Most distinct values one category axis may have.
+MAX_CATEGORIES = 5_000
 #: Units that mark a polar angle column as degrees (otherwise radians).
 DEGREE_UNITS = frozenset({"deg", "degree", "degrees", "°"})
 _FRACTION = re.compile(r"(\.\d{6})\d+")
@@ -111,8 +117,38 @@ def numbers(col: Column, path: str) -> np.ma.MaskedArray:
     if col.dtype not in (None, "float", "int", "bool"):
         raise RenderError([issue(path, "unsupported_dtype",
                                  f"this channel needs numbers but the column is {col.dtype}.")])
-    vals = np.array([np.nan if v is None else float(v) for v in col.values], dtype=float)
+    vals = np.full(len(col.values), np.nan)
+    for i, v in enumerate(col.values):
+        if v is not None:
+            vals[i] = to_float(v, f"{path}/values/{i}")
     return np.ma.masked_array(vals, mask=np.array([v is None for v in col.values], dtype=bool))
+
+
+def to_float(value: Any, path: str) -> float:
+    """``float(value)``, refusing a number float64 cannot hold.
+
+    The spec allows exact integers of any size (JSON has no limit), so
+    ``10**400`` passes validation; it cannot be drawn, which is a structured
+    ``value_out_of_range`` render error rather than a raw ``OverflowError``.
+    """
+    try:
+        out = float(value)
+    except OverflowError:
+        out = math.inf
+    if math.isinf(out):
+        raise RenderError([issue(path, "value_out_of_range",
+                                 f"{_short_number(value)} is outside the range a float64 can "
+                                 "draw (about +-1.8e308); rescale it (e.g. change the unit) "
+                                 "upstream.")])
+    return out
+
+
+def _short_number(value: Any) -> str:
+    try:
+        s = str(value)
+    except ValueError:  # an int beyond Python's str() digit limit
+        return "a number"
+    return s if len(s) <= 24 else f"{s[:12]}...({len(s)} digits)"
 
 
 def positions(col: Column, info: AxisInfo, path: str) -> np.ma.MaskedArray:
@@ -179,9 +215,11 @@ def infer_axes(spec: FigureSpec, warnings: list[RenderWarning]) -> dict[str, Axi
     infos = {k: AxisInfo(key=k) for k in keys}
     kinds: dict[str, dict[str, str]] = {k: {} for k in keys}  # axis -> {path: kind}
     aware: dict[str, list[tuple[str, Any]]] = {k: [] for k in keys}
+    bound_cols: dict[str, list[Column]] = {k: [] for k in keys}
 
     for i, axis, enc, col, data in _bound(spec):
         info = infos[axis]
+        bound_cols[axis].append(col)
         p = f"/layers/{i}/encoding/{axis}"
         if col.dtype in ("str", "bool"):
             k = "category"
@@ -226,6 +264,14 @@ def infer_axes(spec: FigureSpec, warnings: list[RenderWarning]) -> dict[str, Axi
             infos[axis].kind = distinct.pop()
         if infos[axis].kind == "time":
             infos[axis].tz = _display_tz(axis, aware[axis], warnings)
+        if infos[axis].kind == "category":
+            n = len({category_key(v) for c in bound_cols[axis] for v in c.values
+                     if v is not None})
+            if n > MAX_CATEGORIES:
+                raise RenderError([issue(f"/axes/{axis}", "too_many_categories",
+                                         f"axis {axis} has {n} distinct categories; at most "
+                                         f"{MAX_CATEGORIES} can be drawn. Aggregate or filter "
+                                         "upstream, or use a numeric/time axis.")])
     if spec.coordinate_system == "polar":
         unit = (spec.axes["x"].unit if "x" in spec.axes else None) or infos["x"].unit
         infos["x"].degrees = unit in DEGREE_UNITS

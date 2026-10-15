@@ -23,6 +23,8 @@ LEGEND_LOC = {
     "lower-right": "lower right",
 }
 CAPTION_FONTSIZE = 8.0
+#: Most category tick labels drawn on one axis; above it labels are thinned.
+MAX_CATEGORY_LABELS = 50
 
 
 def axis_label(spec: FigureSpec, info: AxisInfo) -> str | None:
@@ -71,8 +73,14 @@ def apply_axes(ctx: DrawContext) -> None:
             obj.set_major_formatter(mdates.ConciseDateFormatter(locator, tz=info.tz))
         elif info.kind == "category":
             names = list(info.categories)
-            getattr(ax, f"set_{key}ticks")(range(len(names)))
-            getattr(ax, f"set_{key}ticklabels")(names)
+            step = -(-len(names) // MAX_CATEGORY_LABELS)  # ceil
+            if step > 1:
+                ctx.warn("category_labels_thinned",
+                         f"axis {key} has {len(names)} categories; one label in every {step} is "
+                         f"shown so they stay readable (at most {MAX_CATEGORY_LABELS}).",
+                         f"/axes/{key}")
+            getattr(ax, f"set_{key}ticks")(range(0, len(names), step))
+            getattr(ax, f"set_{key}ticklabels")(names[::step])
         if axis is not None and axis.limits is not None:
             _limits(ctx, key, info, axis.limits)
     if spec.title:
@@ -98,7 +106,7 @@ def apply_legend(ctx: DrawContext) -> None:
     spec = ctx.spec
     if not spec.legend.show:
         return
-    handles, labels = ctx.ax.get_legend_handles_labels()
+    handles, labels = _dedupe(*ctx.ax.get_legend_handles_labels())
     if not handles:
         return
     labelled_roles = any(m.role != "observed" for m in spec.layers)
@@ -110,6 +118,27 @@ def apply_legend(ctx: DrawContext) -> None:
     else:
         kw["loc"] = LEGEND_LOC[spec.legend.position]
     ctx.ax.legend(handles, labels, **kw)
+
+
+def _dedupe(handles: list[Any], labels: list[str]) -> tuple[list[Any], list[str]]:
+    """Show a legend entry once when several lines have the same label and
+    look identical (e.g. the lower and upper bound lines of one series, both
+    named "range"); entries that differ in any visible way are all kept."""
+    from matplotlib.lines import Line2D
+
+    seen: set = set()
+    out_h, out_l = [], []
+    for h, lab in zip(handles, labels):
+        if isinstance(h, Line2D):
+            dashes = getattr(h, "_unscaled_dash_pattern", h.get_linestyle())
+            key = (lab, str(h.get_color()), repr(dashes), h.get_linewidth(), h.get_alpha(),
+                   h.get_marker(), str(h.get_markerfacecolor()))
+            if key in seen:
+                continue
+            seen.add(key)
+        out_h.append(h)
+        out_l.append(lab)
+    return out_h, out_l
 
 
 def apply_annotations(ctx: DrawContext) -> list[Any]:

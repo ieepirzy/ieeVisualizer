@@ -22,7 +22,7 @@ from render_examples import (
 )
 
 from ieeVisualizer.render import RenderError, build_figure
-from ieeVisualizer.spec import Axis, BarMark, LineMark, ScatterMark
+from ieeVisualizer.spec import Axis, BarMark, LineMark, ScatterMark, SpecValidationError
 
 
 def _dates(strings):
@@ -343,13 +343,24 @@ def test_bad_datetime_and_duplicate_heatmap_cell_are_errors():
         one_layer(LineMark(encoding={"x": "t", "y": "v"}),
                   {"t": ["2026-10-14", "next tuesday"], "v": [1.0, 2.0]},
                   dtypes={"t": "datetime"})
-    # ... and the renderer still refuses one set after construction.
+    # ... and one set after construction is refused before anything is drawn:
+    # validate() re-normalises columns, so the error is the validator's
+    # structured issue (raised by prepare()), not a renderer failure.
     spec = one_layer(LineMark(encoding={"x": "t", "y": "v"}),
                      {"t": ["2026-10-14", "2026-10-15"], "v": [1.0, 2.0]},
                      dtypes={"t": "datetime"})
     spec.datasets["d"].columns["t"].values[1] = "next tuesday"
-    with pytest.raises(RenderError) as e:
+    with pytest.raises(SpecValidationError) as e:
         build_figure(spec)
+    assert [(i.code, i.path, i.severity) for i in e.value.issues] == [
+        ("invalid_values", "/datasets/d/columns/t/values", "error")]
+    assert "index 1" in e.value.issues[0].message
+    assert "not an ISO-8601" in e.value.issues[0].message
+    # The renderer keeps its own check as defence in depth (e.g. a column
+    # reached without validation); it reports the exact element.
+    from ieeVisualizer.render.mpl.data import _datetimes_to_num
+    with pytest.raises(RenderError) as e:
+        _datetimes_to_num(["2026-10-14", "next tuesday"], "/datasets/d/columns/t")
     assert e.value.issues[0].code == "invalid_datetime"
     assert e.value.issues[0].path == "/datasets/d/columns/t/values/1"
     spec = one_layer(HeatmapMark(encoding={"x": "a", "y": "b", "color": "c"}),
@@ -427,3 +438,142 @@ def test_forecast_pairs_with_its_observed_series_by_field_and_group():
     colours = [[ln.get_color() for ln in arts[i]] for i in range(4)]
     assert colours[2] == colours[0] and colours[3] == colours[1]  # forecast continues observed
     assert len({c for cs in colours[:2] for c in cs}) == 4  # A/B x value/bound all distinct
+
+
+def _bar_patches(built, layer):
+    return [p for c in built.layer_artists[layer] if hasattr(c, "patches") for p in c.patches]
+
+
+def _no_data(built, layer):
+    return [a for a in built.layer_artists[layer]
+            if type(a).__name__ == "Annotation" and a.get_text() == "no data"]
+
+
+@pytest.mark.parametrize("horizontal", [False, True])
+def test_bar_layers_on_shared_categories_are_dodged_not_overdrawn(horizontal):
+    from ieeVisualizer.spec import DataSnapshot, FigureSpec
+
+    a = DataSnapshot.from_columns({"k": ["a", "b", "c"], "v": [5.0, 6.0, 7.0]})
+    b = DataSnapshot.from_columns({"k": ["a", "b", "c"], "v": [3.0, 9.0, 2.0]})
+    enc = {"x": "v", "y": "k"} if horizontal else {"x": "k", "y": "v"}
+    o = "horizontal" if horizontal else "vertical"
+    spec = FigureSpec(datasets={"obs": a, "plan": b}, layers=[
+        BarMark(data="obs", encoding=enc, name="Observed", orientation=o),
+        BarMark(data="plan", encoding=enc, name="Plan", orientation=o)])
+    built = build_figure(spec)
+
+    def boxes(layer):
+        return [(p.get_y(), p.get_height()) if horizontal else (p.get_x(), p.get_width())
+                for p in _bar_patches(built, layer)]
+
+    first, second = boxes(0), boxes(1)
+    for (s0, w0), (s1, w1) in zip(first, second):
+        assert w0 == pytest.approx(0.4) and w1 == pytest.approx(0.4)
+        assert s1 == pytest.approx(s0 + w0)  # side by side, layer order, no overlap
+    assert first[0][0] == pytest.approx(-0.4)  # the pair is centred on the category
+
+
+def test_bar_layers_on_disjoint_categories_keep_single_layer_layout():
+    from ieeVisualizer.spec import DataSnapshot, FigureSpec
+
+    a = DataSnapshot.from_columns({"k": ["a", "b"], "v": [5.0, 6.0]})
+    b = DataSnapshot.from_columns({"k": ["c", "d"], "v": [3.0, 9.0]})
+    spec = FigureSpec(datasets={"a": a, "b": b}, layers=[
+        BarMark(data="a", encoding={"x": "k", "y": "v"}),
+        BarMark(data="b", encoding={"x": "k", "y": "v"})])
+    built = build_figure(spec)
+    assert all(p.get_width() == pytest.approx(0.8) for i in (0, 1) for p in _bar_patches(built, i))
+
+
+def test_grouped_bar_slot_without_a_row_is_labelled_no_data():
+    spec = one_layer(BarMark(encoding={"x": "k", "y": "v", "series": "g"}),
+                     {"k": ["a", "a", "b"], "g": ["x", "y", "x"], "v": [5.0, 6.0, 7.0]})
+    built = build_figure(spec)
+    (label,) = _no_data(built, 0)
+    # the (b, y) slot: category b at index 1, group y offset +0.2
+    assert label.xy[0] == pytest.approx(1.2)
+
+
+def test_dodged_bar_layer_missing_a_category_is_labelled_no_data():
+    from ieeVisualizer.spec import DataSnapshot, FigureSpec
+
+    a = DataSnapshot.from_columns({"k": ["a", "b", "c"], "v": [5.0, 6.0, 7.0]})
+    b = DataSnapshot.from_columns({"k": ["a", "c"], "v": [3.0, 2.0]})
+    spec = FigureSpec(datasets={"a": a, "b": b}, layers=[
+        BarMark(data="a", encoding={"x": "k", "y": "v"}),
+        BarMark(data="b", encoding={"x": "k", "y": "v"})])
+    built = build_figure(spec)
+    assert not _no_data(built, 0)
+    (label,) = _no_data(built, 1)
+    assert label.xy[0] == pytest.approx(1.2)
+
+
+def test_null_value_bar_is_labelled_once():
+    spec = one_layer(BarMark(encoding={"x": "k", "y": "v", "series": "g"}),
+                     {"k": ["a", "a", "b", "b"], "g": ["x", "y", "x", "y"],
+                      "v": [5.0, 6.0, None, 7.0]})
+    built = build_figure(spec)
+    assert [a.xy[0] for a in _no_data(built, 0)] == [pytest.approx(0.8)]
+
+
+def _many_series(mark, n):
+    return one_layer(mark, {"t": [float(k % 3) for k in range(3 * n)],
+                            "v": [float(k) for k in range(3 * n)],
+                            "g": [f"s{k // 3:02d}" for k in range(3 * n)]})
+
+
+def test_wrapped_colour_cycle_varies_linestyle_and_warns_once():
+    from matplotlib.colors import to_hex
+
+    built = build_figure(_many_series(LineMark(encoding={"x": "t", "y": "v", "series": "g"}),
+                                      12))
+    lines = built.layer_artists[0]
+    looks = [(to_hex(ln.get_color()), ln.get_linestyle()) for ln in lines]
+    assert len(set(looks)) == 12  # every series distinguishable
+    assert [ls for _, ls in looks] == ["-"] * 10 + ["--", "--"]
+    assert looks[10][0] == looks[0][0]
+    assert [w.path for w in built.warnings if w.code == "colour_cycle_wrapped"] == ["/layers/0"]
+
+
+def test_wrapped_colour_cycle_varies_scatter_markers():
+    built = build_figure(_many_series(
+        ScatterMark(encoding={"x": "t", "y": "v", "series": "g"}), 11))
+    markers = [c.get_paths()[0].vertices.tobytes() for c in built.layer_artists[0]]
+    assert markers[10] != markers[0]
+    assert any(w.code == "colour_cycle_wrapped" for w in built.warnings)
+
+
+def test_ten_series_do_not_wrap_and_explicit_linestyle_wins():
+    built = build_figure(_many_series(LineMark(encoding={"x": "t", "y": "v", "series": "g"}),
+                                      10))
+    assert {ln.get_linestyle() for ln in built.layer_artists[0]} == {"-"}
+    assert not [w for w in built.warnings if w.code == "colour_cycle_wrapped"]
+    built = build_figure(_many_series(LineMark(encoding={"x": "t", "y": "v", "series": "g"},
+                                               style={"linestyle": "dotted"}), 12))
+    assert {ln.get_linestyle() for ln in built.layer_artists[0]} == {":"}
+
+
+@pytest.mark.parametrize("big", [10 ** 400, -(10 ** 400)], ids=["positive", "negative"])
+def test_integer_beyond_float64_is_a_validation_error_not_overflow(big):
+    from ieeVisualizer.spec import validate
+
+    spec = one_layer(ScatterMark(encoding={"x": "a", "y": "b", "size": "s"}),
+                     {"a": [1, 2], "b": [1, 2], "s": [1, big]})
+    issues = [(i.path, i.code, i.severity) for i in validate(spec)]
+    assert ("/datasets/d/columns/s/values/1", "number_out_of_range", "error") in issues
+    with pytest.raises(SpecValidationError) as e:
+        build_figure(spec)
+    assert e.value.issues[0].code == "number_out_of_range"
+    # 10**300 fits a float64 and is drawn
+    ok = one_layer(LineMark(encoding={"x": "a", "y": "b"}), {"a": [1, 2], "b": [1, 10 ** 300]})
+    build_figure(ok)
+
+
+def test_renderer_refuses_out_of_range_numbers_structurally():
+    from ieeVisualizer.render.mpl.data import numbers
+    from ieeVisualizer.spec import Column
+
+    with pytest.raises(RenderError) as e:
+        numbers(Column([1, 10 ** 400], dtype="int"), "/datasets/d/columns/v")
+    assert [(i.path, i.code) for i in e.value.issues] == [
+        ("/datasets/d/columns/v/values/1", "value_out_of_range")]
