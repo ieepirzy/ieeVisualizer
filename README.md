@@ -88,7 +88,9 @@ example payload; see [docs/TEMPLATES.md](docs/TEMPLATES.md).
 
 A declarative [FigureSpec](docs/SPEC.md) renders to PNG/SVG/PDF through a
 capability-selected adapter (Matplotlib today) and exports with a provenance
-manifest. See [docs/RENDERING.md](docs/RENDERING.md).
+manifest. See [docs/RENDERING.md](docs/RENDERING.md). Figures, text, KPI
+tiles, tables, caveats and flow diagrams compose into a ViewSpec rendered to
+SVG, static HTML or PNG; see [docs/VIEWS.md](docs/VIEWS.md).
 
 ```python
 from ieeVisualizer.artifacts import LocalDirectoryWriter, export

@@ -15,6 +15,12 @@ writer that stores one flat file per artifact file instead of the default
 manifest still lists the files under their artifact names (``figure.png``,
 ``spec.json``); :func:`output_path` maps one to the other.
 
+Two composed views (``ieeVisualizer.view``) are exported the same way by
+:func:`export_views`: ``view-reporting-pipeline`` (the section 5.2 flow
+diagram) and ``view-weekly-briefing`` (KPI tiles, a timeseries figure, a
+table and caveats), each as ``.html``, ``.svg`` and ``.png`` plus
+``.view.json``, ``.figure-<n>.spec.json`` and ``.manifest.json``.
+
 The mark examples use small synthetic data (formulas or a seeded generator),
 labelled as such in their provenance; none of it is a measurement.
 """
@@ -47,6 +53,8 @@ from ieeVisualizer.spec import (
     ReferenceLine,
     ScatterMark,
 )
+from ieeVisualizer.view import export_view
+from ieeVisualizer.view.examples import reporting_pipeline, weekly_briefing
 
 OUT = Path(__file__).parent / "out"
 FORMATS = ("png", "svg")
@@ -233,6 +241,24 @@ def all_specs() -> dict[str, FigureSpec]:
     return specs
 
 
+VIEWS = {
+    "view-reporting-pipeline": reporting_pipeline,
+    "view-weekly-briefing": weekly_briefing,
+}
+VIEW_FORMATS = ("html", "svg", "png")
+
+
+def export_views(out: Path, clock) -> dict:
+    """Export every gallery view; returns ``{name: ViewArtifact}``."""
+    artifacts = {}
+    for name, build in VIEWS.items():
+        artifacts[name] = export_view(build(), VIEW_FORMATS, FlatWriter(out, name), name=name,
+                                      clock=clock)
+        warns = sorted({w["code"] for v in artifacts[name].variants for w in v.warnings})
+        print(f"{name:28s} {artifacts[name].artifact_id}  warnings: {', '.join(warns) or '-'}")
+    return artifacts
+
+
 def main(out: Path | None = None, clock=None) -> dict:
     """Export every gallery entry to ``out`` (default ``examples/out``);
     returns ``{name: VisualizationArtifact}``."""
@@ -245,7 +271,8 @@ def main(out: Path | None = None, clock=None) -> dict:
                                  name=name, clock=clock)
         warns = sorted({w["code"] for v in artifacts[name].variants for w in v.warnings})
         print(f"{name:28s} {artifacts[name].artifact_id}  warnings: {', '.join(warns) or '-'}")
-    print(f"wrote {len(artifacts)} figures to {out}")
+    views = export_views(out, clock)
+    print(f"wrote {len(artifacts)} figures and {len(views)} views to {out}")
     return artifacts
 
 
