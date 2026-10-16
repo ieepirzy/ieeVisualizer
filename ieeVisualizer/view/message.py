@@ -22,24 +22,35 @@ that is not exactly one ``local@domain``, or an empty recipient list is a
 The send gate is applied here too: an ``EmailRender`` that
 :func:`~ieeVisualizer.render.check_legible` refuses raises
 :class:`EmailGateError` (its ``codes`` list the gating warnings) unless the
-caller passes ``allow_ungated=True``. Design notes: ``docs/MOBILE_AND_EMAIL.md``,
+caller passes ``allow_ungated=True``. So does one not laid out for a phone,
+one changed after ``render_email`` made it (``EmailRender.seal``: HTML,
+text, images, profile and the gate's verdict), one built by hand, and a
+caller's ``text_fallback`` (it could say anything): each a
+:class:`MessageError` naming what is wrong.
+
+Headers are built from :class:`~email.headerregistry.Address` objects and
+plain strings this module has checked; a display name or subject holding
+RFC 2047 encoded-word syntax (``=?...?=``) is refused, because the stdlib
+decodes it while folding and would write what it decodes to - another
+address, a line break - into the header. Design notes: ``docs/MOBILE_AND_EMAIL.md``,
 "Sending a briefing".
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable
 from email import policy
 from email.headerregistry import Address
 from email.message import EmailMessage
-from email.utils import formatdate, make_msgid
+from email.utils import formatdate, make_msgid, parsedate_to_datetime
 from pathlib import Path
 from typing import Union
 
-from ..render import LegibilityError, check_legible
+from ..render import LegibilityError, check_legible, get_profile
 from ..spec import SpecError, ValidationIssue
-from .email import EmailRender
+from .email import EmailRender, seal
 
 #: The HTML's references to its images (``render_email`` writes ``src="cid:..."``).
 _CID = re.compile(r'src="cid:([^"]*)"')
@@ -52,6 +63,10 @@ _ADDR = re.compile(rf"{_ATOM}(\.{_ATOM})*@[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?
                    r"(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+")
 #: A Content-ID / Message-ID body (RFC 5322 msg-id without the brackets).
 _MSG_ID = re.compile(rf"{_ATOM}(\.{_ATOM})*@{_ATOM}(\.{_ATOM})*")
+#: RFC 2047 encoded-word syntax: the stdlib decodes it inside header values.
+_ENCODED_WORD = re.compile(r"=\?.*\?=", re.S)
+#: A body line the mbox format would read as a message separator.
+_FROM_LINE = re.compile(r"^From ", re.M)
 #: ``Display Name <addr>`` or a bare ``addr``.
 _NAMED = re.compile(r"\s*(?:(?P<name>[^<>]*?)\s*<(?P<a>[^<>]*)>|(?P<bare>[^<>\s]+))\s*")
 #: RFC 2045 limits encoded lines to 76 characters; the stdlib policy wraps
@@ -84,15 +99,23 @@ def build_message(email: EmailRender, *, subject: str, sender: AddressLike,
     """The message for ``email`` (see the module docstring).
 
     ``text_fallback`` replaces the generated plain-text part
-    (``email.text``). ``date`` (an RFC 5322 date) and ``message_id`` default
-    to now and a fresh id in the sender's domain. Raises
+    (``email.text``) and needs ``allow_ungated=True``. ``date`` (an RFC 5322
+    date with a time zone) and ``message_id`` (``<id@domain>``) default to
+    now in GMT and a fresh id in the sender's domain. Raises
     :class:`EmailGateError` for a render the gate refuses unless
     ``allow_ungated=True``, :class:`MessageError` for anything else wrong."""
     if not allow_ungated:
+        problems = _ungated(email, text_fallback)
+        if problems:
+            raise MessageError(problems)
         try:
             check_legible(email)
         except LegibilityError as exc:
             raise EmailGateError(exc.issues) from None
+        if not _phone_safe(email.profile):  # sealed renders say so above; never rely on it
+            raise MessageError([ValidationIssue("/profile", "not_phone_safe", (
+                f"rendered for {email.profile!r}, not a phone profile; render with "
+                "'email-phone' for email anyone may read on a phone."))])
     issues: list[ValidationIssue] = []
     subject = _header_text(subject, "/subject", issues)
     from_ = _address(sender, "/sender", issues)
@@ -102,9 +125,21 @@ def build_message(email: EmailRender, *, subject: str, sender: AddressLike,
     if not to:
         issues.append(ValidationIssue("/recipients", "no_recipients",
                                       "give at least one recipient."))
-    for value, where in ((date, "/date"), (message_id, "/message_id")):
-        if value is not None:
-            _header_text(value, where, issues)
+    if date is not None and _header_text(date, "/date", issues, limit=False):
+        try:
+            when = parsedate_to_datetime(date)
+        except (TypeError, ValueError, IndexError):
+            when = None
+        if when is None or when.tzinfo is None:
+            issues.append(ValidationIssue("/date", "invalid_date", (
+                f"{date[:60]!r} is not an RFC 5322 date with a time zone, e.g. "
+                "'Fri, 16 Oct 2026 09:00:00 +0300'.")))
+    if message_id is not None and _header_text(message_id, "/message_id", issues,
+                                               limit=False):
+        if not (message_id.startswith("<") and message_id.endswith(">")
+                and _MSG_ID.fullmatch(message_id[1:-1])):
+            issues.append(ValidationIssue("/message_id", "invalid_message_id", (
+                f"{message_id[:60]!r} is not a Message-ID: '<id@domain>' in dot-atoms.")))
     if text_fallback is not None and not isinstance(text_fallback, str):
         issues.append(ValidationIssue("/text_fallback", "invalid_type",
                                       "text_fallback must be a string."))
@@ -134,7 +169,7 @@ def build_message(email: EmailRender, *, subject: str, sender: AddressLike,
     msg["Subject"] = subject
     msg["From"] = from_
     msg["To"] = to
-    msg["Date"] = date or formatdate(localtime=False)
+    msg["Date"] = date or formatdate(usegmt=True)
     msg["Message-ID"] = message_id or make_msgid(domain=from_.domain)
     msg.set_content(_crlf(text), charset="utf-8", cte="quoted-printable")
     msg.add_alternative(_crlf(email.html), subtype="html", charset="utf-8",
@@ -143,7 +178,45 @@ def build_message(email: EmailRender, *, subject: str, sender: AddressLike,
     for name, content in email.images.items():
         html_part.add_related(content, maintype="image", subtype="png", cid=f"<{name}>",
                               disposition="inline", filename=name.split("@", 1)[0])
+    if email.images:
+        html_part.set_param("type", "text/html")  # RFC 2387: the root part's type
+    for part in msg.walk():  # "From " starting a line is mangled by mbox tools: =46rom
+        if part.get_content_maintype() == "text":
+            part.set_payload(_FROM_LINE.sub("=46rom ", part.get_payload()))
     return msg
+
+
+def _phone_safe(profile: str) -> bool:
+    try:
+        return bool(get_profile(profile).narrow)
+    except Exception:  # noqa: BLE001 - an unknown profile is not phone-safe
+        return False
+
+
+def _ungated(email: EmailRender, text_fallback: object) -> list[ValidationIssue]:
+    """What makes ``email`` unfit to send through the gate, besides its
+    warnings: not made by ``render_email``, changed since, or its text
+    replaced. (Not laid out for a phone is checked after the gate.)"""
+    if not isinstance(email, EmailRender) or not email.seal:
+        return [ValidationIssue("", "not_rendered", (
+            "this EmailRender was not made by render_email (it carries no seal), so the "
+            "gate's verdict is not known for it. Render the view with render_email, or "
+            "pass allow_ungated=True."))]
+    try:
+        now = seal(email)
+    except (AttributeError, TypeError, UnicodeError) as exc:
+        now = {"error": str(exc)}
+    out = []
+    for key in sorted(set(email.seal) | set(now)):
+        if email.seal.get(key) != now.get(key):
+            out.append(ValidationIssue(f"/{key}", "render_modified", (
+                f"EmailRender.{key} changed after render_email made it; the gate's verdict "
+                "was for what it made. Render again instead of editing the result.")))
+    if text_fallback is not None:
+        out.append(ValidationIssue("/text_fallback", "text_fallback_ungated", (
+            "text_fallback replaces the plain text generated from the view, so the gate "
+            "cannot vouch for it; pass allow_ungated=True to send it anyway.")))
+    return out
 
 
 def write_eml(message: EmailMessage, path: str | Path) -> Path:
@@ -159,7 +232,11 @@ def _crlf(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _header_text(value: object, path: str, issues: list[ValidationIssue]) -> str:
+def _header_text(value: object, path: str, issues: list[ValidationIssue],
+                 limit: bool = True) -> str:
+    """``value`` stripped, or ``""`` with an issue added when it cannot be a
+    header value."""
+    n = len(issues)
     if not isinstance(value, str):
         issues.append(ValidationIssue(path, "invalid_type", "must be a string."))
         return ""
@@ -169,10 +246,26 @@ def _header_text(value: object, path: str, issues: list[ValidationIssue]) -> str
             f"line: {value[:60]!r}.")))
     elif not value.strip():
         issues.append(ValidationIssue(path, "empty_header", "must not be empty."))
-    elif len(value) > MAX_SUBJECT:
+    elif limit and len(value) > MAX_SUBJECT:
         issues.append(ValidationIssue(path, "header_too_long",
                                       f"{len(value)} characters; at most {MAX_SUBJECT}."))
-    return value.strip()
+    else:
+        _words(value, path, issues)
+    return value.strip() if len(issues) == n else ""
+
+
+def _words(value: str, path: str, issues: list[ValidationIssue]) -> None:
+    """Text that is shown in a header: no encoded words, no format characters."""
+    if _ENCODED_WORD.search(value):
+        issues.append(ValidationIssue(path, "encoded_word", (
+            "contains RFC 2047 encoded-word syntax ('=?...?='); mail software decodes it, "
+            "so it could carry another address or a line break. Give the plain text; it "
+            f"is encoded for you: {value[:60]!r}.")))
+    fmt = sorted({f"U+{ord(c):04X}" for c in value if unicodedata.category(c) == "Cf"})
+    if fmt:
+        issues.append(ValidationIssue(path, "format_character", (
+            f"contains invisible format characters ({', '.join(fmt[:5])}: bidi overrides, "
+            "zero-width characters), which can make a header read as something else.")))
 
 
 def _address(value: object, path: str, issues: list[ValidationIssue]) -> Address:
@@ -200,10 +293,17 @@ def _address(value: object, path: str, issues: list[ValidationIssue]) -> Address
         issues.append(ValidationIssue(path, "header_injection",
                                       "contains a line break or control character."))
         return Address()
+    n = len(issues)
+    _words(name, path, issues)
+    if "@" in name or "<" in name or ">" in name:
+        issues.append(ValidationIssue(path, "address_in_display_name", (
+            f"the display name {name[:60]!r} looks like an address; a reader would take it "
+            "for the sender or recipient. Use a plain name.")))
+    if len(issues) > n:
+        return Address()
     if not _ADDR.fullmatch(addr):
         issues.append(ValidationIssue(path, "invalid_address", (
             f"{addr[:60]!r} is not a plain local@domain address (ASCII; one '@'; a dotted "
             "domain).")))
         return Address()
-    local, domain = addr.rsplit("@", 1)
-    return Address(display_name=name, username=local, domain=domain)
+    return Address(display_name=name, addr_spec=addr)

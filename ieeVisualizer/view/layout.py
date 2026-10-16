@@ -238,9 +238,40 @@ def _delta_text(delta: Decimal, decimals: int | None, fmt=None) -> str:
     return fmt(delta, decimals)
 
 
-#: Units that make a KPI a percentage: the difference of two of them is in
-#: percentage points ("pp"), never "%", which would read as a relative change.
-PERCENT_UNITS = ("%", "percent", "per cent")
+#: Units that make a KPI a percentage (besides any unit starting with "%" or
+#: "％"): the difference of two of them is in percentage points ("pp"), never
+#: "%", which would read as a relative change. Relative changes are not offered.
+PERCENT_UNITS = ("pct", "percent", "per cent", "%-points", "pp")
+
+
+def delta_unit(unit: str | None) -> str | None:
+    """The unit of the difference of two values in ``unit``: percentage
+    points for a percentage, keeping what follows the sign (``"% YoY"`` ->
+    ``"pp YoY"``); ``unit`` itself otherwise."""
+    if not isinstance(unit, str):
+        return unit
+    u = unit.strip()
+    if u[:1] in ("%", "％") and not u.startswith("%-points"):
+        rest = u[1:].strip()
+        return f"pp {rest}" if rest else "pp"
+    return "pp" if u.lower() in PERCENT_UNITS else unit
+
+
+def percent_fraction_warning(n: Kpi, path: str):
+    """A non-gating ``kpi_percent_looks_like_fraction`` warning when a KPI in
+    a percentage unit has every value in [0, 1] (0.942 meant as 94.2 %?), or
+    ``None``."""
+    vals = [v for v in (n.value, n.comparison.value if n.comparison else None)
+            if v is not None]
+    if not vals or delta_unit(n.unit) == n.unit or not all(0 <= v <= 1 for v in vals) \
+            or all(v == 0 for v in vals):
+        return None
+    from ..render import RenderWarning
+
+    return RenderWarning("kpi_percent_looks_like_fraction", (
+        f"KPI {n.label!r} is in {n.unit!r} but its values all lie between 0 and 1 "
+        f"({', '.join(format_number(v) for v in vals)}): if they are fractions, multiply by "
+        "100."), path)
 
 
 def kpi_lines(n: Kpi, fmt=None) -> tuple[str, str | None]:
@@ -250,12 +281,11 @@ def kpi_lines(n: Kpi, fmt=None) -> tuple[str, str | None]:
     exact tie reads "= 0.0". A ``%`` unit makes 100 a bound too (99.97 at
     one decimal is ">99.9%"). ``fmt`` replaces :func:`.text.format_number`
     (the tile uses it for compact notation when a number does not fit). The
-    delta of a percentage (:data:`PERCENT_UNITS`) is in percentage points:
+    delta of a percentage (:func:`delta_unit`) is in percentage points:
     94.2 % vs 92.7 % is "▲ +1.5 pp", not "+1.5%"."""
     fmt = fmt or format_number
     pct = n.unit == "%"
-    delta_unit = ("pp" if isinstance(n.unit, str) and n.unit.strip().lower() in PERCENT_UNITS
-                  else n.unit)
+    d_unit = delta_unit(n.unit)
 
     def num(v):
         return with_unit(fmt(v, n.decimals, percent=pct), n.unit)
@@ -279,7 +309,7 @@ def kpi_lines(n: Kpi, fmt=None) -> tuple[str, str | None]:
                 arrow, sign, text = "▲", "<+", text[1:]
             else:
                 arrow, sign = "▲", "+"
-            cmp = f"{arrow} {sign}{with_unit(text, delta_unit)} vs {c.label} ({num(c.value)})"
+            cmp = f"{arrow} {sign}{with_unit(text, d_unit)} vs {c.label} ({num(c.value)})"
     return value, cmp
 
 
@@ -361,6 +391,9 @@ def _kpi(n: Kpi, path, x, y, w, ctx):
         items.append(Label(ix, cy + 13, line, 13, MUTED))
         cy += 18
     variants = _kpi_variants(n)
+    w_frac = percent_fraction_warning(n, path)
+    if w_frac is not None:
+        ctx.warnings.append(w_frac)
     if n.value is None:
         items.append(Label(ix, cy + 30, NO_DATA, 22, MUTED, italic=True))
         cy += 42

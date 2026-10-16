@@ -48,6 +48,7 @@ from .layout import (
     _fit_number_text,
     _kpi_variants,
     fit_flow,
+    percent_fraction_warning,
     table_cells,
     text_width,
 )
@@ -109,6 +110,27 @@ class EmailRender:
     warnings: list[RenderWarning] = field(default_factory=list)
     profile: str = ""
     text: str = ""
+    #: What :func:`render_email` produced, as digests (:func:`seal`):
+    #: :func:`~ieeVisualizer.view.message.build_message` refuses a render
+    #: changed after it was made (or not made by ``render_email`` at all).
+    seal: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
+
+
+def seal(e: EmailRender) -> dict[str, str]:
+    """Digests of what a reader is shown and of the gate's verdict on it."""
+    from ..render import GATING_CODES
+
+    def h(b: bytes) -> str:
+        return hashlib.sha256(b).hexdigest()
+
+    return {
+        "html": h(e.html.encode("utf-8", "surrogatepass")),
+        "text": h(e.text.encode("utf-8", "surrogatepass")),
+        "images": h("\n".join(f"{n}={h(c)}" for n, c in sorted(e.images.items()))
+                    .encode("utf-8", "surrogatepass")),
+        "profile": e.profile,
+        "warnings": ",".join(sorted({w.code for w in e.warnings if w.code in GATING_CODES})),
+    }
 
 
 class _Email:
@@ -245,6 +267,9 @@ class _Email:
         variants = _kpi_variants(n)
         small = tuple(s for s in KPI_SMALL_SIZES if s >= self.min)
         exact = variants[0][0]
+        w_frac = percent_fraction_warning(n, self.path)
+        if w_frac is not None:
+            self.warnings.append(w_frac)
         self.say(f"{n.label}: {exact[0]}", *([f"  {exact[1]}"] if exact[1] else []),
                  *([f"  Source: {n.source}"] if n.source else []), indent="  ")
         if n.value is None:
@@ -449,8 +474,10 @@ def render_email(view: ViewSpec, profile: str = "email-phone", *,
             f"the email HTML is {size // 1024} KB; Gmail hides everything after about "
             f"{GMAIL_CLIP_BYTES // 1024} KB behind 'View entire message'. Split the view or "
             "show fewer table rows.", ""))
-    return EmailRender(html=html, images=e.images, warnings=e.warnings, profile=prof.name,
-                       text=text)
+    out = EmailRender(html=html, images=e.images, warnings=e.warnings, profile=prof.name,
+                      text=text)
+    out.seal = seal(out)
+    return out
 
 
 def _short_lines(line: str) -> str:
@@ -514,6 +541,8 @@ def figure_summary(spec: Any, resolver: Resolver | None = None, limit: int = 400
         spec = prepare(spec, resolver).spec
     except Exception:  # noqa: BLE001 - the render itself reports why
         return ""
+    shared = _boundary_copies(spec) if ((meta or {}).get("forecast") or {}).get(
+        "shared_boundary") else {}
     parts = []
     for k, m in enumerate(spec.layers):
         snap = spec.datasets.get(m.data) if isinstance(m.data, str) else None
@@ -521,9 +550,12 @@ def figure_summary(spec: Any, resolver: Resolver | None = None, limit: int = 400
         enc = getattr(m, "encoding", {}) or {}
         if cols is None:
             continue
+        # the observed point copied into a forecast layer so the lines join is
+        # an observation, not a forecast value: it is not counted twice
+        skip = shared.get(m.data, set()) if getattr(m, "role", None) == "forecast" else set()
         what = ""
         if m.type == "quiver" and "u" in enc and "v" in enc:
-            comps = [cols[enc[k].field] for k in ("u", "v", "w") if k in enc]
+            comps = [cols[enc[c].field] for c in ("u", "v", "w") if c in enc]
             vals = [math.sqrt(sum(c * c for c in row)) for row in zip(*(c.values for c in comps))
                     if None not in row]
             unit, what, label = comps[0].unit, "vector magnitude, ", "vectors"
@@ -536,7 +568,8 @@ def figure_summary(spec: Any, resolver: Resolver | None = None, limit: int = 400
             col = cols.get(enc[ch].field) if ch in enc else None
             if col is None or col.dtype not in ("int", "float"):
                 continue
-            vals, unit = [x for x in col.values if x is not None], col.unit
+            vals = [x for i, x in enumerate(col.values) if x is not None and i not in skip]
+            unit = col.unit
             label = enc[ch].title or enc[ch].field
         if not vals:
             continue
@@ -550,6 +583,24 @@ def figure_summary(spec: Any, resolver: Resolver | None = None, limit: int = 400
                      f"{format_number(max(vals))}{unit}")
     text = "; ".join(parts)
     return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _boundary_copies(spec: Any) -> dict[str, set[int]]:
+    """``{dataset: row indexes}`` of the rows of forecast layers' datasets that
+    are copies of an observed row (the timeseries template's shared boundary,
+    ``connect_forecast``): equal in every column to a row of an observed
+    layer's dataset."""
+    def rows(name: str) -> list[tuple]:
+        cols = getattr(spec.datasets.get(name), "columns", None) or {}
+        keys = sorted(cols)
+        return list(zip(*(tuple(cols[c].values) for c in keys))) if keys else []
+
+    fc = {m.data for m in spec.layers if getattr(m, "role", None) == "forecast"
+          and isinstance(m.data, str)}
+    obs = {m.data for m in spec.layers if getattr(m, "role", None) != "forecast"
+           and isinstance(m.data, str)} - fc
+    seen = {r for name in obs for r in rows(name)}
+    return {name: {i for i, r in enumerate(rows(name)) if r in seen} for name in fc}
 
 
 def whole_width(text: str, size: float, bold: bool = False) -> float:

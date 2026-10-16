@@ -119,9 +119,10 @@ def briefing() -> ViewSpec:
             Text(f"{COMPANY} · management team · ISO week 41, 2026", style="small"),
             Text("Orders hit a 12-week high as autumn servicing began", style="heading"),
             Text(f"Service orders rose to {total} in week 41, up {total - prev} on week 40, "
-                 "led by Harbour Street. The forecast expects demand to ease through "
-                 "November as the commuting season ends, so **the winter staffing plan "
-                 "can proceed as drafted**.", style="lead"),
+                 "led by Harbour Street. The forecast expects demand to ease over the next "
+                 f"four weeks, to about {FORECAST[-1]} by week 45, as the commuting season "
+                 "ends, so **the winter staffing plan can proceed as drafted**.",
+                 style="lead"),
             Grid([
                 Kpi("Service orders (week 41)", total, unit="orders",
                     comparison=Comparison(prev, "week 40"), source="workshop system"),

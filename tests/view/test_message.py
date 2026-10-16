@@ -212,10 +212,11 @@ def test_images_not_referenced_by_cid_are_refused(briefing):
 
 
 def test_text_fallback_replaces_the_generated_text(rendered):
-    msg = _parse(build_message(rendered, text_fallback="Numbers: 412 orders\r\n", **HEADERS))
+    msg = _parse(build_message(rendered, text_fallback="Numbers: 412 orders\r\n",
+                               allow_ungated=True, **HEADERS))
     assert _content(msg.get_body(("plain",))) == "Numbers: 412 orders\n"
     with pytest.raises(MessageError):
-        build_message(rendered, text_fallback="  ", **HEADERS)
+        build_message(rendered, text_fallback="  ", allow_ungated=True, **HEADERS)
 
 
 def test_example_script_passes_the_gate_and_writes_a_parseable_eml(tmp_path, capsys):
@@ -266,3 +267,166 @@ def test_band_bounds_have_distinct_names_in_the_alt_text(rendered):
     assert "Orders range (low to high), lower bound: 4 values from 329 to 380" in text
     assert "Orders range (low to high), upper bound: 4 values from 413 to 430" in text
     assert "Orders range (low to high):" not in text
+
+
+# --------------------------------------------------------------------------
+# Review of #26: header structure, the seal, dates, pp units, MIME details
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("field, value", [
+    ("sender", "=?utf-8?q?CEO_=3Cceo=40x=2Eexample=3E?= <reports@b.example>"),
+    ("recipients", ["=?utf-8?q?x=3E=2C_evil=40attacker=2Eexample_=3C?= <a@b.example>"]),
+    ("recipients", [Address("=?utf-8?q?ceo=40x=2Eexample?=", addr_spec="a@b.example")]),
+    ("subject", "=?utf-8?b?QmNjOiB4QHkuZXhhbXBsZQ0KWC1Ib3N0aWxlOiAx?="),
+    ("subject", "Report =?utf-8?q?=0D=0ABcc:_evil@x.example?="),
+])
+def test_encoded_words_are_refused_not_decoded_into_headers(rendered, field, value):
+    with pytest.raises(MessageError) as info:
+        build_message(rendered, **dict(HEADERS, **{field: value}))
+    assert "encoded_word" in {i.code for i in info.value.issues}
+
+
+@pytest.mark.parametrize("field, value, code", [
+    ("subject", "Weekly ‮briefing", "format_character"),
+    ("subject", "Weekly​briefing", "format_character"),
+    ("sender", "Reports‮ <reports@example.com>", "format_character"),
+    ("sender", "ceo@example.com <reports@example.com>", "address_in_display_name"),
+    ("recipients", [Address("ceo@example.com", addr_spec="a@example.com")],
+     "address_in_display_name"),
+])
+def test_invisible_and_address_shaped_names_are_refused(rendered, field, value, code):
+    with pytest.raises(MessageError) as info:
+        build_message(rendered, **dict(HEADERS, **{field: value}))
+    assert code in {i.code for i in info.value.issues}
+
+
+def test_address_headers_parse_to_exactly_the_addresses_given(rendered):
+    from email.utils import getaddresses
+
+    given = [("Smith, Jane", "jane@example.com"), ('Ann "The Boss" Lee', "ann@example.org"),
+             ("Äiti Mäkelä", "aiti@example.fi"), ("", "plain@example.net"),
+             ("Ops; Night Shift", "ops@example.com")]
+    recipients = [Address(n, addr_spec=a) for n, a in given]
+    raw = build_message(rendered, subject="S", sender="Raportti Öy <r@example.com>",
+                        recipients=recipients).as_bytes()
+    for pol in (policy.default, policy.compat32):
+        back = email.message_from_bytes(raw, policy=pol)
+        to = getaddresses([str(h) for h in back.get_all("To")])
+        if pol is policy.compat32:  # compat32 leaves encoded words encoded
+            to = [(str(email.header.make_header(email.header.decode_header(n))), a)
+                  for n, a in to]
+        assert to == given, pol
+        assert [a for _, a in getaddresses([str(back["From"])])] == ["r@example.com"]
+    assert len(email.message_from_bytes(raw, policy=policy.default)["To"].addresses) == 5
+
+
+def test_a_render_changed_after_the_gate_is_refused():
+    view = ViewSpec(root=Stack([Kpi("Revenue", 48230, unit="EUR", decimals=0)]))
+    tablet = render_email(view, "email-tablet")
+    tablet.warnings.clear()  # the verdict was for the render as made
+    with pytest.raises(MessageError) as info:
+        build_message(tablet, **HEADERS)
+    assert {(i.path, i.code) for i in info.value.issues} == {("/warnings", "render_modified")}
+    edited = render_email(view)
+    assert "48\u202f230" in edited.html
+    edited.html = edited.html.replace("48\u202f230", "84\u202f230")
+    with pytest.raises(MessageError) as info:
+        build_message(edited, **HEADERS)
+    assert {(i.path, i.code) for i in info.value.issues} == {("/html", "render_modified")}
+    swapped = render_email(weekly_briefing())
+    name = next(iter(swapped.images))
+    swapped.images[name] = b"\x89PNG\r\n\x1a\nother"
+    with pytest.raises(MessageError) as info:
+        build_message(swapped, **HEADERS)
+    assert ("/images", "render_modified") in {(i.path, i.code) for i in info.value.issues}
+    from ieeVisualizer.view import EmailRender
+
+    forged = EmailRender(html=edited.html, text="412 orders", profile="email-phone")
+    with pytest.raises(MessageError) as info:
+        build_message(forged, **HEADERS)
+    assert [i.code for i in info.value.issues] == ["not_rendered"]
+    good = render_email(view)
+    with pytest.raises(MessageError) as info:
+        build_message(good, text_fallback="anything at all", **HEADERS)
+    assert [i.code for i in info.value.issues] == ["text_fallback_ungated"]
+    build_message(forged, allow_ungated=True, **HEADERS)  # the caller's explicit choice
+
+
+@pytest.mark.parametrize("field, value, code", [
+    ("date", "yesterday", "invalid_date"),
+    ("date", "Fri, 16 Oct 2026 09:00:00 -0000", "invalid_date"),  # no time zone
+    ("message_id", "x@example.com", "invalid_message_id"),
+    ("message_id", "<x y@example.com>", "invalid_message_id"),
+])
+def test_date_and_message_id_are_validated(rendered, field, value, code):
+    with pytest.raises(MessageError) as info:
+        build_message(rendered, **dict(HEADERS, **{field: value}))
+    assert code in {i.code for i in info.value.issues}
+
+
+def test_default_date_is_gmt_and_given_values_are_kept(rendered):
+    from email.utils import parsedate_to_datetime
+
+    when = parsedate_to_datetime(build_message(rendered, **HEADERS)["Date"])
+    assert when.utcoffset() is not None and when.utcoffset().total_seconds() == 0  # not -0000
+    msg = build_message(rendered, date="Fri, 16 Oct 2026 09:00:00 +0300",
+                        message_id="<briefing-41@example.com>", **HEADERS)
+    assert msg["Message-ID"] == "<briefing-41@example.com>"
+    assert msg["Date"] == "Fri, 16 Oct 2026 09:00:00 +0300"
+
+
+def test_related_part_declares_its_root_type(rendered):
+    related = _parse(build_message(rendered, **HEADERS)).get_payload()[1]
+    assert related.get_content_type() == "multipart/related"
+    assert related.get_param("type") == "text/html"
+
+
+def test_body_lines_starting_with_from_are_encoded():
+    e = render_email(ViewSpec(root=Stack([Text("Summary\n\nFrom the workshops: 412 orders")])))
+    assert "\nFrom the workshops" in e.text
+    raw = build_message(e, **HEADERS).as_bytes()
+    lines = raw.split(b"\r\n")
+    assert not [ln for ln in lines if ln.startswith(b"From ")]
+    assert any(ln.startswith(b"=46rom the workshops") for ln in lines)
+    back = email.message_from_bytes(raw, policy=policy.default)
+    assert "From the workshops: 412 orders" in back.get_body(("plain",)).get_content()
+
+
+@pytest.mark.parametrize("unit, delta", [
+    ("% YoY", "▲ +2.0 pp YoY"), ("％", "▲ +2.0 pp"), ("pct", "▲ +2.0 pp"),
+    ("%-points", "▲ +2.0 pp"), ("pp", "▲ +2.0 pp"), ("Percent", "▲ +2.0 pp"),
+    ("% of revenue", "▲ +2.0 pp of revenue"), ("EUR", "▲ +2.0 EUR"), ("‰", "▲ +2.0 ‰"),
+])
+def test_percentage_units_all_give_point_deltas(unit, delta):
+    from ieeVisualizer.view import Comparison
+
+    line = kpi_lines(Kpi("x", 12.0, unit=unit, decimals=1, comparison=Comparison(10.0, "prev")))
+    assert line[1].startswith(delta + " vs prev")
+
+
+def test_percent_kpi_with_fraction_values_warns_without_gating():
+    from ieeVisualizer.render import GATING_CODES
+    from ieeVisualizer.view import Comparison, render_view
+
+    kpi = Kpi("On time", 0.942, unit="%", decimals=3, comparison=Comparison(0.927, "week 40"))
+    for result in (render_email(ViewSpec(root=Stack([kpi]))),
+                   render_view(ViewSpec(root=Stack([kpi])), "svg")):
+        codes = [w.code for w in result.warnings]
+        assert codes.count("kpi_percent_looks_like_fraction") == 1
+    assert "kpi_percent_looks_like_fraction" not in GATING_CODES
+    fine = render_email(ViewSpec(root=Stack([Kpi("On time", 94.2, unit="%")])))
+    assert not fine.warnings
+
+
+def test_forecast_connector_point_is_not_counted_as_a_forecast(rendered):
+    text = " ".join(re.split("[ \n]+", rendered.text))
+    assert "Orders (forecast): 4 values from 371 to 405 count" in text
+
+
+def test_legend_label_never_doubles_parentheses():
+    from ieeVisualizer.render.mpl.style import legend_label
+
+    assert legend_label("Orders range (low to high)", None, "forecast") == \
+        "Orders range (low to high, forecast)"
+    assert legend_label("Orders", None, "forecast") == "Orders (forecast)"
+    assert legend_label("Orders (forecast)", None, "forecast") == "Orders (forecast)"

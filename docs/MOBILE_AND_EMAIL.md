@@ -291,31 +291,53 @@ one `image/png` per image (`Content-ID: <figure-0.<hash>.png@ieevisualizer>`,
 has exactly one part and every image is referenced; otherwise it raises
 `MessageError` `cid_mismatch` (an email rendered with a custom `image_src`
 cannot be sent this way). Text parts are UTF-8 quoted-printable and images
-base64, with CRLF line ends and no line over 76 characters (RFC 2045).
+base64, with CRLF line ends and no line over 76 characters (RFC 2045); a
+body line starting with "From " is written `=46rom` so mbox tools cannot
+mangle it. The related part carries `type="text/html"` (RFC 2387).
 
 **Plain text.** Clients that block images or show no HTML get the numbers
 anyway: `EmailRender.text` has the title, every text and note, each KPI's
 value with its unit, its comparison line ("▲ +23 orders vs week 40 (389
 orders)") and source, exactly as written (never the compacted tile form),
 every table cell as a `header (unit): value` line, each figure's `alt`
-summary (the two bounds of a range are named "lower bound" / "upper bound")
-and each flow's text version. A percentage KPI's delta is in percentage
-points (`▲ +1.5 pp`), in the tile and in the text alike. `text_fallback=` replaces it.
+summary (the two bounds of a range are named "lower bound" / "upper bound";
+the observed point a forecast line starts from is not counted as a forecast
+value) and each flow's text version. A percentage KPI's delta is in
+percentage points (`▲ +1.5 pp`), in the tile and in the text alike.
 
 **Gate.** `build_message` calls `check_legible` first and raises
 `EmailGateError` (a `LegibilityError`; `.codes` lists the gating codes, and
 `.issues` has their messages and pointers) for any render the gate refuses,
-including every `email-tablet` render (`email_not_phone_safe`).
-`allow_ungated=True` builds it anyway; that is the caller's explicit choice.
+including every `email-tablet` render (`email_not_phone_safe`). The verdict
+is the one `render_email` reached: it records digests of the HTML, text,
+images, profile and gating codes (`EmailRender.seal`), and `build_message`
+refuses a render changed since - warnings cleared, HTML edited, an image
+swapped - with `MessageError` `render_modified` and the field's pointer, an
+`EmailRender` built by hand (`not_rendered`) and a non-phone profile
+(`not_phone_safe`). `text_fallback=` (which replaces the generated text and
+could say anything) is refused too (`text_fallback_ungated`).
+`allow_ungated=True` builds any of these anyway; that is the caller's
+explicit choice.
 
 **Headers.** Subject, sender, recipients, `date` and `message_id` are
 checked before anything is built: a CR, LF, other control character or
 U+2028/2029 is `header_injection`; an address must be exactly one
 `Name <local@domain>` or `local@domain` (ASCII, dotted domain; one per
 list entry, so `"a@x.example, b@y.example"` in one string is refused, not
-split); an empty subject or recipient list is refused. Each issue points at
-its argument (`/subject`, `/recipients/1`). Non-ASCII subjects and display
-names are written as RFC 2047 encoded words.
+split); an empty subject or recipient list is refused. A subject or display
+name holding encoded-word syntax (`=?utf-8?q?...?=`) is refused
+(`encoded_word`): the stdlib decodes it while folding the header, so
+`"=?utf-8?q?CEO_=3Cceo=40x.example=3E?= <reports@example.com>"` would be
+written as `CEO <ceo@x.example> <reports@example.com>`, an address of the
+caller's string's choosing. So are invisible format characters (bidi
+overrides, zero-width; `format_character`) and display names that look like
+an address (`address_in_display_name`). `date` must be an RFC 5322 date with
+a time zone (`invalid_date`; default: now, GMT) and `message_id` an
+`<id@domain>` (`invalid_message_id`). Each issue points at its argument
+(`/subject`, `/recipients/1`). Headers are built from
+`email.headerregistry.Address` objects, and non-ASCII subjects and display
+names are written as RFC 2047 encoded words by the stdlib; Python's parser
+and Node's `mailparser` read From/To back as exactly the addresses given.
 
 **Previewing.** `write_eml` writes the message as sent; open the `.eml`
 in Thunderbird, Apple Mail or Outlook (double-click, or drag it into the
