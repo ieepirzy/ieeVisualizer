@@ -279,6 +279,7 @@ def apply_annotations(ctx: DrawContext) -> list[Any]:
         else:  # pragma: no cover - validate() rejects unknown types
             art = None
         if art is not None:
+            art._ieev_index = i  # which spec annotation it draws (profile layout)
             out.append(art)
     return out
 

@@ -41,6 +41,8 @@ from .text import (
 
 GAP = 16.0
 PAD = 24.0
+#: View padding on narrow profiles (the email's own gutters are 12 px too).
+NARROW_PAD = 12.0
 TEXT_STYLES = {  # size, line height, bold, colour
     "body": (15.0, 22.0, False, INK),
     "lead": (18.0, 26.0, False, INK),
@@ -77,10 +79,15 @@ class Ctx:
     #: Narrow profiles draw figures at least this tall (height / width): at
     #: phone width a short figure has no room left for its axes.
     min_aspect: float = 0.0
+    #: Profile renders: ``(spec, w, h) -> h`` the height (CSS px) a figure
+    #: drawn ``w`` px wide needs (the renderer grows figures whose content
+    #: does not fit at the minimum text size); None: as laid out.
+    figure_height: object = None
 
 
 def layout_view(view: ViewSpec, width: float = 960.0, profile=None,
-                warnings: list | None = None) -> tuple[list[Item], float, list[Embed]]:
+                warnings: list | None = None, figure_height=None
+                ) -> tuple[list[Item], float, list[Embed]]:
     """``(items, height, embeds)`` for ``view`` drawn ``width`` px wide.
     With a :class:`~ieeVisualizer.render.RenderProfile`, text keeps its
     minimum size and narrow profiles stack columns; layout warnings are
@@ -93,17 +100,19 @@ def layout_view(view: ViewSpec, width: float = 960.0, profile=None,
         raise RenderError([narrow])
     ctx = Ctx(view, min_text=profile.min_text_px if profile is not None else 0.0,
               min_slot=min_slot, warnings=warnings if warnings is not None else [],
-              min_aspect=profile.aspect if min_slot is not None else 0.0)
+              min_aspect=profile.aspect if min_slot is not None else 0.0,
+              figure_height=figure_height)
     items: list[Item] = [Rect(0, 0, width, 0, fill="#ffffff")]
-    y = PAD
+    pad = NARROW_PAD if min_slot is not None else PAD  # a phone has no width to spare
+    y = pad
     if view.title:
-        for line in wrap_text(view.title, 26, width - 2 * PAD, bold=True):
-            items.append(Label(PAD, y + 26, line, 26, bold=True))
+        for line in wrap_text(view.title, 26, width - 2 * pad, bold=True):
+            items.append(Label(pad, y + 26, line, 26, bold=True))
             y += 34
         y += 8
-    sub, h = draw_node(view.root, "/root", PAD, y, width - 2 * PAD, ctx)
+    sub, h = draw_node(view.root, "/root", pad, y, width - 2 * pad, ctx)
     items.extend(sub)
-    height = float(math.ceil(y + h + PAD))
+    height = float(math.ceil(y + h + pad))
     items[0].h = height
     return items, height, ctx.embeds
 
@@ -171,8 +180,10 @@ def _rows(rows, cols: int, x: float, y: float, w: float, ctx: Ctx):
 def _figure(n: FigureComponent, path: str, x, y, w, ctx: Ctx):
     spec = n.spec if n.spec is not None else ctx.view.figures[n.figure]
     pointer = ptr_join(path, "spec") if n.spec is not None else ptr_join("/figures", n.figure)
-    e = Embed(x, y, w, round(w * max(n.aspect, ctx.min_aspect), 2), spec, pointer,
-              index=len(ctx.embeds))
+    h = round(w * max(n.aspect, ctx.min_aspect), 2)
+    if ctx.figure_height is not None:
+        h = max(h, ctx.figure_height(spec, w, h))
+    e = Embed(x, y, w, h, spec, pointer, index=len(ctx.embeds))
     ctx.embeds.append(e)
     return [e], e.h
 
@@ -494,6 +505,66 @@ def _fit(s: str, size: float, w: float, bold: bool = False) -> str:
     return t[:fit_len(t, size, w, bold, "…")] + "…"
 
 
+def _table_cards(n: Table, ds: DataSnapshot, names, heads, rows, path, x, y, w, ctx: Ctx):
+    """A table whose columns do not fit side by side, as one card per row
+    (as the email draws it): each cell under its column name, text values
+    wrapped between words, numbers, dates and booleans whole - a value or
+    word wider than the card is ``value_too_wide_for_screen``, drawn whole
+    past the card's edge rather than cut or split."""
+    from ..render import RenderWarning
+
+    items: list[Item] = []
+    cy = y
+    note = (f"One card per row: the {len(heads)} columns do not fit side by side in the "
+            f"{w:.0f} px this table gets.")
+    for line in wrap_text(note, 12, w):
+        items.append(Label(x, cy + 13, line, 12, MUTED))
+        cy += 17
+    cy += 6
+    whole = [ds.columns[nm].dtype != "str" for nm in names]
+    inner = w - 24
+    wide: list[str] = []
+    for r in rows:
+        top, body = cy, []
+        cy += 10
+        for h, v, keep in zip(heads, r, whole):
+            for line in wrap_text(h, 12, inner):
+                body.append(Label(x + 12, cy + 13, line, 12, MUTED))
+                cy += 17
+            # a text value wraps between words only: a token (an id, a URL)
+            # split over two lines reads as two values
+            lines = [v] if keep else _wrap_words(v, 13, inner)
+            wide += [ln for ln in lines if text_width(ln, 13) > inner]
+            for line in lines:
+                body.append(Label(x + 12, cy + 14, line, 13, MUTED if v == NULL_CELL else INK))
+                cy += 19
+            cy += 4
+        cy += 6
+        items.append(Rect(x, top, w, cy - top, fill="#ffffff", stroke=LINE, rx=6))
+        items.extend(body)
+        cy += 8
+    if wide:
+        ctx.warnings.append(RenderWarning(
+            "value_too_wide_for_screen",
+            f"{len(wide)} value(s) of the table are wider than its {inner:.0f} px card and "
+            f"must stay whole (e.g. {wide[0][:40]!r}); they run past the card's edge.", path))
+    return items, cy - y
+
+
+def _wrap_words(s: str, size: float, w: float) -> list[str]:
+    """``s`` broken at spaces only; a word wider than ``w`` stays whole on
+    its own line (the caller reports it)."""
+    out, line = [], ""
+    for word in s.split(" "):
+        cand = f"{line} {word}" if line else word
+        if line and text_width(cand, size) > w:
+            out.append(line)
+            line = word
+        else:
+            line = cand
+    return out + [line]
+
+
 def _title(title: str, x: float, y: float, w: float) -> tuple[list[Item], float]:
     """A table / flow title, wrapped to the slot: ``(items, y below it)``."""
     items: list[Item] = []
@@ -515,6 +586,17 @@ def _table(n: Table, path, x, y, w, ctx: Ctx):
                 + [text_width(r[i][:FIT_CHARS], 13) for r in rows]) + 20
             for i, h in enumerate(heads)]
     k = min(1.0, w / sum(want)) if want else 1.0
+    if ctx.min_text and k < 1.0 and any(
+            text_width(c[:FIT_CHARS], 13, ri == 0) > wi * k - 20
+            for ri, cells in enumerate([heads] + rows) for c, wi in zip(cells, want)):
+        # a profile render cuts no cell: one card per row, every value whole
+        sub, h = _table_cards(n, ds, names, heads, rows, path, x, cy, w, ctx)
+        items.extend(sub)
+        cy += h
+        if len(rows) < total:
+            items.append(Label(x, cy + 16, f"Showing {len(rows)} of {total} rows", 12, MUTED))
+            cy += 22
+        return items, cy - y
     widths = [wi * k for wi in want]
     w = sum(widths)  # a table is as wide as its content needs, at most the slot
     rh = 26.0
@@ -556,16 +638,21 @@ def _table(n: Table, path, x, y, w, ctx: Ctx):
 NODE_FONT, NODE_LH, NODE_MAX_W = 14.0, 18.0, 180.0
 
 
+#: Narrower node label widths a flow tries, in turn, when its natural
+#: layout would be scaled below the minimum text size (profile renders).
+NODE_NARROW_W = (150.0, 120.0, 100.0, 84.0, 70.0)
+
+
 @lru_cache(maxsize=1024)
-def _node_lines(label: str) -> tuple[str, ...]:
+def _node_lines(label: str, max_w: float = NODE_MAX_W) -> tuple[str, ...]:
     """Wrapped node label; cached because layout asks for every node's size
     more than once and drawing wraps it again."""
-    return tuple(wrap_text(label, NODE_FONT, NODE_MAX_W))
+    return tuple(wrap_text(label, NODE_FONT, max_w))
 
 
-def _node_size(node) -> tuple[float, float]:
-    lines = _node_lines(node.label)
-    return (max(text_width(s, NODE_FONT) for s in lines) + 28, len(lines) * NODE_LH + 24)
+def _node_size(node, max_w: float = NODE_MAX_W, pad: float = 28.0) -> tuple[float, float]:
+    lines = _node_lines(node.label, max_w)
+    return (max(text_width(s, NODE_FONT) for s in lines) + pad, len(lines) * NODE_LH + 24)
 
 
 def edge_text(e) -> str | None:
@@ -584,11 +671,13 @@ def _arrow(p0, p1, color: str) -> tuple[tuple[float, float], Path]:
     return back, Path(head, None, fill=color, closed=True)
 
 
-def flow_items(f: Flow) -> tuple[list[Item], float, float, list[str]]:
+def flow_items(f: Flow, max_w: float = NODE_MAX_W, pad: float = 28.0
+               ) -> tuple[list[Item], float, float, list[str]]:
     """Display list of a flow in its own coordinates, its natural size and its
-    reading order (so the text version reuses this one layout)."""
+    reading order (so the text version reuses this one layout); node labels
+    wrap at ``max_w`` px inside ``pad`` px of box padding."""
     geo = _flow.layout_flow(
-        f, _node_size, label_size=lambda s: (text_width(s, 12) + 8, 16),
+        f, lambda n: _node_size(n, max_w, pad), label_size=lambda s: (text_width(s, 12) + 8, 16),
         lane_label_size=lambda s: (text_width(s, 12, True), 16))
     items: list[Item] = []
     for name, band in geo.lanes:
@@ -621,7 +710,7 @@ def flow_items(f: Flow) -> tuple[list[Item], float, float, list[str]]:
         fill, stroke, rx, dashed = NODE_STYLE.get(node.component, NODE_STYLE["card"])
         g = Group([Rect(b.x, b.y, b.w, b.h, fill=fill, stroke=stroke, rx=rx, dash=dashed,
                         sw=1.5)], attrs={"data-node": node.id})
-        lines = _node_lines(node.label)
+        lines = _node_lines(node.label, max_w)
         top = b.cy - len(lines) * NODE_LH / 2
         for i, line in enumerate(lines):
             g.items.append(Label(b.cx, top + i * NODE_LH + 14, line, NODE_FONT, anchor="middle"))
@@ -649,6 +738,19 @@ def fit_flow(f: Flow, w: float, min_text: float = 0.0, path: str = "",
         s2 = min(1.0, w / gw2) if gw2 else 1.0
         if s2 > s:
             f, sub, gw, gh, order, s = tb, sub2, gw2, gh2, order2, s2
+    # never narrower than the widest word: a word split over two lines reads
+    # as two words
+    floor = max((text_width(wd, NODE_FONT) for nd in f.nodes for wd in nd.label.split()),
+                default=0.0)
+    for max_w in NODE_NARROW_W if min_text else ():
+        if FLOW_MIN_FONT * s >= min_text - 1e-9:
+            break
+        max_w = max(max_w, floor)
+        # narrower boxes: node labels wrap onto more lines (every word kept)
+        sub2, gw2, gh2, order2 = flow_items(f, max_w, 20.0)
+        s2 = min(1.0, w / gw2) if gw2 else 1.0
+        if s2 > s:
+            sub, gw, gh, order, s = sub2, gw2, gh2, order2, s2
     if min_text and FLOW_MIN_FONT * s < min_text - 1e-9 and warnings is not None:
         from ..render import RenderWarning
 

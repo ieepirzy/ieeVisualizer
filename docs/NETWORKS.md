@@ -139,6 +139,14 @@ fresh processes with different `PYTHONHASHSEED`s.
   `labels_abbreviated` / `labels_skipped` warnings naming the nodes (the
   matrix's row/column labels, cut at 18 characters, give
   `labels_abbreviated` too); the outline always has every label in full.
+  With a render profile (`RenderRequest(profile=...)`) text is at least the
+  profile's minimum, a label is wrapped at spaces before it is shortened, the
+  figure grows to fit and a phone puts the legend below the graph
+  ([MOBILE_AND_EMAIL.md](MOBILE_AND_EMAIL.md)); the send gate refuses any
+  label still shortened or left out. Every render takes a place for a label
+  only if it is at least 3 pt nearer its own node than any other node's rim;
+  a label with no such place is drawn at the first free one with a
+  `label_ambiguous` warning.
 
 ## Text alternative
 
@@ -177,7 +185,7 @@ combined; nothing is summed silently), `undeclared_quantity`,
 components). At most 20 issues per code are listed, then one info line
 with the remainder. Rendering raises `SpecValidationError` on any error and
 copies warnings into `RenderResult.warnings`, plus the drawing warnings
-`labels_abbreviated`, `labels_skipped`, `colour_cycle_wrapped`,
+`labels_abbreviated`, `labels_skipped`, `label_ambiguous`, `colour_cycle_wrapped`,
 `matrix_labels_omitted`, `edges_combined_in_cell`. `compute_layout` checks
 its own output: a NaN or infinite coordinate raises `RenderError`
 (`layout_not_finite`) instead of drawing an empty figure.

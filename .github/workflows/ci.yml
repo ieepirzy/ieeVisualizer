@@ -26,6 +26,8 @@ jobs:
       # when this matplotlib has none (re-record: tests/render/data/record_main_hashes.py).
       # (not at the floor: main's bytes were recorded for the default versions)
       IEEV_REQUIRE_MAIN_HASHES: ${{ matrix.matplotlib == '' && '1' || '0' }}
+      # tests/render/test_font_fallback.py needs the CJK fallback font installed below
+      IEEV_REQUIRE_CJK_FONT: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -46,6 +48,7 @@ jobs:
           python -m pip install "playwright==1.60.0; python_version < '3.10'" \
                                 "playwright==1.64.0; python_version >= '3.10'"
           python -m playwright install --with-deps chromium
+          sudo apt-get install -y fonts-wqy-zenhei  # the CJK fallback font
       - name: Ruff
         run: ruff check .
       - name: Pytest

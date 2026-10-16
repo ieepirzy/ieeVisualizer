@@ -32,8 +32,70 @@ def test_phone_view_png_is_legible_and_profile_sized():
     assert png_width(result.content) == get_profile("email-phone").pixel_width
     codes = {w.code for w in result.warnings}
     assert not {c for c in codes if c.startswith("legibility_")}
-    # the table is too wide for 272 px: its cut cells are reported, not silent
-    assert "table_cells_truncated" in codes
+    assert "table_cells_truncated" not in codes  # one card per row instead
+
+
+def _labels(items) -> list:
+    from ieeVisualizer.view.draw import Group
+
+    out = []
+    for it in items:
+        if isinstance(it, Group):
+            out += _labels(it.items)
+        elif isinstance(it, Label):
+            out.append(it)
+    return out
+
+
+def test_a_table_too_wide_for_a_phone_png_is_one_card_per_row_with_every_cell_whole():
+    from ieeVisualizer.view.layout import table_cells
+
+    view = weekly_briefing()
+    items, _, _ = layout_view(view, 320, get_profile("email-phone"))
+    texts = [lab.text for lab in _labels(items)]
+    assert not [t for t in texts if t.endswith("…")]
+    table = next(n for n in _walk(view.root) if isinstance(n, Table))
+    _, heads, rows, _ = table_cells(table, view.datasets[table.data])
+    for row in rows:
+        assert set(row) <= set(texts)  # every cell whole, on a line of its own
+    assert set(heads) <= set(texts)
+    assert any(t.startswith("One card per row") for t in texts)
+    plain, _, _ = layout_view(view, 320)  # no profile: cut as before
+    assert any(lab.text.endswith("…") for lab in _labels(plain))
+
+
+def _walk(n):
+    yield n
+    for c in getattr(n, "children", None) or ():
+        yield from _walk(c)
+
+
+def _node_lines(items, out=None, node=None) -> dict:
+    """``{node id: [lines drawn in its box]}``."""
+    from ieeVisualizer.view.draw import Group
+
+    out = {} if out is None else out
+    for it in items:
+        if isinstance(it, Group):
+            _node_lines(it.items, out, it.attrs.get("data-node", node))
+        elif isinstance(it, Label) and node is not None:
+            out.setdefault(node, []).append(it.text)
+    return out
+
+
+def test_flow_on_a_phone_wraps_node_labels_between_words_at_the_minimum():
+    result = render_view(reporting_pipeline(), "png", profile="email-phone")
+    codes = {w.code for w in result.warnings}
+    assert "flow_text_too_small" not in codes and "legibility_text_too_small" not in codes
+    items, _, _ = layout_view(reporting_pipeline(), 320, get_profile("email-phone"))
+    flow = next(n for n in _walk(reporting_pipeline().root) if hasattr(n, "nodes"))
+    drawn = _node_lines(items)
+    for node in flow.nodes:
+        lines = drawn[node.id]
+        assert " ".join(lines).split() == node.label.split()  # whole words, in order
+    assert any(len(lines) > 1 for lines in drawn.values())  # some did wrap
+    tablet = render_view(reporting_pipeline(), "png", profile="email-tablet")
+    assert not [w for w in tablet.warnings if w.code.startswith(("legibility", "flow_"))]
 
 
 def test_narrow_profile_stacks_kpi_tiles():
@@ -46,14 +108,6 @@ def test_narrow_profile_stacks_kpi_tiles():
     assert min(lab.size for lab in labels) >= 12  # no value shrinks below the minimum
     wide, _, _ = layout_view(view, 960)
     assert len({t.x for t in wide if isinstance(t, Rect) and t.fill == "#f6f8fa"}) == 3
-
-
-def test_flow_on_a_phone_turns_top_to_bottom_and_reports_what_is_still_small():
-    result = render_view(reporting_pipeline(), "png", profile="email-phone")
-    codes = {w.code for w in result.warnings}
-    assert "flow_text_too_small" in codes and "legibility_text_too_small" not in codes
-    tablet = render_view(reporting_pipeline(), "png", profile="email-tablet")
-    assert not [w for w in tablet.warnings if w.code.startswith(("legibility", "flow_"))]
 
 
 def test_profile_and_explicit_width_are_exclusive():
@@ -115,7 +169,7 @@ def test_email_flow_is_an_image_with_its_text_version():
     email = render_email(reporting_pipeline())
     assert [n.split(".")[0] for n in email.images] == ["flow-0"]
     assert "Text version" in email.html and "<ol" in email.html
-    assert "flow_text_too_small" in {w.code for w in email.warnings}
+    assert "flow_text_too_small" not in {w.code for w in email.warnings}  # boxes narrowed
 
 
 def test_email_reports_gmail_clipping():
@@ -125,3 +179,17 @@ def test_email_reports_gmail_clipping():
     email = render_email(view)
     assert len(email.html.encode()) > 102 * 1024
     assert "email_clipped_by_gmail" in {w.code for w in email.warnings}
+
+
+def test_phone_png_table_cards_keep_long_tokens_whole_and_gate_them():
+    from ieeVisualizer.render import LegibilityError, check_legible
+
+    url = "https://example.com/a/very/long/unbroken/path/segment/that/cannot/wrap?id=123456"
+    view = ViewSpec(datasets={"t": DataSnapshot.from_columns({
+        "Customer reference": [url, "Helsinki A"], "Revenue total for the period": [1.0, 3.0],
+        "Created at": ["2026-01-07", "2026-01-08"]})},
+        root=Stack(children=[Table(data="t")]))
+    items, _, _ = layout_view(view, 320, get_profile("email-phone"))
+    assert url in [lab.text for lab in _labels(items)]  # whole, on one line
+    with pytest.raises(LegibilityError, match="value_too_wide_for_screen"):
+        check_legible(render_view(view, "png", profile="email-phone"))

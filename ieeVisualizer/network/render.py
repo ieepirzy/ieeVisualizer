@@ -73,8 +73,10 @@ class BuiltNetwork:
     labels: dict[int, Any] = field(default_factory=dict)
     skipped_labels: list[int] = field(default_factory=list)
     abbreviated_labels: list[int] = field(default_factory=list)
+    ambiguous_labels: list[int] = field(default_factory=list)
     legends: list = field(default_factory=list)
     matrix: Any = None
+    sections: list = field(default_factory=list)
 
 
 def _check(spec: NetworkSpec) -> list[RenderWarning]:
@@ -200,26 +202,43 @@ def build_network(spec: NetworkSpec, request: RenderRequest | None = None) -> Bu
     warnings = _check(spec)
     theme_rc = resolve_theme(request.theme or spec.theme, "/theme", warnings)
     lay = compute_layout(spec)
-    with render_context(theme_rc), _warnings.catch_warnings():
+    from ..render.mpl.adapter import _min_pt
+
+    with render_context(theme_rc, _min_pt(request)), _warnings.catch_warnings():
         _warnings.simplefilter("ignore")
-        built = _draw(spec, lay, request, warnings)
+        built = _fitted(spec, lay, request, warnings)
     return built
 
 
-def _new_figure(request: RenderRequest):
+def _new_figure(request: RenderRequest, height_in: float | None = None):
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
 
     from ..render.mpl.adapter import _figsize
 
-    fig = Figure(figsize=_figsize(request), dpi=request.dpi)
+    w, h = _figsize(request)
+    fig = Figure(figsize=(w, h if height_in is None else height_in), dpi=request.dpi)
     FigureCanvasAgg(fig)
     return fig
 
 
+def _fitted(spec: NetworkSpec, lay: LayoutResult, request: RenderRequest,
+            warnings: list[RenderWarning]) -> BuiltNetwork:
+    """Draw ``spec``; a profile render whose labels or legend do not fit at
+    the minimum text size is drawn again taller (:mod:`.fit`)."""
+    if request.profile is None or spec.layout.algorithm == "matrix":
+        return _draw(spec, lay, request, list(warnings))
+    from .fit import fit_network
+
+    return fit_network(spec, request, lambda frame: _draw(spec, lay, request, list(warnings),
+                                                          frame))
+
+
 def _draw(spec: NetworkSpec, lay: LayoutResult, request: RenderRequest,
-          warnings: list[RenderWarning]) -> BuiltNetwork:
-    fig = _new_figure(request)
+          warnings: list[RenderWarning], frame: Any = None) -> BuiltNetwork:
+    """``frame`` (profile renders, :class:`.fit.Frame`): font sizes, figure
+    height and where the graph, legends, title and caption go."""
+    fig = _new_figure(request, None if frame is None else frame.height_in)
     if spec.layout.algorithm == "matrix":
         from .matrix import draw_matrix
 
@@ -227,14 +246,16 @@ def _draw(spec: NetworkSpec, lay: LayoutResult, request: RenderRequest,
     from matplotlib.collections import LineCollection, PolyCollection
     from matplotlib.lines import Line2D
 
-    ax = fig.add_axes([0.02, 0.07, 0.68, 0.84])
+    ax = fig.add_axes([0.02, 0.07, 0.68, 0.84] if frame is None else frame.axes_rect)
     ax.set_axis_off()
     equal = spec.layout.algorithm in ("force", "circular")
     xy = _frame(lay.xy, equal)
-    ax.set_xlim(-0.08, 1.08)
-    ax.set_ylim(-0.1, 1.08)
+    pad, vpad = (0.0, 0.0) if frame is None else frame.side_pad(spec, ax)
+    ax.set_xlim(-0.08 - pad, 1.08 + pad)
+    ax.set_ylim(-0.1 - vpad, 1.08 + vpad)
     if equal:
-        ax.set_aspect("equal", adjustable="box", anchor="W")
+        ax.set_aspect("equal", adjustable="box",
+                      anchor="C" if frame is not None and frame.narrow else "W")
     built = BuiltNetwork(fig, ax, lay, warnings, node_xy=xy)
     styles = _group_styles(spec, warnings)
 
@@ -351,20 +372,26 @@ def _draw(spec: NetworkSpec, lay: LayoutResult, request: RenderRequest,
                                         kd) for kd in kinds], 0.5))
     top = 0.93
     renderer = fig.canvas.get_renderer()
-    for title, rows, spacing in sections:
+    small = 7.5 if frame is None else frame.small
+    for k, (title, rows, spacing) in enumerate(sections):
+        anchor = (0.72, top) if frame is None else frame.legend_at(k, sections)
         leg = fig.legend([h for h, _ in rows], [t for _, t in rows], loc="upper left",
-                         bbox_to_anchor=(0.72, top), frameon=False, fontsize=7.5,
+                         bbox_to_anchor=anchor, frameon=False, fontsize=small,
                          handlelength=2.6, borderaxespad=0.0, labelspacing=spacing,
-                         title=title, title_fontproperties={"weight": "bold", "size": 7.5},
+                         title=title, title_fontproperties={"weight": "bold", "size": small},
                          alignment="left")
         built.legends.append(leg)
         top = fig.transFigure.inverted().transform(
             leg.get_window_extent(renderer))[0, 1] - 0.025
     if spec.title:
-        ax.set_title(spec.title, fontsize=11, loc="left")
-    if spec.caption:
+        ax.set_title(spec.title if frame is None else frame.title,
+                     fontsize=11 if frame is None else frame.large, loc="left")
+    if spec.caption and frame is None:
         fig.text(0.02, 0.012, spec.caption, fontsize=7.5, color="0.3", wrap=True)
-    _place_labels(spec, built, radius_pt)
+    elif spec.caption:
+        fig.text(0.02, 0.012, frame.caption, fontsize=small, color="0.3", va="bottom")
+    built.sections = sections
+    _place_labels(spec, built, radius_pt, frame)
     return built
 
 
@@ -392,11 +419,16 @@ def _multi_bows(spec: NetworkSpec, idx: dict[str, int]) -> dict[int, float]:
     return out
 
 
-def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]) -> None:
+def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float],
+                  frame: Any = None) -> None:
     """Greedy collision avoidance in display space. Nodes in priority order
     (degree, then size, then declaration order) try their full label, then
-    abbreviations of 12 and 6 characters; a label that would still overlap a
-    placed label or another node is left out. Both outcomes are warned."""
+    abbreviations of 12 and 6 characters (profile renders: wrapped versions
+    and more places first). A place is taken only when it is free and the
+    label is clearly nearer its own node than any other
+    (:func:`_attributable`); a label with free but no such place is drawn at
+    the first free one with a ``label_ambiguous`` warning, a label with no
+    free place is left out. Each outcome is warned."""
     from matplotlib.transforms import Bbox
 
     ax, fig = built.axes, built.figure
@@ -413,42 +445,117 @@ def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]
         deg[idx[e.target]] += 1
     prio = sorted(range(len(spec.nodes)),
                   key=lambda i: (-deg[i], -(spec.nodes[i].size or 0.0), i))
-    placed: list[Any] = []
-    fontsize = 7.5 if len(spec.nodes) <= 60 else 6.5
-    for i in prio:
-        full = spec.nodes[i].display_label
-        cands = [full] + [full[:c].rstrip() + "…" for c in (12, 6) if len(full) > c + 1]
-        below = ((0.0, -(radius_pt[i] + 2)), "center", "top", False)
-        spots = [below]
-        if spec.layout.algorithm == "layered" and spec.layout.direction == "TB":
-            # beside the node first (below it is where the edges to its children
-            # start), if that stays inside the axes; else below as elsewhere
-            spots = [((radius_pt[i] + 3, 0.0), "left", "center", True), below]
-        elif spec.layout.algorithm == "circular":  # radially outwards
-            dx, dy = built.node_xy[i] - 0.5
-            norm = max((dx * dx + dy * dy) ** 0.5, 1e-9)
-            spots = [((dx / norm * (radius_pt[i] + 3), dy / norm * (radius_pt[i] + 3)),
-                      "left" if dx > 0.05 else "right" if dx < -0.05 else "center",
-                      "bottom" if dy > 0.05 else "top" if dy < -0.05 else "center", False)]
-        for text, (off, ha, va, inside) in ((c, sp) for c in cands for sp in spots):
-            t = ax.annotate(text, xy=tuple(built.node_xy[i]), xytext=off,
-                            textcoords="offset points", ha=ha, va=va,
-                            fontsize=fontsize, color="0.15", zorder=4,
-                            bbox={"boxstyle": "round,pad=0.12", "fc": "white", "ec": "none",
-                                  "alpha": 0.8})
-            bb = t.get_window_extent(renderer)
-            clash = any(bb.overlaps(o) for o in placed) or any(
-                bb.overlaps(o) for j, o in enumerate(obstacles) if j != i) or (
-                inside and bb.x1 > ax.bbox.x1)
-            if not clash:
-                placed.append(bb)
-                built.labels[i] = t
-                if text != full:
-                    built.abbreviated_labels.append(i)
-                break
+
+    def place(order: list[int], seek: bool = True) -> None:
+        built.labels, built.abbreviated_labels = {}, []
+        built.skipped_labels, built.ambiguous_labels = [], []
+        placed: list[Any] = []
+        if frame is not None:  # profile renders: labels keep clear of the legend and title
+            placed += [leg.get_window_extent(renderer) for leg in built.legends]
+            if ax.title.get_text():
+                placed.append(ax.title.get_window_extent(renderer))
+        fontsize = 7.5 if len(spec.nodes) <= 60 else 6.5
+        if frame is not None:
+            fontsize = max(fontsize, frame.small)
+        for i in order:
+            full = spec.nodes[i].display_label
+            whole = [full] + ([] if frame is None else frame.wrapped(full, fontsize))
+            short = [full[:c].rstrip() + "…" for c in (12, 6) if len(full) > c + 1]
+            below = ((0.0, -(radius_pt[i] + 2)), "center", "top", False)
+            spots = [below]
+            if spec.layout.algorithm == "layered" and spec.layout.direction == "TB":
+                # beside the node first (below it is where the edges to its children
+                # start), if that stays inside the axes; else below as elsewhere
+                spots = [((radius_pt[i] + 3, 0.0), "left", "center", True), below]
+            elif spec.layout.algorithm == "circular":  # radially outwards
+                dx, dy = built.node_xy[i] - 0.5
+                norm = max((dx * dx + dy * dy) ** 0.5, 1e-9)
+                spots = [((dx / norm * (radius_pt[i] + 3), dy / norm * (radius_pt[i] + 3)),
+                          "left" if dx > 0.05 else "right" if dx < -0.05 else "center",
+                          "bottom" if dy > 0.05 else "top" if dy < -0.05 else "center", False)]
+            extra = [] if frame is None else [  # profile renders: more places
+                sp for sp in frame.spots(radius_pt[i]) if sp not in spots]
+            # the whole label (or, on a profile, wrapped) at the layout's own
+            # places, then at the extra ones, then shortened anywhere
+            tries = [(c, sp) for sp in spots for c in whole] \
+                + [(c, sp) for sp in extra for c in whole] \
+                + [(c, sp) for c in short for sp in spots + extra]
+            if frame is None:  # main's order: each text at every place in turn
+                tries = [(c, sp) for c in whole + short for sp in spots]
+            fallback = None  # the first free place, if no place is clearly this node's
+            n_whole = sum(1 for c, _ in tries if c in whole)
+            t = None
+            for k, (text, (off, ha, va, inside)) in enumerate(tries):
+                if k >= n_whole and fallback is not None:
+                    break  # the whole label, said to be ambiguous, before a shortened one
+                t = ax.annotate(text, xy=tuple(built.node_xy[i]), xytext=off,
+                                textcoords="offset points", ha=ha, va=va,
+                                fontsize=fontsize, color="0.15", zorder=4,
+                                bbox={"boxstyle": "round,pad=0.12", "fc": "white", "ec": "none",
+                                      "alpha": 0.8})
+                bb = t.get_window_extent(renderer)
+                clash = any(bb.overlaps(o) for o in placed) or any(
+                    bb.overlaps(o) for j, o in enumerate(obstacles) if j != i) or (
+                    inside and bb.x1 > ax.bbox.x1) or (
+                    frame is not None and not frame.inside(bb, fig))
+                if not clash and _attributable(i, bb, pts, radius_pt, px):
+                    fallback = None
+                    break
+                if not clash and not seek:  # main's rule: the first free place
+                    fallback = None
+                    built.ambiguous_labels.append(i)
+                    break
+                if not clash and fallback is None:
+                    fallback = (text, off, ha, va)
+                t.remove()
+                t = None
+            if t is None:
+                if fallback is not None:  # drawn, but said to be ambiguous
+                    text, off, ha, va = fallback
+                    t = ax.annotate(text, xy=tuple(built.node_xy[i]), xytext=off,
+                                    textcoords="offset points", ha=ha, va=va,
+                                    fontsize=fontsize, color="0.15", zorder=4,
+                                    bbox={"boxstyle": "round,pad=0.12", "fc": "white",
+                                          "ec": "none", "alpha": 0.8})
+                    bb = t.get_window_extent(renderer)
+                    built.ambiguous_labels.append(i)
+            if t is None:
+                built.skipped_labels.append(i)
+                continue
+            placed.append(bb)
+            built.labels[i] = t
+            if " ".join(text.split()) != " ".join(full.split()):  # wrapping is not shortening
+                built.abbreviated_labels.append(i)
+
+    place(prio)
+    if frame is None and (built.skipped_labels or built.abbreviated_labels):
+        # without a profile: if looking for a clear place shortens or drops
+        # more labels than taking the first free one (main's rule), take
+        # the first free ones, whole, and say which are ambiguous
+        lost = len(built.skipped_labels) + len(built.abbreviated_labels)
+        for t in built.labels.values():
             t.remove()
-        else:
-            built.skipped_labels.append(i)
+        place(prio, seek=False)
+        if len(built.skipped_labels) + len(built.abbreviated_labels) >= lost:
+            for t in built.labels.values():
+                t.remove()
+            place(prio)
+    for _ in range(2 if frame is not None else 0):
+        # profile renders: the labels that found no clear place go first
+        failed = built.skipped_labels + built.ambiguous_labels + built.abbreviated_labels
+        if not failed:
+            break
+        first = len(failed)
+        for t in built.labels.values():
+            t.remove()
+        place(failed + [i for i in prio if i not in failed])
+        if len(built.skipped_labels + built.ambiguous_labels + built.abbreviated_labels) < first:
+            continue
+        for t in built.labels.values():  # no better: the first placement again
+            t.remove()
+        place(prio)
+        break
+    advice = "" if frame is None else frame.too_big_advice()
     for code, which, verb in (("labels_abbreviated", built.abbreviated_labels, "abbreviated"),
                               ("labels_skipped", built.skipped_labels, "left out")):
         if which:
@@ -456,7 +563,34 @@ def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]
             built.warnings.append(RenderWarning(
                 code, f"{len(which)} node label(s) were {verb} because they would overlap "
                 f"other labels or nodes ({names}{', ...' if len(which) > 8 else ''}); the "
-                "text outline lists every label in full.", "/nodes"))
+                "text outline lists every label in full." + advice, "/nodes"))
+    if built.ambiguous_labels:
+        which = built.ambiguous_labels
+        names = ", ".join(repr(spec.nodes[i].id) for i in sorted(which)[:8])
+        built.warnings.append(RenderWarning(
+            "label_ambiguous", f"{len(which)} node label(s) could only be placed as near "
+            f"another node as their own ({names}{', ...' if len(which) > 8 else ''}), so a "
+            "reader may attribute them to the wrong node; the text outline lists every "
+            "label with its node." + advice, "/nodes"))
+
+
+#: A label must be at least this much nearer its own node than any other (pt).
+ATTRIBUTION_MARGIN_PT = 3.0
+
+
+def _attributable(i: int, bb: Any, pts: Any, radius_pt: list[float], px: float) -> bool:
+    """Is label box ``bb`` clearly node ``i``'s: is the gap between the box
+    and node ``i``'s rim at least :data:`ATTRIBUTION_MARGIN_PT` smaller than
+    the gap to every other node's rim (rim to rim, so a large node is judged
+    like a small one)?"""
+    def gap(j: int) -> float:
+        x, y = pts[j]
+        dx = max(bb.x0 - x, 0.0, x - bb.x1)
+        dy = max(bb.y0 - y, 0.0, y - bb.y1)
+        return max((dx * dx + dy * dy) ** 0.5 - radius_pt[j] * px, 0.0)
+
+    own = gap(i) + ATTRIBUTION_MARGIN_PT * px
+    return all(gap(j) > own for j in range(len(pts)) if j != i)
 
 
 def render_network(spec: NetworkSpec, request: RenderRequest | None = None) -> RenderResult:
@@ -480,7 +614,7 @@ def render_network(spec: NetworkSpec, request: RenderRequest | None = None) -> R
 
     with render_context(theme_rc, _min_pt(request)), _warnings.catch_warnings():
         _warnings.simplefilter("ignore")
-        built = _draw(spec, lay, request, warnings)
+        built = _fitted(spec, lay, request, warnings)
         if request.profile is not None:  # rc fonts raised to the minimum; audit the result
             from ..render.mpl.legibility import audit, recording_canvas
 

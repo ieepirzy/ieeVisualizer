@@ -21,7 +21,5 @@ def test_mobile_gallery_covers_every_template(tmp_path):
     for view in module.VIEWS:
         assert (tmp_path / f"view-{view}.email.html").exists()
     assert json.loads((tmp_path / "legibility.json").read_text()) == report
-    # the FigureSpec templates that are fixed by this profile work stay clean
-    for name in ("timeseries", "vector_field_2d"):
-        for profile in ("email-phone", "email-tablet"):
-            assert report[f"{name}--{profile}.png"] == []
+    # every template and view passes the send gate at both email profiles
+    assert {file: ws for file, ws in report.items() if ws} == {}

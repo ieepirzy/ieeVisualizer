@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..render import RenderRequest, RenderWarning, Resolver, get_profile, render
+from ..render.mpl.style import quiet_fallback_weights
 from ..spec import SpecValidationError
 from ..spec._common import ptr_join
 from .draw import Group, Rect, esc, to_png
@@ -419,6 +420,7 @@ class _Email:
         return title + img + text
 
 
+@quiet_fallback_weights()
 def render_email(view: ViewSpec, profile: str = "email-phone", *,
                  resolver: Resolver | None = None,
                  image_src: Callable[[str], str] | None = None) -> EmailRender:

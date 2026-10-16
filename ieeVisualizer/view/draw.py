@@ -258,6 +258,8 @@ def label_font(it: Label) -> Any:
     checked against)."""
     from matplotlib.font_manager import FontProperties
 
-    return FontProperties(family="DejaVu Sans Mono" if it.mono else "DejaVu Sans",
+    from ..render.mpl.style import with_fallbacks
+
+    return FontProperties(family=with_fallbacks("DejaVu Sans Mono" if it.mono else "DejaVu Sans"),
                           weight="bold" if it.bold else "normal",
                           style="italic" if it.italic else "normal")

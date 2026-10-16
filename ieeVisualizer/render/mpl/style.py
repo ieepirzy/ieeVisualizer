@@ -38,7 +38,11 @@ Roles:
 
 from __future__ import annotations
 
+import contextlib
+import logging
 import math
+import threading
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -330,3 +334,63 @@ def fill_kwargs(style: dict[str, Any], role: str, roles: Roles = DEFAULT_ROLES) 
         kw.setdefault("alpha", roles.reference_fill_alpha)
         kw.setdefault("color", roles.reference_color)
     return kw
+
+
+#: Fonts with CJK glyphs, tried after the theme's own families when installed
+#: (a character the theme's font lacks is then drawn instead of a box; the
+#: glyph check looks characters up in the same list, so whatever no installed
+#: font has is still ``glyph_missing``).
+CJK_FALLBACKS = ("Noto Sans CJK JP", "Noto Sans CJK SC", "Noto Sans CJK TC",
+                 "Noto Sans CJK KR", "Source Han Sans", "WenQuanYi Zen Hei",
+                 "WenQuanYi Micro Hei", "Droid Sans Fallback")
+
+
+def fallback_families() -> tuple[str, ...]:
+    """The installed :data:`CJK_FALLBACKS`, in that order (the first one
+    found; a second CJK font adds nothing)."""
+    from matplotlib import font_manager as fm
+
+    have = {f.name for f in fm.fontManager.ttflist}
+    return tuple(f for f in CJK_FALLBACKS if f in have)[:1]
+
+
+def with_fallbacks(family: Any) -> list[str]:
+    """``family`` (a name or list, e.g. rcParams' ``font.family``) followed by
+    the installed CJK fallback."""
+    fams = [family] if isinstance(family, str) else list(family)
+    return fams + [f for f in fallback_families() if f not in fams]
+
+
+class _FallbackWeightLog(logging.Filter):
+    """Drops matplotlib's "Failed to find font weight ... for <family>"
+    record for the CJK fallback (such fonts often have one weight, the one
+    they are drawn in), on the installing thread only; the same record for
+    a theme's own font still reaches the host's log."""
+
+    def __init__(self, families: tuple[str, ...]) -> None:
+        super().__init__()
+        self.families = families
+        self.thread = threading.get_ident()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.thread != self.thread:
+            return True
+        msg = record.getMessage()
+        return not ("Failed to find font weight" in msg
+                    and any(f" for {f}, " in msg for f in self.families))
+
+
+@contextlib.contextmanager
+def quiet_fallback_weights() -> Iterator[None]:
+    """:class:`_FallbackWeightLog` on matplotlib's font manager logger while
+    the block runs."""
+    families = fallback_families()
+    if not families:
+        yield
+        return
+    log, quiet = logging.getLogger("matplotlib.font_manager"), _FallbackWeightLog(families)
+    log.addFilter(quiet)
+    try:
+        yield
+    finally:
+        log.removeFilter(quiet)
