@@ -5,7 +5,8 @@
 environment (matplotlib, numpy and sympy versions), each spec's
 ``spec_hash`` and the SHA-256 of its SVG and PNG renders. Run (with
 ``BASELINE_ROOT``) against a ``git archive`` copy of the base branch, in each
-environment, it produces ``tests/data/spec_baseline.json``: the hashes and
+environment (several times, so renders that differ between processes are
+marked ``unstable``), it produces ``tests/data/spec_baseline.json``: the hashes and
 figures the specs had before a change, which the stability test compares
 against.
 
@@ -107,6 +108,12 @@ def fingerprint(spec) -> dict:
     return out
 
 
+#: A render whose bytes differed between processes of the same environment
+#: when the baseline was recorded (e.g. polar SVG on matplotlib 3.9): not
+#: comparable, so the stability test skips it.
+UNSTABLE = "unstable"
+
+
 def environment() -> str:
     """What the hashes depend on: sampled templates hash numpy/sympy output,
     renders depend on matplotlib."""
@@ -126,8 +133,13 @@ def main(out_path: str) -> None:
     path = Path(out_path)
     data = json.loads(path.read_text()) if path.exists() else {}
     data["template_versions"] = versions
-    data.setdefault("environments", {})[environment()] = {
-        key: fingerprint(spec) for key, spec in sorted(specs.items())}
+    before = data.setdefault("environments", {}).get(environment(), {})
+    now = {key: fingerprint(spec) for key, spec in sorted(specs.items())}
+    for key, fp in now.items():  # run once per process: renders that differ are unstable
+        for fmt in ("svg", "png"):
+            if key in before and before[key][fmt] != fp[fmt]:
+                fp[fmt] = UNSTABLE
+    data["environments"][environment()] = now
     path.write_text(json.dumps(data, indent=1, sort_keys=True) + "\n")
 
 

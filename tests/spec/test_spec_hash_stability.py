@@ -18,7 +18,7 @@ import json
 from pathlib import Path
 
 import pytest
-from baseline_specs import collect, environment, fingerprint
+from baseline_specs import UNSTABLE, collect, environment, fingerprint
 
 from ieeVisualizer.spec import from_json, spec_hash, to_json
 
@@ -56,6 +56,8 @@ def test_spec_hash_is_unchanged(key):
                     f"(recorded: {sorted(RECORDED)})")
 @pytest.mark.parametrize("key", KEYS)
 def test_figure_without_intervals_is_byte_identical(key):
+    want = {fmt: HERE[key][fmt] for fmt in ("svg", "png") if HERE[key][fmt] != UNSTABLE}
+    if not want:
+        pytest.skip(f"{key}: main's own renders differ between processes here")
     got = fingerprint(SPECS[key])
-    assert {"svg": got["svg"], "png": got["png"]} == {
-        "svg": HERE[key]["svg"], "png": HERE[key]["png"]}
+    assert {fmt: got[fmt] for fmt in want} == want

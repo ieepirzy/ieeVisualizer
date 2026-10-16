@@ -266,7 +266,7 @@
    "render_examples.polar_spec": {
     "png": "sha256:4796be7f556a81c98525c49e1dac5fa8856565da131e866e222a2f3ba88dae15",
     "spec_hash": "sha256:f816242ecf7a15db40c02cc55c80cb61082f35b530f4dc9d0d4b488fd08dafde",
-    "svg": "sha256:dd5a36735318c45a0d81f4642b1d8001e4380edf1e8fb1868e7024c06ffd3b16"
+    "svg": "unstable"
    },
    "render_examples.quiver_spec": {
     "png": "sha256:77cb9ab8d4321c37a9ee4df0ed0335788f3cea48d478e2f04238872ada8fbeda",
