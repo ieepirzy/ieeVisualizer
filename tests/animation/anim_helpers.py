@@ -1,4 +1,6 @@
-"""Shared builders for the animation tests."""
+"""Shared builders for the animation tests. Importing this module makes
+animation tests render inline (fast, inspectable); the worker-process
+default is exercised explicitly by test_anim_isolation.py."""
 
 from __future__ import annotations
 
@@ -9,6 +11,8 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+
+os.environ.setdefault("IEEVISUALIZER_ANIMATION_ISOLATION", "inline")
 
 import numpy as np
 
