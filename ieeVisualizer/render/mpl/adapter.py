@@ -17,7 +17,7 @@ from __future__ import annotations
 import contextlib
 import io
 import warnings as _warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ...spec import MARK_TYPES, FigureSpec
@@ -180,6 +180,60 @@ class MatplotlibAdapter:
         built.warnings[:] = _dedupe(built.warnings)  # same list: draw-time warnings land here
         return built
 
+    def draw_into(
+        self,
+        spec: FigureSpec,
+        ax: Any,
+        *,
+        resolver: Resolver | None = None,
+        role_styling: bool = True,
+    ) -> BuiltFigure:
+        """Validate, resolve and draw ``spec`` into the caller's existing
+        Matplotlib ``ax`` (and its figure), for callers that own the figure:
+        the legacy ``Visualizer.visualize``/``visualize_vf``, which must honour
+        ``ax=`` and ``style=`` and return a pyplot-managed figure.
+
+        Unlike :meth:`build_figure` and :meth:`render` this does **not** enter
+        :func:`render_context`: the caller's current rcParams (its style) stay
+        in force, so the output is not byte-reproducible and there is no
+        request size, dpi or export. The spec's theme still supplies role
+        styling, colour maps and number locale. ``ax`` must match the spec's
+        coordinate system (a 3D axes for ``cartesian3d``). Python warnings
+        raised while drawing are returned as ``backend_warning`` entries, as
+        in :meth:`build_figure`. The adapter's ``max_points`` limit, which
+        guards the export path, is not applied.
+
+        ``role_styling=False`` draws ``reference`` layers with the caller's
+        styling instead of the role's (no reference colour, transparency or
+        line width; a line without a style colour takes the axes' own
+        property cycle, as ``ax.plot`` would). The role stays in the spec.
+        Only line, function and quiver layers support it."""
+        request = RenderRequest()
+        if not role_styling:
+            other = sorted({m.type for m in spec.layers} - {"line", "function", "quiver"})
+            if other:
+                raise ValueError(f"role_styling=False supports line, function and quiver "
+                                 f"layers, not {', '.join(other)}")
+        prepared = prepare(spec, resolver)
+        # max_points guards the reproducible export path (file size, render
+        # time); a caller drawing into its own axes asked for every point.
+        self._check_capabilities(prepared.spec, request,
+                                 replace(self.capabilities, max_points=None))
+        want = {"cartesian3d": "3d", "polar": "polar"}.get(prepared.spec.coordinate_system,
+                                                           "rectilinear")
+        if getattr(ax, "name", None) != want:
+            raise ValueError(f"a {prepared.spec.coordinate_system} spec needs a {want!r} axes, "
+                             f"got {getattr(ax, 'name', None)!r}")
+        warnings = list(prepared.warnings)
+        theme = self._theme(prepared.spec, request, warnings)
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            built = self._draw(prepared, request, warnings, theme, ax=ax,
+                               role_styling=role_styling)
+        _backend_warnings(caught, built.warnings)
+        built.warnings[:] = _dedupe(built.warnings)
+        return built
+
     def render(
         self,
         spec: FigureSpec,
@@ -218,11 +272,12 @@ class MatplotlibAdapter:
 
     # --------------------------------------------------------------- internals
 
-    def _check_capabilities(self, spec: FigureSpec, request: RenderRequest) -> None:
+    def _check_capabilities(self, spec: FigureSpec, request: RenderRequest,
+                            capabilities: Capabilities | None = None) -> None:
         from ..registry import requirements_for
 
         reqs = requirements_for(spec, request)
-        missing = reqs.unmet(self.capabilities)
+        missing = reqs.unmet(capabilities or self.capabilities)
         if missing:
             raise CapabilityError(
                 [issue("", "unsupported_by_adapter",
@@ -240,7 +295,9 @@ class MatplotlibAdapter:
 
     @staticmethod
     def _draw(prepared: PreparedSpec, request: RenderRequest,
-              warnings: list[RenderWarning], theme: Any = None) -> BuiltFigure:
+              warnings: list[RenderWarning], theme: Any = None, *,
+              ax: Any = None, role_styling: bool = True) -> BuiltFigure:
+        """Draw into a new figure sized by ``request``, or into ``ax``."""
         from matplotlib.figure import Figure
 
         from .data import infer_axes
@@ -249,12 +306,18 @@ class MatplotlibAdapter:
 
         spec = prepared.spec
         axes_info = infer_axes(spec, warnings)
-        figsize = _figsize(request)
-        fig = Figure(figsize=figsize, dpi=request.dpi, layout="constrained")
-        projection = {"cartesian3d": "3d", "polar": "polar"}.get(spec.coordinate_system)
-        ax = fig.add_subplot(projection=projection)
+        caller_axes = ax is not None
+        if ax is None:
+            figsize = _figsize(request)
+            fig = Figure(figsize=figsize, dpi=request.dpi, layout="constrained")
+            projection = {"cartesian3d": "3d", "polar": "polar"}.get(spec.coordinate_system)
+            ax = fig.add_subplot(projection=projection)
+        else:
+            fig = ax.figure
+            figsize = tuple(fig.get_size_inches())
         ctx = DrawContext(spec=spec, fig=fig, ax=ax, axes=axes_info, warnings=warnings,
-                          theme=theme, profile=request.render_profile, min_pt=_min_pt(request))
+                          theme=theme, role_styling=role_styling, caller_axes=caller_axes,
+                          profile=request.render_profile, min_pt=_min_pt(request))
         for i, mark in enumerate(spec.layers):
             ctx.layer_artists[i] = DRAW[mark.type](ctx, i, mark)
         report_bar_overlaps(ctx)
