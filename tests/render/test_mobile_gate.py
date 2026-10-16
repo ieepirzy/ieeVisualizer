@@ -100,7 +100,9 @@ def _network_cases():
     rnd = random.Random(1)
     cases = [(f"template {e['name']}", example(e["name"])) for e in templates.list_templates()
              if e["name"] in ("org_chart", "network", "dependency_map")]
-    return cases + [(f"random {k}", _random_network(rnd, k)) for k in range(30)]
+    # half with node sizes: large markers are what rim-to-rim attribution is for
+    return cases + [(f"random {k}", _random_network(rnd, k, sizes=k % 2 == 1))
+                    for k in range(40)]
 
 
 @pytest.mark.parametrize("request_name", ["default request", "no profile", "email-phone",
@@ -108,9 +110,13 @@ def _network_cases():
 def test_every_node_label_is_clearly_its_own_nodes_or_said_not_to_be(request_name):
     """A drawn node label is nearer its own node than any other (by a
     margin), or the render says it is not (``label_ambiguous``, gating) -
-    for the templates and 30 seeded random networks, with and without a
-    profile."""
-    from anchored import MARGIN_PX, owner
+    for the templates and 40 seeded random networks (half with node sizes),
+    with and without a profile. "Nearer" is a reader model
+    (``anchored.owner``: nearest box point to the drawn marker's edge, read
+    from the drawn markers, unclamped, 2.25 pt margin), not the renderer's
+    rule (``_attributable``: box-to-rim gap clamped at 0, 3 pt margin, from
+    its own bookkeeping)."""
+    from anchored import MARGIN_PX, drawn_nodes, owner
 
     from ieeVisualizer.network.render import build_network
 
@@ -119,12 +125,12 @@ def test_every_node_label_is_clearly_its_own_nodes_or_said_not_to_be(request_nam
     silent = []
     for name, spec in _network_cases():
         built = build_network(spec, req)
-        fig, ax = built.figure, built.axes
+        fig = built.figure
         renderer = fig.canvas.get_renderer()
-        centres = ax.transData.transform(built.node_xy)
+        nodes = drawn_nodes(built)
         flagged = set(built.ambiguous_labels)
         for i, t in built.labels.items():
-            who = owner(t.get_window_extent(renderer), centres, MARGIN_PX * fig.dpi / 192.0)
+            who = owner(t.get_window_extent(renderer), nodes, MARGIN_PX * fig.dpi / 192.0)
             if who != i and i not in flagged:
                 silent.append((name, spec.nodes[i].display_label, who))
         if flagged:
@@ -355,6 +361,15 @@ def _swap_legend_swatches(built):
     h[1].set_facecolor(ca)
 
 
+def _swap_wrapped_cycle_styles(built):
+    """Entries 0 and 10 share a colour (the cycle wrapped); swap their dash."""
+    legend = built.axes.get_legend()
+    h = getattr(legend, "legend_handles", None) or legend.legendHandles
+    a, b = h[0].get_linestyle(), h[10].get_linestyle()
+    h[0].set_linestyle(b)
+    h[10].set_linestyle(a)
+
+
 def _shift_annotation(built):
     note = next(a for a in built.annotation_artists if "Budget" in a.get_text())
     note.xyann = (note.xyann[0] - 300, note.xyann[1])
@@ -364,12 +379,26 @@ def _shift_annotation(built):
     ("bar_comparison", _swap_value_labels),     # two bars' labels drawn on each other's bar
     ("bar_comparison", _swap_legend_swatches),  # legend texts beside the other colour
     ("funnel+note", _shift_annotation),         # a note drawn away from its data anchor
+    ("12 series", _swap_wrapped_cycle_styles),  # same colour, other dash, other series
 ])
 def test_the_anchor_comparison_tells_a_wrong_drawing_apart(name, mutate):
     """tests/render/anchored.py measures anchors from the drawing: each of
     these drawing errors changes what it reads."""
-    spec = _funnel_with_a_note() if name == "funnel+note" else example(name)
+    spec = {"funnel+note": _funnel_with_a_note, "12 series": lambda: _series(12, "S{}")}.get(
+        name, lambda: example(name))()
     assert anchored(spec, DESKTOP, mutate) != anchored(spec, DESKTOP)
+
+
+def test_legend_texts_are_paired_with_the_swatch_drawn_beside_them():
+    """Reordering the handle list without moving anything drawn changes
+    nothing: pairs come from the drawing, not from list order."""
+    def reorder(built):
+        legend = built.axes.get_legend()
+        name = "legend_handles" if hasattr(legend, "legend_handles") else "legendHandles"
+        setattr(legend, name, list(reversed(getattr(legend, name))))
+
+    spec = _series(12, "S{}")
+    assert anchored(spec, DESKTOP, reorder) == anchored(spec, DESKTOP)
 
 
 def test_attribution_is_rim_to_rim_so_a_large_node_is_judged_like_a_small_one():
@@ -419,3 +448,62 @@ def test_a_callers_annotation_listed_first_is_not_taken_for_a_row_note():
     assert notes["Budget cap here"][0] == 20000.0
     moved = [xy for text, xy in notes.items() if text.endswith("of previous")]
     assert len(moved) == 3 and all(xy[0] < 20000.0 * 0.7 for xy in moved)  # at their bars
+
+
+def _funnel_edited(how: str) -> FigureSpec:
+    spec = example("funnel")
+    a = spec.annotations[0]  # the rate on "Started quote"
+    if how == "moved":  # the rate's x changed after the template built it
+        spec.annotations[0] = TextAnnotation(text=a.text, x=a.x * 0.9, y=a.y)
+    elif how == "same place":  # a caller's own note at the rate column's place
+        spec.annotations.append(TextAnnotation(text="Target 20 % next week", x=a.x, y=a.y))
+    elif how == "duplicate":
+        spec.annotations.append(TextAnnotation(text=a.text, x=a.x, y=a.y))
+    return spec
+
+
+@pytest.mark.parametrize("how", ["moved", "same place"])
+def test_a_row_anchored_note_stays_in_its_row_or_is_refused(how):
+    """A note anchored on a row that is not moved under the value label (it
+    matches no recorded row note) must not wrap upwards into the row above:
+    on a phone it is centred on its row, and one still reaching into another
+    row is refused (annotation_outside_row)."""
+    spec = _funnel_edited(how)
+    result = render(spec, PHONE.figure_request("png"))
+    built = build_figure(spec, PHONE.figure_request("png"))
+    ax = built.axes
+    for a in built.annotation_artists:
+        y = float(ax.yaxis.convert_units(a.xy[1]))
+        lo, hi = sorted(ax.transData.transform([(0, y - 0.5), (0, y + 0.5)])[:, 1])
+        box = a.get_window_extent()
+        inside = lo - 1 <= box.y0 and box.y1 <= hi + 1
+        if not inside:
+            assert gate_refuses(result) and "annotation_outside_row" in {
+                w.code for w in result.warnings}, a.get_text()
+    if how == "moved":
+        (w,) = [w for w in result.warnings if w.code == "row_note_stale"]
+        assert "18.5% of previous" in w.message and "Started quote" in w.message
+
+
+def test_a_duplicated_row_note_is_refused_by_name():
+    result = render(_funnel_edited("duplicate"), PHONE.figure_request("png"))
+    (w,) = [w for w in result.warnings if w.code == "row_note_duplicated"]
+    assert "18.5% of previous" in w.message and "annotations 0, 3" in w.message
+    assert gate_refuses(result)
+
+
+def _row_drift(built):
+    """A caller's note that grows upwards from its anchor (as wrapping did on
+    a phone) into the row above: its text still starts within a few pt of
+    the anchor, so "near the anchor" alone does not catch it."""
+    note = next(a for a in built.annotation_artists if "Budget" in a.get_text())
+    step = abs(built.axes.transData.transform((0, 1))[1]
+               - built.axes.transData.transform((0, 0))[1]) * 72.0 / built.figure.dpi
+    note.set_text("Budget\ncap\nhere")
+    note.set_va("bottom")
+    note.set_fontsize(step / 3)
+
+
+def test_the_anchor_comparison_tells_a_note_drifting_into_another_row():
+    spec = _funnel_with_a_note()
+    assert anchored(spec, DESKTOP, _row_drift) != anchored(spec, DESKTOP)

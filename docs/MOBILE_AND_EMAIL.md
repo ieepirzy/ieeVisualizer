@@ -104,8 +104,10 @@ email = render_email(view, "email-phone")                # .html, .images, .warn
 
 `RenderRequest(profile=..., display_width=...)`: `display_width` is the CSS
 width a figure is shown at when narrower than the column (a tile, a card).
-Both are recorded in the request (and so the artifact id) only when set:
-renders without a profile are unchanged, byte for byte.
+Both are recorded in the request (and so the artifact id) only when set.
+Renders without a profile keep their bytes except where a rule below applies
+to every render: node-label attribution in networks (the `org_chart` example
+changes) and the CJK font fallback (text the theme's font lacks).
 
 ## What a profile render does
 
@@ -118,7 +120,9 @@ renders without a profile are unchanged, byte for byte.
 - the title and axis labels are wrapped to the figure, a title centred over
   the axes is re-wrapped if it still runs off the image (again after every
   layout pass, since value labels, legends and constrained layout move the
-  axes it is centred over), and text
+  axes it is centred over); a title with a word wider than the room either
+  side of the axes' centre moves sideways, only as far as needed, to lie
+  inside the image, and text
   annotations that would run past the right edge wrap at their place, but
   only into a column at least 8 em wide (a narrower one would stack the
   words and squeeze the plot; the text is then left whole and reported as
@@ -153,7 +157,9 @@ the minimum text size is drawn again taller (up to 4 times its width; the
 width never changes), with a non-gating `figure_grown` note saying how tall
 and why: rows of horizontal bars get room for their value labels, y category
 labels stop touching, a legend below the plot gets its height, a plot
-squeezed below 25 % gets 35 %. Value labels of a profile render are left out
+squeezed below 25 % gets 35 %. Only the final layout counts for
+`layout_collapsed`: constrained layout giving up during a measuring pass (a
+legend still inside the axes, value labels not yet fitted) is not reported. Value labels of a profile render are left out
 of constrained layout (the value axis is widened to hold them instead), and
 every draw widens from the spec's limits, so a measuring pass at another
 layout cannot leave the bars squeezed. A legend below the plot on a narrow
@@ -166,7 +172,13 @@ annotations whose x is only a layout position, not data, by content
 (`metadata["template"]["row_notes"]`: text, x and row of each); at render
 time an annotation is a row note only if its text, x and row are exactly a
 recorded note's, so a caller's own annotation, wherever it sits in the
-list, is never moved. When one lies over a value label or
+list, is never moved. A recorded note that matches no annotation (the
+spec was edited after the template built it) is reported (`row_note_stale`,
+a note); one drawn twice is `row_note_duplicated` (gating, naming the
+annotations). Any annotation anchored on a category row that wraps on a
+profile is centred on its row, so its lines do not climb into the row
+above; one whose drawn text still reaches into another row's band is
+`annotation_outside_row` (gating). When one lies over a value label or
 past the plot's right edge, every row note moves under its own row's value
 label, wrapped to the room left, and the plot grows until each row holds
 both. Words and rows stay. Any other annotation keeps its data position; if
@@ -203,9 +215,11 @@ the `network` and `dependency_map` examples keep main's bytes (recorded in
 `tests/render/data/main_render_hashes.json`).
 
 **Org charts are effectively not sendable on a phone.** A top-down tree is
-crowded across and the width is fixed. In a seeded sweep of 40 org charts
-with 10-25 nodes, the gate refuses 39 at `email-phone`, 35 at
-`email-tablet` and 16 at `desktop` (the template's own 9-node example
+crowded across and the width is fixed. In sweeps of 40 random org charts with
+10-25 nodes (bushy, shallow trees: each node's parent drawn from the
+first third of the nodes; names from 20 unit names; `random.Random(seed)`
+for seeds 1, 2 and 3), the gate refuses 39-40 of 40 at `email-phone`, 31-36 at
+`email-tablet` and 15-19 at `desktop` (the template's own 9-node example
 passes everywhere). In a phone email, send
 the chart as a list or table instead - the network's text outline
 (`network_outline`) or a `Table` of unit, parent and headcount - and keep the
@@ -486,15 +500,18 @@ every profile (desktop included), that the gate passes and that every text
 of the desktop render is in the profile render with the same words in the
 same order and the same anchor, measured from the drawing
 (`tests/render/anchored.py`): the node a reader model attributes a label to
-(nearest centre to the label box, independent of the renderer's rule), the
-bar a value label is drawn on, the swatch colour beside a legend text, the
-category tick, and an annotation's data anchor if its text is drawn there
-(or the row a row note sits in) - and nothing else; a test shows that
-swapping two value labels, two legend swatches or shifting a note through
-its offset is told apart; for both gallery views that
-the gate passes and no word of the desktop render is missing; and, for the
-templates and 30 seeded random networks (default request, 1920 px without a
-profile and every profile), that every node label is clearly its own node's
+(nearest box point to the edge of each drawn marker, read from the drawing,
+independent of the renderer's rule), the bar a value label is drawn on, the
+swatch drawn beside a legend text (colour, line style, marker, hatch; paired
+by position, not list order), the category tick, an annotation's data anchor
+if its text is drawn there and the category rows its text reaches into (or
+those rows for a row note) - and nothing else; a test shows that swapping two
+value labels, two legend swatches, the dashes of two same-colour entries of a
+wrapped colour cycle, or shifting a note through its offset is told apart;
+for both gallery views that the gate passes and no word of the desktop
+render is missing; and, for the templates and 40 seeded random networks
+(half with node sizes; default request, 1920 px without a profile and every
+profile), that every node label is clearly its own node's
 by that reader model or reported `label_ambiguous`.
 
 ## Follow-ups
