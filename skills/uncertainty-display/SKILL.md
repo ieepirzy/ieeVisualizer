@@ -76,13 +76,15 @@ Round the estimate to the interval's precision: "conversion 24% (95% CI
   Every interval needs `interval_kind` (confidence / credible / prediction /
   quantile / min-max / standard-error / standard-deviation) and
   `interval_level` as a fraction (0.95) for the first four, or
-  `interval_multiplier` (1 = ±1 SE) for SE/SD bars; `validate` refuses one
+  `interval_multiplier` (1 = ±1 SE) for SE/SD bars; a `quantile` level is
+  central (0.8 = 10th-90th percentile), `interval_quantiles` [0.05, 0.75]
+  states a non-central one; `validate` refuses one
   without (`missing_interval_kind`, `missing_interval_level`), and lower
   above upper (`interval_inverted`) or a bound in another unit
   (`interval_unit_mismatch`). The renderer writes "95 % prediction interval"
   in the legend (or the caption when the legend is hidden) and draws bounds
   as given; a null bound is a gap.
-- **Templates:** `timeseries` 1.1.0 takes `intervals` (several levels make a
+- **Templates:** `timeseries` 2.0.0 takes `intervals` (several levels make a
   fan chart); `estimate_comparison` draws estimates with intervals across
   groups. `timeseries` 1.0.0's `lower_column`/`upper_column` still draw two
   unlabelled dotted lines: state the kind and level in the caption there.

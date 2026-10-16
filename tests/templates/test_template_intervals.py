@@ -1,4 +1,4 @@
-"""timeseries 1.1.0 (intervals, fan charts) and estimate_comparison: intervals
+"""timeseries 2.0.0 (intervals, fan charts) and estimate_comparison: intervals
 come only from the caller's columns and always state their kind and level."""
 
 import pytest
@@ -27,7 +27,7 @@ def data(**over):
 def ts(**params):
     params = dict({"time_column": "week", "value_columns": ["orders"],
                    "forecast_from": "2026-09-28"}, **params)
-    return templates.get("timeseries", "1.1.0").build(data(), **params)
+    return templates.get("timeseries", "2.0.0").build(data(), **params)
 
 
 def issues(name, payload_data, **params):
@@ -35,9 +35,9 @@ def issues(name, payload_data, **params):
             if i.severity == "error"]
 
 
-def test_timeseries_latest_is_1_1_and_1_0_is_still_there():
-    assert templates.get("timeseries").version == "1.1.0"
-    assert templates.default_registry.versions("timeseries") == ["1.0.0", "1.1.0"]
+def test_timeseries_latest_is_2_0_and_1_0_is_still_there():
+    assert templates.get("timeseries").version == "2.0.0"
+    assert templates.default_registry.versions("timeseries") == ["1.0.0", "2.0.0"]
     old = templates.get("timeseries", "1.0.0")
     assert old.parameter("lower_column") is not None and old.parameter("intervals") is None
 
@@ -52,7 +52,7 @@ def test_fan_chart_bands_widest_first_before_the_line_and_forecast_styled():
         assert m.interval_kind == "prediction"
         assert m.style == {"color_of": "orders (forecast)"}
     meta = spec.metadata["template"]
-    assert meta["version"] == "1.1.0"
+    assert meta["version"] == "2.0.0"
     assert [(b["interval"], b["layer"]) for b in meta["intervals"]] == [(1, 1), (0, 2)]
     labels = [t.get_text() for t in build_figure(spec).axes.get_legend().get_texts()]
     assert "80 % prediction interval (forecast)" in labels
@@ -155,3 +155,13 @@ def test_estimate_comparison_bounds_share_the_estimate_unit():
 
     snap = DataSnapshot.from_columns(ARMS, units={"d": "pp", "lo": "%", "hi": "pp"})
     assert ("/data/columns/lo", "mixed_units") in issues("estimate_comparison", snap, **BASE)
+
+
+def test_timeseries_interval_with_explicit_quantiles():
+    iv = {"lower": "p10", "upper": "p75", "kind": "quantile", "quantiles": [0.1, 0.75]}
+    spec = ts(intervals=[iv])
+    (band,) = [m for m in spec.layers if m.type == "band"]
+    assert band.interval_quantiles == [0.1, 0.75] and band.interval_level is None
+    bad = issues("timeseries", data(), time_column="week", value_columns=["orders"],
+                 intervals=[dict(iv, level=0.65)])
+    assert ("/params/intervals/0/quantiles", "conflicting_interval_level") in bad

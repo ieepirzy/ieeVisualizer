@@ -7,9 +7,9 @@
     "svg": "sha256:778d1170f4ede54aa30400693626db6e6d731548ca40e9ff16aaa574dedaf1b8"
    },
    "gallery.legacy-field-3d": {
-    "png": "sha256:53b8923a0f5a992224dcf366808f8bb11470b5947e4040de372d1515089a1a70",
-    "spec_hash": "sha256:1d82a7154c7a097400bc68f037d3ae6f5292a2ba1dfdfaf03b72c8d6ffc64c5d",
-    "svg": "sha256:26fc33607069bb1d952da305d75d8a68ee17629b7968b8adaf48d3b82670f1e8"
+    "png": "sha256:b39688ebbcea002c76fb5ae762f170a0ed6096c86320d2434b207421862c243d",
+    "spec_hash": "sha256:61d198af23ab1814eca0f49463318a43b9765de6710973a0dbcf08c5adec7086",
+    "svg": "sha256:f96147896682a3d6feec1a6ec8e4430ecdc47e33d749ca3064fb10d62e25fc77"
    },
    "gallery.legacy-function-2d": {
     "png": "sha256:87dd084cad2ee525b31645e022ae31b6e9afc7cb2c99580c24d1a6cb97a5e09e",
@@ -179,9 +179,9 @@
     "svg": "sha256:8a60841368944539b0b93cfc0578bea6a7a985e48bad5aeabee8bd8805312db6"
    },
    "gallery.legacy-field-3d": {
-    "png": "sha256:d990e0b986e0c6ad68a66c54d31444d49e97e214ea507d095e615112b8f45602",
-    "spec_hash": "sha256:1d82a7154c7a097400bc68f037d3ae6f5292a2ba1dfdfaf03b72c8d6ffc64c5d",
-    "svg": "sha256:2af1739a94b8b12f9708d8bcff2a8f8101161f0defed8d0fb42a8bbdf010f266"
+    "png": "sha256:81c8fcfbf224fb1e4bdf08967787b2c2d966c449a22c1a115550fbea9ed6b87b",
+    "spec_hash": "sha256:61d198af23ab1814eca0f49463318a43b9765de6710973a0dbcf08c5adec7086",
+    "svg": "sha256:d83d3d36c151984fc4f5cf4b444c619ff2b64e9352325b72ecf83757560635c6"
    },
    "gallery.legacy-function-2d": {
     "png": "sha256:543c5b901eeba7124e27890496640652fdacfefa4490fc4aa22eeabab29bf24b",

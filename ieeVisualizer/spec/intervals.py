@@ -10,6 +10,7 @@ other than the value's). Nothing here computes or adjusts a bound.
 
 from __future__ import annotations
 
+from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any
 
 from ._common import is_number, ptr, suggest
@@ -33,21 +34,57 @@ _SPREAD_TEXT = {"standard-error": "standard error", "standard-deviation": "stand
 _NUMERIC = ("float", "int")
 
 
-def _number(v: float, decimal: str) -> str:
-    text = f"{v:.6g}"
+def _number(v: float, decimal: str = ".") -> str:
+    """``v`` as a plain decimal: exact when it has at most 4 decimals (the
+    shortest decimal of the float, never scientific notation), else rounded
+    to 4 decimals -- but never onto a whole number it is not (99.99999 % does
+    not read as 100 %, 0.00001 % as 0 % or a multiplier of 1.00001 as 1):
+    more decimals are used instead, up to float precision."""
+    exact = Decimal(repr(float(v)))
+    places = 4
+    while True:
+        shown = exact.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_EVEN)
+        if exact == shown or places >= 12 or shown != shown.to_integral_value():
+            break
+        places += 1
+    text = format(shown.normalize(), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
     return text.replace(".", decimal) if decimal != "." else text
 
 
+def _percent(fraction: float, decimal: str) -> str:
+    return _number(float(Decimal(repr(float(fraction))) * 100), decimal)
+
+
+def _ordinal(fraction: float, decimal: str) -> str:
+    text = _percent(fraction, decimal)
+    if not text.isdigit():
+        return f"{text}th"
+    n = int(text)
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{text}{suffix}"
+
+
 def interval_label(kind: str, level: float | None = None, multiplier: float | None = None,
-                   decimal: str = ".") -> str:
+                   decimal: str = ".", quantiles: list[float] | None = None) -> str:
     """What an interval is, in words: ``"95 % prediction interval"``,
+    ``"10th-90th percentile (80 % central)"``, ``"5th-75th percentile"``,
     ``"min-max range"``, ``"±1 standard error"``. ``decimal`` is the decimal
-    separator (``","`` writes ``"97,5 %"``)."""
+    separator (``","`` writes ``"97,5 %"``). Numbers are shown exactly (up to
+    4 decimals of a percent, more only to avoid reading as 0 % or 100 %)."""
+    if kind == "quantile":
+        if quantiles is not None:
+            lo, hi = quantiles
+            return f"{_ordinal(lo, decimal)}–{_ordinal(hi, decimal)} percentile"
+        tail = (Decimal(1) - Decimal(repr(float(level)))) / 2  # equal-tailed (central)
+        return (f"{_ordinal(float(tail), decimal)}–{_ordinal(float(1 - tail), decimal)} "
+                f"percentile ({_percent(level, decimal)} % central)")
     if kind in LEVEL_KINDS:
-        return f"{_number(round(level * 100, 6), decimal)} % {_KIND_TEXT[kind]}"
+        return f"{_percent(level, decimal)} % {_KIND_TEXT[kind]}"
     if kind in MULTIPLIER_KINDS:
-        noun = _SPREAD_TEXT[kind]
-        return f"±{_number(multiplier, decimal)} {noun}{'' if multiplier == 1 else 's'}"
+        text = _number(multiplier, decimal)
+        return f"±{text} {_SPREAD_TEXT[kind]}{'' if text == '1' else 's'}"
     return "min-max range"
 
 
@@ -55,7 +92,25 @@ def mark_interval_label(m: Mark, decimal: str = ".") -> str | None:
     """:func:`interval_label` of a mark's interval, or None if it has none."""
     if not has_interval(m):
         return None
-    return interval_label(m.interval_kind, m.interval_level, m.interval_multiplier, decimal)
+    return interval_label(m.interval_kind, m.interval_level, m.interval_multiplier, decimal,
+                          getattr(m, "interval_quantiles", None))
+
+
+#: Relative difference of the two half-widths above which a ±k SE/SD bar
+#: is reported as not symmetric (float rounding stays well below it).
+SYMMETRY_TOLERANCE = 1e-6
+
+
+def asymmetric_rows(values: list[Any], lower: list[Any], upper: list[Any]) -> list[int]:
+    """Rows whose bounds are not ``value ± the same half-width`` (all three
+    numbers present). A "±k standard error" bar claims that symmetry."""
+    out = []
+    for i, (v, a, b) in enumerate(zip(values, lower, upper)):
+        if is_number(v) and is_number(a) and is_number(b):
+            below, above = v - a, b - v
+            if abs(below - above) > SYMMETRY_TOLERANCE * max(abs(below), abs(above), 1e-300):
+                out.append(i)
+    return out
 
 
 def has_interval(m: Any) -> bool:
@@ -72,7 +127,8 @@ def check_intervals(c: Any, p: str, m: Mark) -> None:
     enc = m.encoding
     present = [ch for ch in INTERVAL_CHANNELS if ch in enc]
     if not has_interval(m):
-        for key in ("interval_kind", "interval_level", "interval_multiplier"):
+        for key in ("interval_kind", "interval_level", "interval_multiplier",
+                    "interval_quantiles"):
             if getattr(m, key) is not None:
                 c.add(f"{p}/{key}", "interval_without_bounds",
                       f"{key} is set but the layer draws no interval; bind y_lower and y_upper "
@@ -98,10 +154,12 @@ def check_intervals(c: Any, p: str, m: Mark) -> None:
         _check_bounds(c, p, m)
 
 
-def metadata_problems(kind: Any, level: Any, multiplier: Any) -> list[tuple[str, str, str]]:
+def metadata_problems(kind: Any, level: Any, multiplier: Any,
+                      quantiles: Any = None) -> list[tuple[str, str, str]]:
     """``(field, code, message)`` for each problem with an interval's stated
-    kind / level / multiplier (``field`` is ``"kind"``, ``"level"`` or
-    ``"multiplier"``). Shared by :func:`validate` and the templates."""
+    kind / level / multiplier / quantiles (``field`` is ``"kind"``,
+    ``"level"``, ``"multiplier"`` or ``"quantiles"``). Shared by
+    :func:`validate` and the templates."""
     out: list[tuple[str, str, str]] = []
     if kind is None:
         return [("kind", "missing_interval_kind",
@@ -112,11 +170,30 @@ def metadata_problems(kind: Any, level: Any, multiplier: Any) -> list[tuple[str,
         return [("kind", "invalid_interval_kind",
                  f"interval kind {kind!r} is unknown.{suggest(str(kind), INTERVAL_KINDS)} Use one "
                  f"of {', '.join(INTERVAL_KINDS)}.")]
+    if quantiles is not None:
+        if kind != "quantile":
+            out.append(("quantiles", "unexpected_interval_quantiles",
+                        f"explicit quantiles describe a quantile interval, not a {kind} one; "
+                        "remove them or use kind 'quantile'."))
+        elif level is not None:
+            out.append(("quantiles", "conflicting_interval_level",
+                        "give either a level (a central interval) or explicit quantiles "
+                        "[lower, upper], not both."))
+        elif not (isinstance(quantiles, (list, tuple)) and len(quantiles) == 2
+                  and all(is_number(q) for q in quantiles)
+                  and 0 < quantiles[0] < quantiles[1] < 1):
+            out.append(("quantiles", "invalid_interval_quantiles",
+                        f"interval quantiles must be [lower, upper] with 0 < lower < upper < 1 "
+                        f"(e.g. [0.05, 0.75]), got {quantiles!r}."))
+        if kind == "quantile":
+            return out
     if kind in LEVEL_KINDS:
         if level is None:
             out.append(("level", "missing_interval_level",
                         f"a {kind} interval needs its coverage level, as a fraction: e.g. 0.95 "
-                        "for a 95 % interval."))
+                        "for a 95 % interval"
+                        + (" (central), or explicit quantiles [lower, upper]."
+                           if kind == "quantile" else ".")))
         elif not is_number(level) or not 0 < level < 1:
             out.append(("level", "invalid_interval_level",
                         f"interval level {level!r} is not a probability strictly between 0 and "
@@ -144,7 +221,8 @@ def metadata_problems(kind: Any, level: Any, multiplier: Any) -> list[tuple[str,
 
 def _check_metadata(c: Any, p: str, m: Mark) -> None:
     for fld, code, message in metadata_problems(m.interval_kind, m.interval_level,
-                                                m.interval_multiplier):
+                                                m.interval_multiplier,
+                                                getattr(m, "interval_quantiles", None)):
         c.add(f"{p}/interval_{fld}", code, message)
 
 
@@ -203,6 +281,18 @@ def _check_rows(c: Any, m: Mark, lo: Column, hi: Column, val: Column | None) -> 
               "drawn as given, so fix them upstream (swapped columns?).")
     if val is None:
         return
+    if m.interval_kind in MULTIPLIER_KINDS:
+        asym = asymmetric_rows(val.values, lo.values, hi.values)
+        if asym:
+            i = asym[0]
+            name = m.encoding["y"].field
+            c.add(ptr("datasets", m.data, "columns", uname, "values", str(i)),
+                  "interval_not_symmetric",
+                  f"row {i}: {name!r} = {val.values[i]!r} is not midway between "
+                  f"{lo.values[i]!r} and {hi.values[i]!r} ({len(asym)} row(s)), but a "
+                  f"{m.interval_kind} bar claims value ± the same half-width. The bounds are "
+                  "drawn as given and the legend says they are not symmetric; check how they "
+                  "were computed, or state the interval's real kind.", "warning")
     outside = [i for i, (v, a, b) in enumerate(zip(val.values, lo.values, hi.values))
                if is_number(v) and is_number(a) and is_number(b) and a <= b and not a <= v <= b]
     if outside:

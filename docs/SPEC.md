@@ -125,13 +125,18 @@ layer states:
 | Field | Meaning |
 |---|---|
 | `interval_kind` | `confidence`, `credible`, `prediction`, `quantile`, `min-max`, `standard-error`, `standard-deviation`. Required. |
-| `interval_level` | Coverage as a fraction, strictly between 0 and 1 (`0.95`, not `95`). Required for confidence, credible, prediction and quantile; refused for the others (min-max has none). |
-| `interval_multiplier` | How many standard errors / deviations the bar spans on each side (`1`, `1.96`). Required for standard-error and standard-deviation; refused for the others. |
+| `interval_level` | Coverage as a fraction, strictly between 0 and 1 (`0.95`, not `95`). Required for confidence, credible and prediction, and for quantile unless `interval_quantiles` is given; refused for the others (min-max has none). A quantile interval with a level is **central (equal-tailed)**: `0.8` means the 10th to the 90th percentile. |
+| `interval_quantiles` | A quantile interval that is not central: `[lower, upper]` quantiles with 0 < lower < upper < 1 (`[0.05, 0.75]`), instead of a level. Quantile kind only. |
+| `interval_multiplier` | How many standard errors / deviations the bar spans on each side (`1`, `1.96`). Required for standard-error and standard-deviation; refused for the others. A ±k bar claims value ± one half-width: bounds that are not symmetric about the value are drawn as given, with a warning and "(bounds not symmetric)" in the legend. |
 
 Renderers state it in words where the reader sees it: the legend entry
-("95 % prediction interval", "±1 standard error", "min-max range";
-`interval_label(kind, level, multiplier)`), or the caption when the legend
-is hidden. The bounds are data: drawn as given, never computed, widened,
+("95 % prediction interval", "10th–90th percentile (80 % central)",
+"5th–75th percentile", "±1 standard error", "min-max range";
+`interval_label(kind, level, multiplier, quantiles=...)`), or the caption,
+each statement prefixed with its series as the legend would name it, when
+the legend is hidden. Levels and multipliers are written exactly (up to 4
+decimals of a percent; more only so a value never reads as a whole number
+it is not, e.g. 99.99999 % rather than 100 %). The bounds are data: drawn as given, never computed, widened,
 symmetrised or smoothed. A null bound is a gap in the interval, never zero.
 Several bands of one series at different levels make a fan chart.
 
@@ -139,15 +144,19 @@ Several bands of one series at different levels make a fan chart.
 `missing_interval_kind`, `invalid_interval_kind`, `missing_interval_level`,
 `invalid_interval_level`, `unexpected_interval_level`,
 `missing_interval_multiplier`, `invalid_interval_multiplier`,
-`unexpected_interval_multiplier`; `missing_channel` for one bound without
+`unexpected_interval_multiplier`, `invalid_interval_quantiles`,
+`unexpected_interval_quantiles`, `conflicting_interval_level` (a level and
+explicit quantiles together); `missing_channel` for one bound without
 the other; `interval_without_bounds` for interval fields on a layer that
 draws none; `interval_not_numeric`; `interval_unit_mismatch` when a bound's
 unit is not the value's (a bound with no unit next to a value with one
 counts); `interval_inverted` at `/datasets/<d>/columns/<lower>/values/<row>`
 for a row whose lower bound is above its upper bound; `unsupported_channel`
 for intervals on a horizontal bar or outside `cartesian2d`;
-`log_scale_nonpositive` for a bound <= 0 on a log axis; and the warning
-`value_outside_interval` for a point estimate outside its own interval.
+`log_scale_nonpositive` for a bound <= 0 on a log axis; and the warnings
+`value_outside_interval` for a point estimate outside its own interval and
+`interval_not_symmetric` for a ±k SE/SD bar whose value is not midway
+between its bounds (relative tolerance 1e-6).
 
 The interval fields exist only on line, scatter, bar, band and errorbar
 marks and are written to the JSON only when set, so a spec without

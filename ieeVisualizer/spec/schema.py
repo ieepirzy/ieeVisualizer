@@ -100,6 +100,9 @@ _INTERVAL_PROPS = {
     "interval_kind": {"enum": list(INTERVAL_KINDS) + [None]},
     "interval_level": {"type": ["number", "null"], "exclusiveMinimum": 0, "exclusiveMaximum": 1},
     "interval_multiplier": {"type": ["number", "null"], "exclusiveMinimum": 0},
+    "interval_quantiles": {"type": ["array", "null"], "minItems": 2, "maxItems": 2,
+                           "items": {"type": "number", "exclusiveMinimum": 0,
+                                     "exclusiveMaximum": 1}},
 }
 
 
@@ -115,17 +118,28 @@ def _absent_or_null(key: str) -> dict[str, Any]:
 #: kind has one (``validate`` reports the same with JSON pointers).
 _INTERVAL_RULES = [
     {"if": {"required": ["interval_kind"],
-            "properties": {"interval_kind": {"enum": list(LEVEL_KINDS)}}},
-     "then": dict(_required_number("interval_level"),
-                  **{"not": {"required": ["interval_multiplier"],
-                             "properties": {"interval_multiplier": {"type": "number"}}}})},
+            "properties": {"interval_kind": {"enum": [k for k in LEVEL_KINDS
+                                                       if k != "quantile"]}}},
+     "then": {"allOf": [_required_number("interval_level"),
+                        _absent_or_null("interval_multiplier"),
+                        _absent_or_null("interval_quantiles")]}},
+    # a quantile interval: a (central) level, or an explicit [lower, upper] pair
+    {"if": {"required": ["interval_kind"],
+            "properties": {"interval_kind": {"const": "quantile"}}},
+     "then": {"allOf": [_absent_or_null("interval_multiplier"), {"oneOf": [
+         {"allOf": [_required_number("interval_level"), _absent_or_null("interval_quantiles")]},
+         {"allOf": [{"required": ["interval_quantiles"],
+                     "properties": {"interval_quantiles": {"type": "array"}}},
+                    _absent_or_null("interval_level")]}]}]}},
     {"if": {"required": ["interval_kind"],
             "properties": {"interval_kind": {"enum": list(MULTIPLIER_KINDS)}}},
      "then": {"allOf": [_required_number("interval_multiplier"),
-                        _absent_or_null("interval_level")]}},
+                        _absent_or_null("interval_level"),
+                        _absent_or_null("interval_quantiles")]}},
     {"if": {"required": ["interval_kind"], "properties": {"interval_kind": {"const": "min-max"}}},
      "then": {"allOf": [_absent_or_null("interval_level"),
-                        _absent_or_null("interval_multiplier")]}},
+                        _absent_or_null("interval_multiplier"),
+                        _absent_or_null("interval_quantiles")]}},
 ]
 
 

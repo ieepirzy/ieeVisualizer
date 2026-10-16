@@ -15,7 +15,10 @@ through ``encoding``. Channels:
 Every interval states what it is: ``interval_kind`` (one of
 :data:`INTERVAL_KINDS`) and, for the kinds with a coverage probability,
 ``interval_level`` as a fraction (0.95), or for standard-error/-deviation
-bars ``interval_multiplier`` (1 for +-1 SE). :func:`validate` refuses an
+bars ``interval_multiplier`` (1 for +-1 SE). A ``quantile`` interval with a
+level is central (equal-tailed: 0.8 is the 10th-90th percentile); an
+asymmetric one gives ``interval_quantiles`` [lower, upper] instead (e.g.
+[0.05, 0.75]). :func:`validate` refuses an
 interval without them, and renderers put the statement ("95 % prediction
 interval") in the legend or the caption. Bounds are data: renderers draw
 them as given, never computed, widened or smoothed, and a null bound is a
@@ -68,7 +71,8 @@ INTERVAL_KINDS = ("confidence", "credible", "prediction", "quantile", "min-max",
                   "standard-error", "standard-deviation")
 LEVEL_KINDS = ("confidence", "credible", "prediction", "quantile")
 MULTIPLIER_KINDS = ("standard-error", "standard-deviation")
-INTERVAL_FIELDS = ("interval_kind", "interval_level", "interval_multiplier")
+INTERVAL_FIELDS = ("interval_kind", "interval_level", "interval_multiplier",
+                   "interval_quantiles")
 ROLES = ("observed", "forecast", "reference")
 ORIENTATIONS = ("vertical", "horizontal")
 
@@ -119,6 +123,7 @@ class LineMark(Mark):
     interval_kind: str | None = None
     interval_level: float | None = None
     interval_multiplier: float | None = None
+    interval_quantiles: list[float] | None = None
 
 
 @dataclass
@@ -129,6 +134,7 @@ class ScatterMark(Mark):
     interval_kind: str | None = None
     interval_level: float | None = None
     interval_multiplier: float | None = None
+    interval_quantiles: list[float] | None = None
 
 
 @dataclass
@@ -148,6 +154,7 @@ class BarMark(Mark):
     interval_kind: str | None = None
     interval_level: float | None = None
     interval_multiplier: float | None = None
+    interval_quantiles: list[float] | None = None
 
 
 @dataclass
@@ -160,6 +167,7 @@ class BandMark(Mark):
     interval_kind: str | None = None
     interval_level: float | None = None
     interval_multiplier: float | None = None
+    interval_quantiles: list[float] | None = None
 
 
 @dataclass
@@ -171,6 +179,7 @@ class ErrorbarMark(Mark):
     interval_kind: str | None = None
     interval_level: float | None = None
     interval_multiplier: float | None = None
+    interval_quantiles: list[float] | None = None
 
 
 @dataclass
@@ -244,6 +253,7 @@ _CANON = {
     "parameters": _canon_float_map,
     "interval_level": canon_float,
     "interval_multiplier": canon_float,
+    "interval_quantiles": _canon_float_list,
 }
 
 
@@ -398,6 +408,12 @@ def mark_from_dict(d: Any, path: str) -> Mark:
         for key in ("interval_level", "interval_multiplier"):
             if key in d:
                 kw[key] = expect_number(d[key], _p(path, key), key, optional=True)
+        if d.get("interval_quantiles") is not None:
+            qs = expect_list(d["interval_quantiles"], _p(path, "interval_quantiles"),
+                             "interval_quantiles")
+            kw["interval_quantiles"] = [
+                expect_number(q, ptr_join(path, "interval_quantiles", i), "quantile")
+                for i, q in enumerate(qs)]
     return cls(**kw)
 
 

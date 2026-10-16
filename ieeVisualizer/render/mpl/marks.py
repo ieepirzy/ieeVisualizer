@@ -64,6 +64,10 @@ class DrawContext:
     no_data_notes: list[NoDataNote] = field(default_factory=list)
     #: What each drawn interval is ("95 % prediction interval"), in order.
     interval_labels: list[str] = field(default_factory=list)
+    #: Every band drawn (fan-chart legend swatches, :func:`intervals.legend_handles`).
+    band_records: list[Any] = field(default_factory=list)
+    #: Legend entries to list after a layer's own (bar intervals): id -> layer.
+    listed_after: dict[int, int] = field(default_factory=dict)
     #: Category-axis centres of every bar and bar-less slot, by value channel.
     bar_centres: dict[str, np.ndarray] = field(default_factory=dict)
     #: Every drawn bar group (:func:`report_bar_overlaps`), the layers found
@@ -683,6 +687,7 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                  "the axis labels, so they were not drawn. Read the values from the axis.",
                  f"/layers/{i}/style/value_labels")
     artists = []
+    with_interval: list[tuple[Any, np.ndarray, Any]] = []
     for g, (group, idx) in enumerate(grp):
         p, v = pos[idx], val[idx]
         valid = _mask(p, v)
@@ -705,8 +710,8 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
             ctx.dodged_horizontal.add(id(artists[-1]))
         _record_centres(ctx, val_ch, pp)
         if "y_lower" in m.encoding:
-            ink = getattr(ctx.theme, "foreground", None) or "0.15"  # legible on any fill
-            artists += _iv.point_intervals(ctx, i, m, pp, idx[valid], ink, kw["label"], {})
+            with_interval.append((pp, idx[valid], kw["label"]))
+            _iv.values_missing(ctx, i, m, idx[~np.ma.getmaskarray(p) & np.ma.getmaskarray(v)])
         if labelled:
             labels = _value_labels(ctx, m, val_ch, pp, vv, horizontal)
             ctx.value_labels += [ValueLabel(a, val_ch, i, float(q), float(each), bool(v < 0),
@@ -751,6 +756,9 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
             ctx.no_data_notes.append(NoDataNote(note, val_ch, i, float(q), float(each),
                                                 _where(ctx, cat_ch, float(c))))
             artists.append(note)
+    if with_interval:
+        ink = getattr(ctx.theme, "foreground", None) or "0.15"  # legible on any fill
+        artists += _iv.bar_intervals(ctx, i, m, with_interval, ink)
     return artists
 
 

@@ -57,7 +57,8 @@ def test_every_baseline_spec_is_still_built():
 def test_spec_hash_is_unchanged(key):
     want = _expected_hash(key)
     if want is None:
-        pytest.skip(f"{key}: computed data, machine-dependent bits; not pinned")
+        pytest.skip(f"{key}: data computed with numpy, whose bits depend on the CPU; not "
+                    "pinned")
     spec = SPECS[key]
     assert spec_hash(spec) == want
     assert to_json(from_json(to_json(spec))) == to_json(spec)
@@ -67,9 +68,10 @@ def test_spec_hash_is_unchanged(key):
                     f"(recorded: {sorted(RECORDED)})")
 @pytest.mark.parametrize("key", KEYS)
 def test_figure_without_intervals_is_byte_identical(key):
-    want = {fmt: HERE[key][fmt] for fmt in ("svg", "png") if HERE[key][fmt] != UNSTABLE}
     if key.startswith(COMPUTED):
-        want = {}
+        pytest.skip(f"{key}: data computed with numpy, whose bits depend on the CPU; not "
+                    "pinned")
+    want = {fmt: HERE[key][fmt] for fmt in ("svg", "png") if HERE[key][fmt] != UNSTABLE}
     if not want:
         pytest.skip(f"{key}: main's own renders differ between processes here")
     got = fingerprint(SPECS[key])

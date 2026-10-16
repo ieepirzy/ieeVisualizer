@@ -211,15 +211,15 @@ def mark_band() -> FigureSpec:
     unit = {k: "°C" for k in cols}
     unit["h"] = "h"
     return FigureSpec(
-        title="band: 50 % and 90 % quantile intervals (fan)",
-        caption="Synthetic quantiles from a formula; drawn as given, not computed.",
+        title="band: 50 % and 90 % prediction intervals (fan)",
+        caption="Synthetic predictive quantiles from a formula; drawn as given.",
         datasets={"d": _snap(cols, units=unit)},
         layers=[
             BandMark(data="d", encoding={"x": "h", "y_lower": "q05", "y_upper": "q95"},
-                     interval_kind="quantile", interval_level=0.9, role="forecast",
+                     interval_kind="prediction", interval_level=0.9, role="forecast",
                      style={"color_of": "median"}),
             BandMark(data="d", encoding={"x": "h", "y_lower": "q25", "y_upper": "q75"},
-                     interval_kind="quantile", interval_level=0.5, role="forecast",
+                     interval_kind="prediction", interval_level=0.5, role="forecast",
                      style={"color_of": "median"}),
             LineMark(data="d", encoding={"x": "h", "y": "median"}, name="median",
                      role="forecast"),

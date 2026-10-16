@@ -136,10 +136,18 @@ at each end, plus the point `y` when encoded; on a bar it is drawn in the
 theme's foreground colour so it reads on any fill. Error-bar groups
 (`series`) on a category axis sit side by side in each slot. A row without
 both bounds gets no interval, and an `interval_bounds_missing` warning
-counts them. Each interval's legend entry states its kind and level ("95 %
+counts them; a bar row with both bounds but no value keeps its "no data"
+slot, its interval is not drawn alone, and `interval_without_value` counts
+it (an errorbar mark draws an interval without a point). A bar layer's
+error bars share one ink, so a layer with several series groups has one
+legend entry, "95 % ... (all series)", listed after its bars. Nested bands
+of one colour (a fan chart) get legend swatches of the composited opacity
+1 - prod(1 - alpha) of every band containing them, so each swatch is the
+colour of the region it names. Each interval's legend entry states its kind and level ("95 %
 prediction interval", with the theme's decimal separator: "97,5 %"), and a
 figure with an interval always has a legend; with `legend.show` false the
-caption gains "Intervals: ..." instead. Forecast bands are hatched and
+caption gains "Intervals: A: 95 % confidence interval; B: ..." instead,
+each statement named as its legend entry would be. Forecast bands are hatched and
 lighter; forecast error bars dashed with hollow points. Band style keys:
 `color`, `opacity`, `color_of`; errorbar: also `linewidth`, `marker`. An
 adapter must declare `Capabilities.intervals` to be chosen for a spec with

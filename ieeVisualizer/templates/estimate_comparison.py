@@ -59,6 +59,8 @@ class EstimateComparisonTemplate(ComponentTemplate):
                   "credible, prediction and quantile intervals; omit for the others."),
         Parameter("interval_multiplier", "number", "How many standard errors/deviations each "
                   "side spans, for standard-error/-deviation bars (e.g. 1)."),
+        Parameter("interval_quantiles", "range", "For a non-central quantile interval: "
+                  "[lower, upper] quantiles, e.g. [0.05, 0.75] (instead of a level)."),
         Parameter("reference", "number", "Draw a horizontal reference line at this value "
                   "(e.g. 0 when the estimates are differences)."),
         Parameter("reference_label", "string", "Label of the reference line.",
@@ -92,7 +94,8 @@ class EstimateComparisonTemplate(ComponentTemplate):
     def _check(self, data: DataSnapshot | None, p: dict[str, Any], issues: Issues) -> None:
         assert data is not None
         for fld, code, message in metadata_problems(p["interval_kind"], p["interval_level"],
-                                                    p["interval_multiplier"]):
+                                                    p["interval_multiplier"],
+                                                    p["interval_quantiles"]):
             issues.error(param_path(f"interval_{fld}"), code, message)
         names = [p[k] for k in ("group_column", "estimate_column", "lower_column",
                                 "upper_column")]
@@ -142,7 +145,8 @@ class EstimateComparisonTemplate(ComponentTemplate):
                              encoding={"x": g, "y": est, "y_lower": lo, "y_upper": hi},
                              interval_kind=p["interval_kind"],
                              interval_level=p["interval_level"],
-                             interval_multiplier=p["interval_multiplier"])
+                             interval_multiplier=p["interval_multiplier"],
+                             interval_quantiles=p["interval_quantiles"])
         ecol = data.columns[est]
         spec = FigureSpec(
             title=p["title"], caption=p["caption"], datasets={"estimates": snap},

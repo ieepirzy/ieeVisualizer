@@ -53,7 +53,7 @@ def test_describe_is_json_and_its_example_builds(name):
     text = json.dumps(entry)  # strictly JSON-serializable
     entry = json.loads(text)
     assert entry["name"] == name
-    assert entry["versions"] == (["1.0.0", "1.1.0"] if name == "timeseries" else ["1.0.0"])
+    assert entry["versions"] == (["1.0.0", "2.0.0"] if name == "timeseries" else ["1.0.0"])
     assert {p["name"] for p in entry["parameters"]} == {
         p.name for p in templates.get(name).parameters}
     for p in entry["parameters"]:

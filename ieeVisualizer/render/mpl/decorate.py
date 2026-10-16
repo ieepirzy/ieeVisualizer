@@ -210,6 +210,14 @@ def apply_legend(ctx: DrawContext) -> None:
     if not spec.legend.show:
         return
     handles, labels = _in_bar_order(ctx, *_dedupe(*ctx.ax.get_legend_handles_labels()))
+    if ctx.listed_after:
+        from .intervals import legend_order
+
+        handles, labels = legend_order(ctx, handles, labels)
+    if ctx.band_records:
+        from .intervals import legend_handles
+
+        handles = legend_handles(ctx, handles)  # fan-chart swatches = the region they name
     if not handles:
         return
     labelled_roles = any(m.role != "observed" for m in spec.layers)

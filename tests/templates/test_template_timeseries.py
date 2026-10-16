@@ -13,7 +13,7 @@ from ieeVisualizer.spec import (
 from ieeVisualizer.spec.data import dataset_to_dict
 from ieeVisualizer.templates import TemplateInputError, TimeseriesTemplate, get
 
-TS = get("timeseries", "1.0.0")  # 1.1.0 (intervals): test_template_intervals.py
+TS = get("timeseries", "1.0.0")  # 2.0.0 (intervals): test_template_intervals.py
 
 WEEK_DATES = ["2026-09-07", "2026-09-14", "2026-09-21", "2026-09-28", "2026-10-05", "2026-10-12"]
 # DataSnapshot stores datetimes in one canonical form (always with seconds).

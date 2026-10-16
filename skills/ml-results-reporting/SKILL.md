@@ -85,10 +85,11 @@ CI", smoothing stated.
 
 - Per-seed results: `scatter` on a category x-axis (method), or one `line`
   per seed via `series`.
-- Curves with an interval: `timeseries` template with numeric time and a unit
-  (`steps`), caller-supplied `lower_column`/`upper_column`; label the kind
-  in the caption (interval metadata is not validated until the planned
-  Phase 2 interval encodings land).
+- Curves with an interval: `timeseries` template (2.0.0) with numeric time
+  and a unit (`steps`) and `intervals=[{"lower": ..., "upper": ..., "kind":
+  "confidence", "level": 0.95}]` from your own bound columns, or a `band`
+  mark directly. The kind and level are required and shown in the legend;
+  say n (seeds) and the method in the caption.
 - Log–log: `axes.x.scale = "log"`, `axes.y.scale = "log"`; non-positive values
   are refused (`log_scale_nonpositive`).
 - Extrapolations: separate dataset with `role="forecast"`; always drawn

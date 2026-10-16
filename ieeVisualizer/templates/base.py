@@ -55,7 +55,8 @@ missing_interval_kind,   an interval parameter does not state what it is, or
 invalid_interval_kind,   states it inconsistently (the spec's interval codes,
 missing_interval_level,  from ``spec.intervals.metadata_problems``)
 invalid_interval_level, unexpected_interval_level, missing_interval_multiplier,
-invalid_interval_multiplier, unexpected_interval_multiplier
+invalid_interval_multiplier, unexpected_interval_multiplier,
+invalid_interval_quantiles, unexpected_interval_quantiles, conflicting_interval_level
 ======================== ===========================================================
 
 Warnings do not stop a build; they are recorded in
@@ -95,10 +96,11 @@ PARAM_TYPES = {
     "range": "array [min, max] of two numbers, min < max",
     "grid": "integer n (n x n points) or array [nx, ny]",
     "number_map": "object {name: number}",
-    "interval_list": "array of {lower, upper, kind, level?, multiplier?}: two column names, "
-                     "an interval kind, and its level (fraction, e.g. 0.95) or SE/SD multiplier",
+    "interval_list": "array of {lower, upper, kind, level?, multiplier?, quantiles?}: two "
+                     "column names, an interval kind, and its level (fraction, e.g. 0.95; "
+                     "central for quantile), SE/SD multiplier, or quantiles [lower, upper]",
 }
-INTERVAL_ITEM_KEYS = ("lower", "upper", "kind", "level", "multiplier")
+INTERVAL_ITEM_KEYS = ("lower", "upper", "kind", "level", "multiplier", "quantiles")
 
 #: Unit expectations a :class:`ColumnRequirement` can declare.
 UNIT_POLICIES = ("recommended", "not_applicable")
@@ -474,6 +476,15 @@ def _coerce_intervals(p: Parameter, v: Any, issues: Issues) -> Any:
                                  f"{norm[key]!r}.")
                 else:
                     norm[key] = float(norm[key])
+        qs = norm["quantiles"]
+        if qs is not None:
+            if not (isinstance(qs, (list, tuple)) and len(qs) == 2
+                    and all(_is_number(q) for q in qs)):
+                issues.error(ptr("params", p.name, str(k), "quantiles"), "invalid_parameter",
+                             f"interval {k}'s quantiles must be [lower, upper] numbers, got "
+                             f"{qs!r}.")
+            else:
+                norm["quantiles"] = [float(q) for q in qs]
         out.append(norm)
     return out
 

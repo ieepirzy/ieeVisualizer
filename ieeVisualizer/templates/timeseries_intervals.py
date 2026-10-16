@@ -1,7 +1,7 @@
-"""``timeseries`` 1.1.0: 1.0.0 plus intervals that say what they are.
+"""``timeseries`` 2.0.0: 1.0.0 plus intervals that say what they are.
 
 1.0.0 drew caller-supplied ``lower_column``/``upper_column`` as two dotted,
-unlabelled lines. 1.1.0 replaces them with ``intervals``: a list of
+unlabelled lines. 2.0.0 replaces them with ``intervals``: a list of
 ``{"lower", "upper", "kind", "level"?, "multiplier"?}``, each drawn as a
 ``band`` layer whose kind and level are required (as in the spec: e.g.
 ``{"kind": "prediction", "level": 0.8}``) and appear in the legend. Several
@@ -27,8 +27,8 @@ _NUMERIC = ("float", "int")
 _REMOVED = ("lower_column", "upper_column")
 
 
-class TimeseriesTemplate110(TimeseriesTemplate):
-    version = "1.1.0"
+class TimeseriesTemplate2(TimeseriesTemplate):
+    version = "2.0.0"
     description = (
         "Line chart of one or more numeric series over time (wide or long format), with "
         "optional observed/forecast split drawn as separate forecast-role layers, an optional "
@@ -37,9 +37,10 @@ class TimeseriesTemplate110(TimeseriesTemplate):
     )
     parameters = tuple(p for p in TimeseriesTemplate.parameters if p.name not in _REMOVED) + (
         Parameter("intervals", "interval_list", "Caller-supplied intervals of the single value "
-                  "column: [{lower, upper, kind, level?, multiplier?}], bound column names, a "
-                  "kind (confidence, credible, prediction, quantile, min-max, standard-error, "
-                  "standard-deviation) and its level as a fraction (0.8) or SE/SD multiplier. "
+                  "column: [{lower, upper, kind, level?, multiplier?, quantiles?}], bound column "
+                  "names, a kind (confidence, credible, prediction, quantile, min-max, "
+                  "standard-error, standard-deviation) and its level as a fraction (0.8; "
+                  "central for quantile), SE/SD multiplier, or quantiles [lower, upper]. "
                   "Never computed here."),
     )
     columns = tuple(c for c in TimeseriesTemplate.columns if c.parameter not in _REMOVED)
@@ -78,7 +79,7 @@ class TimeseriesTemplate110(TimeseriesTemplate):
         for k, iv in enumerate(p["intervals"] or ()):
             base = ptr("params", "intervals", str(k))
             for fld, code, message in metadata_problems(iv["kind"], iv["level"],
-                                                        iv["multiplier"]):
+                                                        iv["multiplier"], iv["quantiles"]):
                 issues.error(f"{base}/{fld}", code, message)
             for key in ("lower", "upper"):
                 self._check_bound_column(data, iv[key], f"{base}/{key}", issues)
@@ -129,7 +130,7 @@ class TimeseriesTemplate110(TimeseriesTemplate):
             spec.layers.append(BandMark(
                 data=part, encoding=enc, role=part, style={"color_of": value_name},
                 interval_kind=iv["kind"], interval_level=iv["level"],
-                interval_multiplier=iv["multiplier"]))
+                interval_multiplier=iv["multiplier"], interval_quantiles=iv["quantiles"]))
         p0 = dict(p, lower_column=None, upper_column=None)
         super()._value_layers(spec, snap, part, tname, v, series, value_name, p0, [])
 
