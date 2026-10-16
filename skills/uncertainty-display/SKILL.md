@@ -70,18 +70,26 @@ Round the estimate to the interval's precision: "conversion 24% (95% CI
 
 ## ieeVisualizer: what exists and what is planned
 
-- **Now (spec 1.0):** the `timeseries` template draws uncertainty only from
-  caller-supplied `lower_column`/`upper_column` ("Never computed here"), as two
-  dotted bound lines in the value's colour, paired in
-  `metadata["template"]["bands"]`, with one legend entry per series. Forecast
-  rows' bounds are drawn as forecast. The level and kind are **not** checked
-  yet: put them in the `caption` and the column `description`.
-- **Planned (ROADMAP "Phase 2 onward", not on `main`):** `band` and
-  `errorbar` marks, interval encodings (`y_lower`, `y_upper`,
-  `interval_level`, `interval_kind` = confidence / credible / prediction /
-  min-max / quantile), ensembles and fan charts. An interval without a stated
-  level will be a validation error and the level/kind must appear in the
-  legend or caption. Until then this skill is the guard.
+- **Intervals (spec 1.0):** a `band` mark (`y_lower`/`y_upper` along `x`), an
+  `errorbar` mark (with the point `y` when encoded), and `y_lower`/`y_upper`
+  on line (drawn as a band), scatter and vertical bar marks (error bars).
+  Every interval needs `interval_kind` (confidence / credible / prediction /
+  quantile / min-max / standard-error / standard-deviation) and
+  `interval_level` as a fraction (0.95) for the first four, or
+  `interval_multiplier` (1 = ±1 SE) for SE/SD bars; `validate` refuses one
+  without (`missing_interval_kind`, `missing_interval_level`), and lower
+  above upper (`interval_inverted`) or a bound in another unit
+  (`interval_unit_mismatch`). The renderer writes "95 % prediction interval"
+  in the legend (or the caption when the legend is hidden) and draws bounds
+  as given; a null bound is a gap.
+- **Templates:** `timeseries` 1.1.0 takes `intervals` (several levels make a
+  fan chart); `estimate_comparison` draws estimates with intervals across
+  groups. `timeseries` 1.0.0's `lower_column`/`upper_column` still draw two
+  unlabelled dotted lines: state the kind and level in the caption there.
+- **Still yours to state:** n, the unit of replication and the method
+  (Rule 1, items 3-5) have no field; put them in the `caption`.
+- **Planned (ROADMAP "Phase 2 onward"):** an ensemble mark for many
+  trajectories, quantile dotplots.
 
 ## Good / bad
 

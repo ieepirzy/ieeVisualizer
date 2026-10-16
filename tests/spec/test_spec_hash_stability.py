@@ -12,14 +12,15 @@ in every recorded environment are compared (a template that samples with
 numpy hashes numpy's output) and renders are skipped.
 """
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
 
 import pytest
+from baseline_specs import collect, environment, fingerprint
 
 from ieeVisualizer.spec import from_json, spec_hash, to_json
-
-from baseline_specs import collect, environment, fingerprint
 
 BASELINE = json.loads((Path(__file__).resolve().parent.parent / "data" /
                        "spec_baseline.json").read_text())

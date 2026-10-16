@@ -51,7 +51,7 @@ name, version and hash), plus `sha256` and `size_bytes`.
 
 ## What the matplotlib adapter draws
 
-All eight marks in `cartesian2d`; line, scatter, quiver and function
+All ten marks in `cartesian2d` (band and errorbar only there); line, scatter, quiver and function
 (surface for `z = f(x, y)`) in `cartesian3d`. A *sampled* function in 3D is
 a surface too: its rows must cover each (x, y) pair of a rectilinear grid
 exactly once, in any order (`not_a_grid` otherwise; use a line mark for a 3D
@@ -121,6 +121,30 @@ small figure, or over a radial tick label) is left out and the slot listed
 in a `no_data_unplaceable` warning. Bar value labels (`value_labels`) are
 arranged after layout; see [THEMES.md](THEMES.md). They are drawn on 2D
 cartesian bars only: in `polar` they are not drawn (`style_key_ignored`).
+
+**Intervals.** Bounds are drawn exactly as the data gives them; nothing is
+computed, widened, symmetrised or smoothed. A `band` (and a line's
+`y_lower`/`y_upper`) is a `fill_between` over the rows where x and both
+bounds exist: each run of such rows is one polygon through exactly those
+points, so a null bound breaks the band (a gap, never zero); a lone row
+between gaps is drawn as a vertical segment. Bands are filled at the
+theme's `roles.interval_fill_alpha` (0.25 when unset) or the style's
+`opacity`; nested bands of one series darken towards the centre (a fan
+chart: list the widest first). An `errorbar` (and a scatter's or vertical
+bar's interval) is a vertical segment from lower to upper bound with a cap
+at each end, plus the point `y` when encoded; on a bar it is drawn in the
+theme's foreground colour so it reads on any fill. Error-bar groups
+(`series`) on a category axis sit side by side in each slot. A row without
+both bounds gets no interval, and an `interval_bounds_missing` warning
+counts them. Each interval's legend entry states its kind and level ("95 %
+prediction interval", with the theme's decimal separator: "97,5 %"), and a
+figure with an interval always has a legend; with `legend.show` false the
+caption gains "Intervals: ..." instead. Forecast bands are hatched and
+lighter; forecast error bars dashed with hollow points. Band style keys:
+`color`, `opacity`, `color_of`; errorbar: also `linewidth`, `marker`. An
+adapter must declare `Capabilities.intervals` to be chosen for a spec with
+interval channels on line, scatter or bar (band and errorbar are mark
+types), so an interval is never silently dropped. Adapter version 1.1.0.
 
 **Roles.** `forecast` is always distinguishable, whatever style it asks for:
 a forecast line uses the requested dash pattern (`solid` or unspecified

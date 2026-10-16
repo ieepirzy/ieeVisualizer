@@ -43,7 +43,12 @@ Codes: `unknown_parameter`, `missing_parameter`, `invalid_parameter`,
 `unresolved_reference`, `empty_dataset`, `missing_column`, `wrong_dtype`,
 `all_null_column`, `null_in_key_column`, `invalid_column_values`,
 `mixed_units`, `unit_override_conflict`, `invalid_expression`,
-`expression_too_large`, `unknown_symbol`; warnings `missing_unit`, `empty_series`,
+`expression_too_large`, `unknown_symbol`, and the interval codes the spec
+uses (`missing_interval_kind`, `invalid_interval_kind`,
+`missing_interval_level`, `invalid_interval_level`,
+`unexpected_interval_level`, `missing_interval_multiplier`,
+`invalid_interval_multiplier`, `unexpected_interval_multiplier`; see
+[SPEC.md](SPEC.md#intervals)); warnings `missing_unit`, `empty_series`,
 `no_forecast_rows`, `non_monotone_counts`, `nonfinite_samples`. The full table is in the docstring
 of `ieeVisualizer/templates/base.py`. Registry errors (`TemplateRegistryError`)
 use `unknown_template`, `unknown_template_version`, `duplicate_template`,
@@ -78,7 +83,30 @@ field).
 
 ## Built-in templates
 
-### `timeseries` 1.0.0
+### `timeseries` 1.1.0 (and 1.0.0)
+
+`get("timeseries")` is 1.1.0; `get("timeseries", "1.0.0")` still builds
+exactly what it did. 1.1.0 is 1.0.0 with one change, to uncertainty:
+`lower_column`/`upper_column` (two unlabelled dotted lines) are replaced by
+**`intervals`**, a list of `{"lower", "upper", "kind", "level"?,
+"multiplier"?}`: two bound columns of the single value column (or the long
+format's one), the interval's kind and its level as a fraction, or the
+SE/SD multiplier, checked as the spec checks them (paths
+`/params/intervals/<k>/kind` etc.). Each becomes a `band` layer per segment
+(observed / forecast rows; forecast bands are forecast-role, hatched),
+drawn before the value line in its colour (`color_of`) and labelled in the
+legend ("80 % prediction interval (forecast)"). Several intervals make a fan
+chart: they are ordered widest level first. Bounds are copied as given; a
+segment with no row holding both bounds gets no band; a lower bound above
+its upper bound is `invalid_column_values`. The layers are recorded in
+`metadata["template"]["intervals"]`. Passing `lower_column` to 1.1.0 is
+`unknown_parameter` with a message saying how to state the interval.
+
+Example payload (1.1.0, abridged): `"intervals": [{"lower": "p10", "upper":
+"p90", "kind": "prediction", "level": 0.8}, {"lower": "p25", "upper": "p75",
+"kind": "prediction", "level": 0.5}]` (`describe("timeseries")["example"]`).
+
+The rest of this section is common to both versions.
 
 Lines over time from `time_column` (datetime, or numeric with a unit) and
 `value_columns` (wide format), or one value column plus `series_column` (long
@@ -93,7 +121,7 @@ format).
 - **Units:** the y unit comes from the columns. All drawn columns must share
   one; `y_unit` only fills in a missing unit and is an error if it
   contradicts a declared one. Nothing is converted.
-- **Uncertainty:** only from caller-supplied `lower_column`/`upper_column`,
+- **Uncertainty (1.0.0):** only from caller-supplied `lower_column`/`upper_column`,
   never computed. Spec 1.0 has no band mark, so bounds are two dotted line
   layers, paired in `metadata["template"]["bands"]`. Bounds of forecast rows
   are `role="forecast"` layers (drawn as forecasts). Each bound layer has the
@@ -133,6 +161,24 @@ in layer order, so the template sets no `bar_width`/`bar_offset`).
   bars too narrow for their labels get them turned upright on the bar; the
   renderer never lets two labels overlap (THEMES.md).
 
+### `estimate_comparison` 1.0.0
+
+Point estimates with caller-supplied intervals across groups (A/B test arms,
+model variants): one `errorbar` layer, `estimate_column` per `group_column`
+on a category axis in row order, `lower_column`/`upper_column` its bounds.
+`interval_kind` is required (one of the spec's kinds) with `interval_level`
+or `interval_multiplier` as the kind needs; the legend states it. Nothing is
+computed: no difference, no significance. For a claim that B beats A, pass
+the difference and its interval and `reference=0` (a "No difference" line),
+rather than two intervals whose overlap the reader must interpret.
+
+- A null estimate draws the interval alone; a null bound leaves that group's
+  interval out (the renderer warns `interval_bounds_missing`).
+- A repeated group (`invalid_column_values`), a null group
+  (`null_in_key_column`), a lower bound above its upper bound
+  (`invalid_column_values`) or bounds in another unit than the estimate
+  (`mixed_units`) is an error. `caption` should say n and the method.
+
 ### `funnel` 1.0.0
 
 Horizontal bars of `count_column` per `stage_column`, first stage on top,
@@ -155,7 +201,7 @@ rows in funnel order.
   `metadata["template"]["label_locale"]`; rendering under a theme with a
   different locale adds a `label_locale_mismatch` warning.
 
-Both take `theme` (a registered theme name, else `invalid_parameter`),
+`bar_comparison` and `funnel` take `theme` (a registered theme name, else `invalid_parameter`),
 which becomes the spec's theme.
 
 ### `vector_field_2d` 1.0.0

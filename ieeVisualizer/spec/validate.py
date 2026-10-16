@@ -109,8 +109,8 @@ from .figure import (
 from .intervals import check_intervals
 from .marks import (
     ALLOWED_CHANNELS,
-    INTERVAL_MARKS,
     COORDINATE_SYSTEMS,
+    INTERVAL_MARKS,
     MARK_TYPES,
     ORIENTATIONS,
     REQUIRED_3D,

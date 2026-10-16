@@ -148,6 +148,6 @@ class TimeseriesTemplate110(TimeseriesTemplate):
             {"lower": "p10", "upper": "p90", "kind": "prediction", "level": 0.8},
             {"lower": "p25", "upper": "p75", "kind": "prediction", "level": 0.5},
         ]
-        payload["params"]["caption"] = ("Forecast is a model output, not a measurement. Bands: "
-                                        "the model's own prediction intervals.")
+        payload["params"]["caption"] = "Forecast and bands: model output."
+        del payload["params"]["target"]  # fewer legend rows: the fan stays legible on a phone
         return payload

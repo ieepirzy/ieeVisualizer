@@ -244,7 +244,7 @@ def mark_errorbar() -> FigureSpec:
                              encoding={"x": "dose", "y": "mean", "y_lower": "lo",
                                        "y_upper": "hi"},
                              interval_kind="standard-error", interval_multiplier=1.0)],
-        axes={"x": Axis(label="Dose", scale="log"), "y": Axis(label="Response")},
+        axes={"x": Axis(label="Dose"), "y": Axis(label="Response")},
     )
 
 

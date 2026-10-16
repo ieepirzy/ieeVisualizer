@@ -51,6 +51,11 @@ unknown_symbol           an expression uses a name that is neither a variable,
                          a parameter nor an allowed function
 nonfinite_samples        (warning) an expression gave nan/inf at some grid points;
                          those samples are stored as null, never as a number
+missing_interval_kind,   an interval parameter does not state what it is, or
+invalid_interval_kind,   states it inconsistently (the spec's interval codes,
+missing_interval_level,  from ``spec.intervals.metadata_problems``)
+invalid_interval_level, unexpected_interval_level, missing_interval_multiplier,
+invalid_interval_multiplier, unexpected_interval_multiplier
 ======================== ===========================================================
 
 Warnings do not stop a build; they are recorded in

@@ -3,9 +3,11 @@
 
 ``python tests/spec/baseline_specs.py OUT.json`` adds, for the running
 environment (matplotlib, numpy and sympy versions), each spec's
-``spec_hash`` and the SHA-256 of its SVG and PNG renders. Run against a ``git archive`` copy of the base branch it
-produces ``tests/data/spec_baseline.json``: the hashes and figures the specs
-had before a change, which the stability test compares against.
+``spec_hash`` and the SHA-256 of its SVG and PNG renders. Run (with
+``BASELINE_ROOT``) against a ``git archive`` copy of the base branch, in each
+environment, it produces ``tests/data/spec_baseline.json``: the hashes and
+figures the specs had before a change, which the stability test compares
+against.
 
 Template examples are built at every version the baseline registry had, so a
 newer template version (whose metadata names the new version) does not hide

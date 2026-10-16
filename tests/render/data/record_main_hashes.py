@@ -22,7 +22,7 @@ from ieeVisualizer.view.examples import reporting_pipeline, weekly_briefing
 
 
 def _template(name, fmt):
-    t = templates.get(name)
+    t = templates.get(name, "1.0.0")  # the version main had (timeseries 1.1.0 adds bands)
     return lambda: render(t.build_payload(t.example()), RenderRequest(format=fmt)).content
 
 

@@ -166,7 +166,7 @@ class EstimateComparisonTemplate(ComponentTemplate):
              "ci_high": [3.2, 1.1, 1.9]},
             units={"uplift": "pp", "ci_low": "pp", "ci_high": "pp"},
         )
-        snap.columns["uplift"].description = "Conversion uplift vs control"
+        snap.columns["uplift"].description = "Uplift vs control"
         snap.columns["arm"].description = "Test arm"
         snap.provenance.source = "example"
         snap.provenance.notes = "Illustrative numbers, not a measurement."
@@ -178,5 +178,5 @@ class EstimateComparisonTemplate(ComponentTemplate):
                        "reference": 0, "reference_label": "No difference",
                        "title": "Checkout test: uplift of each variant over control",
                        "caption": "Illustrative. Difference in conversion rate vs control, "
-                                  "percentage points; normal-approximation 95 % CI."},
+                                  "percentage points; 95 % CI by normal approximation."},
         }

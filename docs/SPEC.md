@@ -6,8 +6,8 @@ It is a pure data model: importing `ieeVisualizer.spec` never imports
 matplotlib. Renderers (branch 3) and templates (branch 4) build on it.
 
 ```python
-from ieeVisualizer.spec import (FigureSpec, DataSnapshot, LineMark, Axis,
-                                validate, to_json, from_json, apply_patch, json_schema)
+from ieeVisualizer.spec import (FigureSpec, DataSnapshot, LineMark, BandMark, ErrorbarMark,
+                                Axis, validate, to_json, from_json, apply_patch, json_schema)
 ```
 
 ## Shape
@@ -101,16 +101,59 @@ hashing) that would raise `RecursionError`.
 
 | Mark | Required channels (2D) | Optional | Extra fields |
 |---|---|---|---|
-| `line`, `scatter` | x, y (+ z in 3D) | color, series (scatter: size) | |
+| `line`, `scatter` | x, y (+ z in 3D) | color, series (scatter: size); y_lower + y_upper (2D) | interval fields |
 | `area` | x, y | color, series | |
-| `bar` | x, y | color, series | `orientation` (horizontal: categories on y) |
+| `bar` | x, y | color, series; y_lower + y_upper (vertical) | `orientation` (horizontal: categories on y), interval fields |
+| `band` | x, y_lower, y_upper | color, series | interval fields (required) |
+| `errorbar` | x, y_lower, y_upper | y (the point estimate), color, series | interval fields (required) |
 | `histogram` | x | color, series | `bins` or `bin_edges`, `density` |
 | `heatmap` | x, y, color (cell value) | | |
 | `quiver` | x, y, u, v (+ z, w in 3D) | color | `scale`, `normalize` |
 | `function` | none with `expression`; x, y with `data` | z, series | `expression`, `variables`, `domain`, `samples`, `parameters` |
 
 3D supports line, scatter, quiver, function; polar supports line, scatter,
-area, bar, function.
+area, bar, function. Band, errorbar and the interval channels are 2D
+(`cartesian2d`) only.
+
+## Intervals
+
+An interval is a claim about uncertainty, so it must say what it is. It is
+drawn by a `band` or `errorbar` mark, or by `y_lower` + `y_upper` on a line
+(drawn as a band around it), scatter or vertical bar (error bars), and the
+layer states:
+
+| Field | Meaning |
+|---|---|
+| `interval_kind` | `confidence`, `credible`, `prediction`, `quantile`, `min-max`, `standard-error`, `standard-deviation`. Required. |
+| `interval_level` | Coverage as a fraction, strictly between 0 and 1 (`0.95`, not `95`). Required for confidence, credible, prediction and quantile; refused for the others (min-max has none). |
+| `interval_multiplier` | How many standard errors / deviations the bar spans on each side (`1`, `1.96`). Required for standard-error and standard-deviation; refused for the others. |
+
+Renderers state it in words where the reader sees it: the legend entry
+("95 % prediction interval", "±1 standard error", "min-max range";
+`interval_label(kind, level, multiplier)`), or the caption when the legend
+is hidden. The bounds are data: drawn as given, never computed, widened,
+symmetrised or smoothed. A null bound is a gap in the interval, never zero.
+Several bands of one series at different levels make a fan chart.
+
+`validate` reports (with the pointer of the field or row to fix):
+`missing_interval_kind`, `invalid_interval_kind`, `missing_interval_level`,
+`invalid_interval_level`, `unexpected_interval_level`,
+`missing_interval_multiplier`, `invalid_interval_multiplier`,
+`unexpected_interval_multiplier`; `missing_channel` for one bound without
+the other; `interval_without_bounds` for interval fields on a layer that
+draws none; `interval_not_numeric`; `interval_unit_mismatch` when a bound's
+unit is not the value's (a bound with no unit next to a value with one
+counts); `interval_inverted` at `/datasets/<d>/columns/<lower>/values/<row>`
+for a row whose lower bound is above its upper bound; `unsupported_channel`
+for intervals on a horizontal bar or outside `cartesian2d`;
+`log_scale_nonpositive` for a bound <= 0 on a log axis; and the warning
+`value_outside_interval` for a point estimate outside its own interval.
+
+The interval fields exist only on line, scatter, bar, band and errorbar
+marks and are written to the JSON only when set, so a spec without
+intervals serializes, and hashes, exactly as before they existed
+(`schema_version` stays `"1.0"`; a reader that predates them refuses a spec
+that uses them instead of dropping the interval).
 
 ## Functions
 
@@ -161,6 +204,38 @@ area, bar, function.
 ```
 
 The `null` revenue week is a gap, not a zero.
+
+## Example: forecast with an 80 % prediction interval
+
+```json
+{
+  "schema_version": "1.0",
+  "title": "Weekly orders",
+  "caption": "Forecast model v3; band: its 80 % prediction interval.",
+  "datasets": {
+    "forecast": {
+      "type": "snapshot",
+      "columns": {
+        "week": {"dtype": "datetime", "values": ["2026-10-05", "2026-10-12", "2026-10-19"]},
+        "orders": {"unit": "orders", "values": [212.0, 220.0, 226.0]},
+        "p10": {"unit": "orders", "values": [190.0, 192.0, null]},
+        "p90": {"unit": "orders", "values": [236.0, 250.0, 262.0]}
+      }
+    }
+  },
+  "layers": [
+    {"type": "band", "data": "forecast", "role": "forecast",
+     "encoding": {"x": "week", "y_lower": "p10", "y_upper": "p90"},
+     "interval_kind": "prediction", "interval_level": 0.8},
+    {"type": "line", "data": "forecast", "role": "forecast",
+     "encoding": {"x": "week", "y": "orders"}, "name": "Forecast"}
+  ],
+  "axes": {"x": {"label": "Week", "scale": "time"}, "y": {"label": "Orders"}}
+}
+```
+
+The legend reads "80 % prediction interval (forecast)". The missing `p10`
+of the last week ends the band a week early; it is not drawn down to zero.
 
 ## Example: 2D vector field
 

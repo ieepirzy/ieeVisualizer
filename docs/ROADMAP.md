@@ -195,6 +195,12 @@ reviewable branches; order follows dependencies, not importance.
   charts from quantiles. The interval's level and kind are required metadata
   and must appear in the legend or caption; an interval without a stated level
   is a validation error. Never computed or widened by the renderer.
+  *Status (branch `claude/uncertainty-marks`):* band and errorbar marks,
+  `y_lower`/`y_upper` on line/scatter/bar, the required kind/level (plus
+  `standard-error`/`standard-deviation` with an `interval_multiplier`),
+  legend/caption statement, `timeseries` 1.1.0 `intervals` (fan charts) and
+  the `estimate_comparison` template. Not yet: the `ensemble` mark, horizontal
+  intervals (bars and errorbars on x).
 
 ### Statistical and mathematical content
 
