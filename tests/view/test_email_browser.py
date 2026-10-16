@@ -268,3 +268,33 @@ def test_fuzzed_tables_fit_or_are_refused(browser, tmp_path):
             if (scroll > width or split) and not refused:
                 bad.append((k, width, scroll, split[:2]))
     assert bad == []
+
+
+@pytest.fixture(scope="module")
+def briefing_dir(tmp_path_factory):
+    """examples/weekly_briefing.py run once: briefing.html, its PNGs, the .eml."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[2] / "examples" / "weekly_briefing.py"
+    spec = importlib.util.spec_from_file_location("weekly_briefing_example", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    out = tmp_path_factory.mktemp("briefing")
+    assert module.main(out) is True  # passes the gate at email-phone
+    return out
+
+
+@pytest.mark.parametrize("width", (360, 768))
+def test_example_briefing_html_has_no_horizontal_scroll(browser, briefing_dir, width):
+    p = browser.new_page(viewport={"width": width, "height": 900})
+    try:
+        p.goto((briefing_dir / "briefing.html").as_uri())
+        m = p.evaluate(MEASURE)
+        loaded = p.evaluate("[...document.images].every(i => i.complete && i.naturalWidth > 0)")
+    finally:
+        p.close()
+    assert m["sw"] <= m["iw"], f"{m['sw']} px wide on a {m['iw']} px screen"
+    assert len(m["imgs"]) == 2 and loaded  # both figures found and decoded
+    assert all(left >= 0 and right <= m["iw"] + 0.5 for left, right in m["imgs"])
+    assert overlaps(m["boxes"]) == []
+    assert m["minFont"] >= 13
