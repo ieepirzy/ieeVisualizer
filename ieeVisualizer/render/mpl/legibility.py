@@ -20,9 +20,13 @@ without one nothing here runs, so other renders keep their bytes.
 
 from __future__ import annotations
 
+import logging
 import math
+import re
+import warnings
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any
 
 from ..base import RenderWarning
@@ -409,46 +413,67 @@ def annotations_outside(built: Any) -> list[RenderWarning]:
     return out
 
 
-@lru_cache(maxsize=32)
-def _charmap(path: str) -> frozenset:
-    from matplotlib.font_manager import get_font
-
-    return frozenset(get_font(path).get_charmap())
-
-
-def missing_chars(text: str, prop: Any) -> str:
-    """The characters of ``text`` the font ``prop`` resolves to has no glyph
-    for (drawn as empty boxes), in order, without repeats."""
-    from matplotlib.font_manager import findfont
-
-    have = _charmap(findfont(prop, fallback_to_default=True))
-    out = []
-    for ch in text:
-        if not ch.isspace() and ord(ch) not in have and ch not in out:
-            out.append(ch)
-    return "".join(out)
+#: Matplotlib's own signals that a glyph was missing while drawing: a
+#: warning from the font renderer, a log record from mathtext.
+_GLYPH_WARNING = re.compile(r"Glyph (\d+) .*missing from font")
+_GLYPH_LOG = re.compile(r"does not have a glyph for .*\[U\+([0-9a-fA-F]+)\]")
 
 
-def glyph_warning(found: list[tuple[str, str]], path: str = "") -> list[RenderWarning]:
-    """``glyph_missing`` for ``[(text, missing characters), ...]``."""
-    if not found:
+class _GlyphLog(logging.Handler):
+    def __init__(self, found: set) -> None:
+        super().__init__(logging.WARNING)
+        self.found = found
+
+    def emit(self, record: logging.LogRecord) -> None:
+        m = _GLYPH_LOG.search(record.getMessage())
+        if m:
+            self.found.add(chr(int(m.group(1), 16)))
+
+
+@contextmanager
+def glyph_signals() -> Iterator[set]:
+    """Collect the characters Matplotlib reports it had no glyph for while
+    drawing inside the block (font fallback lists, italics and mathtext all
+    as actually drawn - nothing is predicted). Yields a set filled on exit;
+    every other warning is passed on unchanged."""
+    found: set = set()
+    handler = _GlyphLog(found)
+    logger = logging.getLogger("matplotlib")
+    logger.addHandler(handler)
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            yield found
+    finally:
+        logger.removeHandler(handler)
+    for w in caught:
+        m = _GLYPH_WARNING.search(str(w.message))
+        if m:
+            found.add(chr(int(m.group(1))))
+        else:
+            warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
+
+
+def glyph_warning(missing: set, texts: list[str], path: str = "") -> list[RenderWarning]:
+    """``glyph_missing`` naming the drawn ``texts`` that hold a character of
+    ``missing`` (the characters a draw reported it had no glyph for)."""
+    if not missing:
         return []
-    shown = "; ".join(f"{t[:40]!r} lacks {m[:10]!r}" for t, m in found[:_MAX_EXAMPLES])
+    found = []
+    for t in dict.fromkeys(texts):
+        m = "".join(dict.fromkeys(ch for ch in t if ch in missing))
+        if m:
+            found.append((t, m))
+    shown = ("; ".join(f"{t[:40]!r} lacks {m[:10]!r}" for t, m in found[:_MAX_EXAMPLES])
+             or repr("".join(sorted(missing))[:10]))
     return [RenderWarning(
         "glyph_missing",
-        f"{len(found)} text(s) use characters the font has no glyph for, drawn as empty "
-        f"boxes: {shown}. Install and select a font that covers them.", path)]
+        f"{len(found) or len(missing)} text(s) use characters no available font has a "
+        f"glyph for, drawn as empty boxes: {shown}. Install and select a font that covers "
+        "them.", path)]
 
 
-def missing_glyphs(fig: Any) -> list[RenderWarning]:
-    """``glyph_missing`` for the figure's visible text (mathtext excluded)."""
+def figure_texts(fig: Any) -> list[str]:
     from matplotlib.text import Text
 
-    found = []
-    for t in fig.findobj(Text):
-        s = t.get_text()
-        if t.get_visible() and s.strip() and "$" not in s:
-            m = missing_chars(s, t.get_fontproperties())
-            if m:
-                found.append((s, m))
-    return glyph_warning(found)
+    return [t.get_text() for t in fig.findobj(Text) if t.get_text()]

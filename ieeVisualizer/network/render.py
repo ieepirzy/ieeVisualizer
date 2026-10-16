@@ -485,7 +485,11 @@ def render_network(spec: NetworkSpec, request: RenderRequest | None = None) -> R
             from ..render.mpl.legibility import audit, recording_canvas
 
             recording_canvas(built.figure)
-        built.figure.savefig(buf, format=request.format, dpi=request.dpi, metadata=meta)
+        from ..render.mpl.legibility import figure_texts, glyph_signals, glyph_warning
+
+        with glyph_signals() as missing:
+            built.figure.savefig(buf, format=request.format, dpi=request.dpi, metadata=meta)
+        built.warnings += glyph_warning(missing, figure_texts(built.figure))
         if request.profile is not None:
             built.warnings += audit(built.figure, request.render_profile,
                                     request.display_width, built.axes)

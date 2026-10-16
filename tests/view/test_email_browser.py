@@ -198,3 +198,73 @@ def test_a_short_table_with_long_headers_is_a_table_on_a_phone():
     """Headers wrap at spaces, so three short columns stay a table at 320 px."""
     html = render_email(long_headers()).html
     assert "One card per row" not in html and "<td" in html
+
+
+def _fuzz_views(seed: int, trials: int):
+    """Random tables (1-4 columns of int/float/str/datetime) in 0-6 nested
+    cards, sometimes in a grid: the reviewer's fuzz, seeded."""
+    import datetime as dt
+    import random
+
+    rnd = random.Random(seed)
+    words = ["Oy", "Esimerkki", "Ab", "Kokonaisliikevaihto", "Toimitus", "WWWWWW", "mmmmmm",
+             "iiiiiiiiiii", "Ääkkönen", "Göteborg", "—", "€"]
+    tz = dt.timezone(dt.timedelta(hours=3))
+    for _ in range(trials):
+        cols = {}
+        for c in range(rnd.randint(1, 4)):
+            kind = rnd.choice(["int", "float", "str", "datetime"])
+            head = " ".join(rnd.choice(words) for _ in range(rnd.randint(1, 3))) + f"{c}"
+            if kind == "int":
+                vals = [rnd.randint(-10 ** rnd.randint(1, 14), 10 ** rnd.randint(1, 14))
+                        for _ in range(3)]
+            elif kind == "float":
+                vals = [rnd.uniform(-1, 1) * 10 ** rnd.randint(-6, 14) for _ in range(3)]
+            elif kind == "str":
+                vals = [" ".join(rnd.choice(words) for _ in range(rnd.randint(1, 4)))
+                        for _ in range(3)]
+            else:
+                vals = [dt.datetime(2026, rnd.randint(1, 12), rnd.randint(1, 28),
+                                    rnd.randint(0, 23), rnd.randint(0, 59),
+                                    microsecond=rnd.choice([0, 123456]), tzinfo=tz)
+                        for _ in range(3)]
+            cols[head] = vals
+        node = Table(data="t")
+        for _ in range(rnd.randint(0, 6)):
+            node = Card(title="c", children=[node])
+        root = (Grid(columns=2, children=[node, Text(text="x")]) if rnd.random() < 0.3
+                else Stack(children=[node]))
+        yield ViewSpec(datasets={"t": DataSnapshot.from_columns(cols)}, root=root)
+
+
+def test_fuzzed_tables_fit_or_are_refused(browser, tmp_path):
+    """Whatever the columns and nesting: at 320 and 360 px the email has no
+    horizontal overflow and no split table value, or the send gate refuses it
+    (or the view is refused outright as too narrow)."""
+    from ieeVisualizer.render import LegibilityError, check_legible
+    from ieeVisualizer.spec import SpecValidationError
+
+    bad = []
+    for k, view in enumerate(_fuzz_views(seed=4, trials=40)):
+        try:
+            email = render_email(view)
+        except SpecValidationError:
+            continue
+        try:
+            check_legible(email)
+            refused = False
+        except LegibilityError:
+            refused = True
+        page = tmp_path / f"fuzz{k}.html"
+        page.write_text(email.html, encoding="utf-8")
+        for width in (320, 360):
+            p = browser.new_page(viewport={"width": width, "height": 900})
+            try:
+                p.goto(page.as_uri())
+                split = [v for v, lines in p.evaluate(VALUE_LINES) if lines != 1]
+                scroll = p.evaluate("document.documentElement.scrollWidth")
+            finally:
+                p.close()
+            if (scroll > width or split) and not refused:
+                bad.append((k, width, scroll, split[:2]))
+    assert bad == []

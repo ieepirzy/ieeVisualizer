@@ -19,6 +19,7 @@ from ieeVisualizer.view import (
     Grid,
     Kpi,
     Stack,
+    Table,
     Text,
     ViewSpec,
     render_email,
@@ -171,3 +172,77 @@ def test_missing_glyphs_fail_the_gate():
     for out in (result, render_email(flow), render_view(flow, "png", profile="email-phone")):
         with pytest.raises(LegibilityError, match="glyph_missing"):
             check_legible(out)
+
+
+def _gated(result) -> bool:
+    try:
+        check_legible(result)
+    except LegibilityError:
+        return True
+    return False
+
+
+@pytest.mark.filterwarnings("ignore:Glyph .* missing from font")
+@pytest.mark.parametrize(("title", "theme", "refused"), [
+    ("Price ($) 東京", None, True),           # a "$" that is not mathtext
+    (r"$\mathrm{東京}$ sales", None, True),  # real mathtext
+    ("Status ✓ ⚠ ok", "fallback-list-test", False),  # drawn by the fallback font
+    ("Hyvä päivä: äöå ÄÖÅ", None, False),
+])
+def test_missing_glyphs_are_taken_from_the_real_draw(title, theme, refused):
+    import dataclasses
+
+    from ieeVisualizer.render import get_profile, render
+    from ieeVisualizer.spec import FigureSpec, LineMark
+    from ieeVisualizer.themes.builtin import REPORT_LIGHT
+
+    if theme and theme not in {t["name"] for t in themes.list_themes()}:
+        themes.register(dataclasses.replace(
+            REPORT_LIGHT, name=theme, typography=dataclasses.replace(
+                REPORT_LIGHT.typography, family=("Liberation Sans", "DejaVu Sans"))))
+    data = DataSnapshot.from_columns({"x": [0, 1, 2], "y": [1, 2, 3]})
+    fig = FigureSpec(title=title, theme=theme, datasets={"d": data},
+                     layers=[LineMark(data="d", encoding={"x": "x", "y": "y"})])
+    result = render(fig, get_profile("email-phone").figure_request("png"))
+    assert _gated(result) is refused
+    assert ("glyph_missing" in {w.code for w in result.warnings}) is refused
+
+
+@pytest.mark.filterwarnings("ignore:Glyph .* missing from font")
+def test_italic_text_without_italic_glyphs_is_refused_upright_is_not():
+    italic = ViewSpec(root=Stack(children=[Text(text="*مرحبا بالعالم*")]))
+    upright = ViewSpec(root=Stack(children=[Text(text="مرحبا بالعالم")]))
+    assert _gated(render_view(italic, "png", profile="email-phone"))
+    assert not _gated(render_view(upright, "png", profile="email-phone"))
+
+
+def test_alt_text_in_3d_uses_vector_magnitude_and_no_position():
+    from ieeVisualizer.spec import FigureSpec, LineMark, QuiverMark
+    from ieeVisualizer.view.email import figure_summary
+
+    d = DataSnapshot.from_columns({"x": [0.0, 1.0], "y": [0.0, 1.0], "z": [0.0, 1.0],
+                                   "u": [3.0, 0.0], "v": [4.0, 0.0], "w": [12.0, 1.0]})
+    quiver = FigureSpec(coordinate_system="cartesian3d", datasets={"d": d},
+                        layers=[QuiverMark(data="d", encoding={k: k for k in "xyzuvw"})])
+    assert figure_summary(quiver) == "vectors: vector magnitude, 2 values from 1 to 13"
+    line = FigureSpec(coordinate_system="cartesian3d", datasets={"d": d},
+                      layers=[LineMark(data="d", encoding={"x": "x", "y": "y", "z": "z"})])
+    assert figure_summary(line) == ""  # x, y, z are positions: no value to claim
+
+
+@pytest.mark.parametrize("depth", [1, 2, 3, 6])
+def test_whole_values_too_wide_for_their_card_are_refused(depth):
+    import datetime as dt
+
+    tz = dt.timezone(dt.timedelta(hours=3))
+    data = DataSnapshot.from_columns({
+        "when": [dt.datetime(2026, 10, 1, 12, 30, 15, 123456, tzinfo=tz)] * 2,
+        "x": [-0.00207883514778638, 1.5], "label": ["a b", "c"], "n": [1, 2]})
+    node = Table(data="t")
+    for _ in range(depth):
+        node = Card(title="c", children=[node])
+    email = render_email(ViewSpec(datasets={"t": data}, root=Stack(children=[node])))
+    if "One card per row" in email.html:
+        assert "this table gets on a phone screen" in " ".join(email.html.split())
+    assert "value_too_wide_for_screen" in {w.code for w in email.warnings}
+    assert _gated(email)

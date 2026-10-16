@@ -203,8 +203,6 @@ def render_view(view: ViewSpec, format: str = "svg", *, width: float | None = No
         items, height, _ = layout_view(view, width, prof, layout_warnings)
         if prof is not None:
             layout_warnings += small_text(items, prof)
-        if format == "png":  # SVG text falls back to the reader's fonts; PNG cannot
-            layout_warnings += view_glyphs(items)
         if format == "svg":
             content = to_svg(items, width, height, figs.nested_svg, view.title).encode("utf-8")
         else:
@@ -222,33 +220,33 @@ def render_view(view: ViewSpec, format: str = "svg", *, width: float | None = No
                     f"{px_w * px_h / 1e6:.1f} megapixels; the limit is "
                     f"{MAX_PNG_PIXELS / 1e6:g}. Render HTML or SVG, lower width or scale, or "
                     "split the view.")])
-            content = to_png(items, width, height, scale, figs.png_array)
+            content = png_with_glyph_check(items, width, height, scale, figs.png_array,
+                                           layout_warnings)
     return RenderResult(content=content, format=format, media_type=VIEW_FORMATS[format],
                         adapter_name=RENDERER_NAME, adapter_version=RENDERER_VERSION,
                         warnings=layout_warnings + list(figs.warnings))
 
 
-def view_glyphs(items: list) -> list[RenderWarning]:
-    """``glyph_missing`` for view text the PNG draws in DejaVu Sans without a
-    glyph (flows included)."""
-    from matplotlib.font_manager import FontProperties
+def labels_of(items: list) -> list[str]:
+    """Every text the display list draws (flows included)."""
+    out: list[str] = []
+    for it in items:
+        if isinstance(it, Group):
+            out += labels_of(it.items)
+        elif isinstance(it, Label):
+            out.append(it.text)
+    return out
 
-    from ..render.mpl.legibility import glyph_warning, missing_chars
 
-    found: list[tuple[str, str]] = []
+def png_with_glyph_check(items: list, width: float, height: float, scale: float, embed,
+                         warnings: list[RenderWarning], path: str = "") -> bytes:
+    """``to_png`` plus ``glyph_missing`` for what the draw could not draw."""
+    from ..render.mpl.legibility import glyph_signals, glyph_warning
 
-    def walk(its: list) -> None:
-        for it in its:
-            if isinstance(it, Group):
-                walk(it.items)
-            elif isinstance(it, Label) and it.text.strip():
-                fam = "DejaVu Sans Mono" if it.mono else "DejaVu Sans"
-                m = missing_chars(it.text, FontProperties(family=fam))
-                if m:
-                    found.append((it.text, m))
-
-    walk(items)
-    return glyph_warning(found)
+    with glyph_signals() as missing:
+        content = to_png(items, width, height, scale, embed)
+    warnings += glyph_warning(missing, labels_of(items), path)
+    return content
 
 
 def small_text(items: list, profile: Any) -> list[RenderWarning]:

@@ -33,7 +33,7 @@ from typing import Any
 from ..render import RenderRequest, RenderWarning, Resolver, get_profile, render
 from ..spec import SpecValidationError
 from ..spec._common import ptr_join
-from .draw import Group, Rect, esc, to_png
+from .draw import Group, Rect, esc
 from .flow import flow_outline
 from .html import markdown_html
 from .layout import (
@@ -48,7 +48,7 @@ from .layout import (
 )
 from .limits import MAX_PNG_PIXELS, MAX_PNG_SIDE_PX
 from .model import Card, FigureComponent, Flow, Grid, Kpi, Node, Note, Stack, Table, Text, ViewSpec
-from .render import view_glyphs
+from .render import png_with_glyph_check
 from .text import NO_DATA, NULL_CELL
 from .validate import errors
 
@@ -65,9 +65,14 @@ MIN_TILE = 180
 #: Gmail cuts a message whose HTML exceeds about 102 KB behind "View entire
 #: message"; the rest is not shown in the mail view.
 GMAIL_CLIP_BYTES = 102 * 1024
-#: Email clients may substitute Verdana/Arial for DejaVu Sans: text measured
-#: with DejaVu metrics gets this much extra room.
-FONT_SLACK = 1.1
+#: Email clients may substitute Verdana/Arial for DejaVu Sans: a value that
+#: must stay whole is trusted to fit only with this much extra room (see
+#: :func:`whole_width`, the one measure behind every such decision).
+SLACK = 1.2
+#: Horizontal space a table card takes from its slot: padding, border, margin.
+CARD_INSET = 30
+#: ... and a KPI tile: padding and border.
+KPI_INSET = 30
 INK, MUTED, LINE, PANEL = "#1f2328", "#57606a", "#d0d7de", "#f6f8fa"
 #: Every text container also breaks words longer than its box (URLs, ids),
 #: which would otherwise widen the whole email past a phone's screen.
@@ -75,8 +80,6 @@ FONT = ("font-family:'DejaVu Sans',Verdana,Arial,sans-serif;overflow-wrap:anywhe
         "word-break:break-word;")
 #: The font without the word breaking, for values that must stay whole.
 PLAIN = "font-family:'DejaVu Sans',Verdana,Arial,sans-serif;"
-#: Extra room a table must leave before its columns are trusted to fit.
-TABLE_SLACK = 1.2
 #: A presentation table as wide as its slot. (No ``table-layout:fixed``: the
 #: text inside already wraps, and the browser tests pass without it.)
 TABLE = ('role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
@@ -102,6 +105,7 @@ class _Email:
         self.images: dict[str, bytes] = {}
         self.warnings: list[RenderWarning] = []
         self.min = profile.min_html_text_px
+        self.path = ""
 
     def px(self, size: float) -> float:
         return max(size, self.min)
@@ -139,6 +143,7 @@ class _Email:
                     f'#bf8700;padding:10px 12px">'
                     f'{self.prose("**Caveat:** " + n.text, self.px(13), INK)}</td></tr></table>')
         if isinstance(n, Kpi):
+            self.path = path
             return self.kpi(n, lo)
         if isinstance(n, Table):
             return self.table(n, path, lo)
@@ -200,7 +205,8 @@ class _Email:
         return self.image(f"figure-{len(self.images)}.png", result.content, hi, alt)
 
     def kpi(self, n: Kpi, lo: float) -> str:
-        iw = (lo - 30) / FONT_SLACK
+        room = lo - KPI_INSET
+        iw = room / SLACK
         variants = _kpi_variants(n)
         small = tuple(s for s in KPI_SMALL_SIZES if s >= self.min)
         if n.value is None:
@@ -210,15 +216,18 @@ class _Email:
             sizes = tuple(s for s in KPI_VALUE_SIZES if s >= self.min)
             lines, size = _fit_number_text(variants, 0, sizes, iw, True, True, small)
             self.compacted(variants, 0, lines, n)
-            value = (f'<div style="{FONT}font-size:{size:g}px;font-weight:bold;color:{INK};'
-                     f'margin:4px 0;line-height:1.25">{"<br>".join(map(esc, lines))}</div>')
+            self.whole(lines, size, room, f"KPI {n.label!r}", True)
+            value = (f'<div style="{PLAIN}font-size:{size:g}px;font-weight:bold;color:{INK};'
+                     f'margin:4px 0;line-height:1.25;white-space:nowrap">'
+                     f'{"<br>".join(map(esc, lines))}</div>')
         parts = [f'<div style="{FONT}font-size:{self.px(13):g}px;color:{MUTED}">'
                  f'{esc(n.label)}</div>', value]
         if variants[0][0][1]:
             lines, size = _fit_number_text(variants, 1, (self.px(12),), iw, False, False, small)
             self.compacted(variants, 1, lines, n)
-            parts.append(f'<div style="{FONT}font-size:{size:g}px;color:{INK}">'
-                         f'{"<br>".join(map(esc, lines))}</div>')
+            self.whole(lines, size, room, f"KPI {n.label!r} comparison")
+            parts.append(f'<div style="{PLAIN}font-size:{size:g}px;color:{INK};'
+                         f'white-space:nowrap">{"<br>".join(map(esc, lines))}</div>')
         if n.source:
             parts.append(f'<div style="{FONT}font-size:{self.px(12):g}px;color:{MUTED}">'
                          f'Source: {esc(n.source)}</div>')
@@ -235,6 +244,20 @@ class _Email:
                 f"KPI {n.label!r} is shown as '{' '.join(lines)}' instead of '{exact}': the "
                 "exact number does not fit its tile at the minimum text size.", ""))
 
+    def whole(self, values: list[str], size: float, room: float, what: str,
+              bold: bool = False) -> None:
+        """Values that must stay whole (never split) but are wider than the
+        ``room`` they get on the narrowest screen: ``value_too_wide_for_screen``
+        (they would run past the screen edge)."""
+        wide = [v for v in values if whole_width(v, size, bold) > room]
+        if wide:
+            self.warnings.append(RenderWarning(
+                "value_too_wide_for_screen",
+                f"{what}: {len(wide)} value(s) need more than the {room:.0f} px they get on "
+                f"a {self.p.css_width:g} px screen ({self.p.name}) and cannot be split: "
+                + ", ".join(repr(v[:40]) for v in wide[:3]) + ". Nest fewer cards or "
+                "columns, or shorten the values.", self.path))
+
     def table(self, n: Table, path: str, lo: float) -> str:
         ds = self.view.datasets[n.data]
         names, heads, rows, total = table_cells(n, ds, path)
@@ -243,11 +266,11 @@ class _Email:
         # A cell value is never split: numbers, dates and ids would read as
         # other values. Data cells do not wrap (white-space:nowrap); a table is
         # used only when every column fits its widest value whole (and its
-        # longest header word: headers wrap at spaces), with TABLE_SLACK room
+        # longest header word: headers wrap at spaces), with SLACK room
         # for a client's substitute font. Otherwise one card per row.
-        want = sum(max([text_width(w[:200], size, True) for w in h.split(" ")]
-                       + [text_width(r[i][:200], size) for r in rows]) + 16
-                   for i, h in enumerate(heads)) * TABLE_SLACK
+        want = sum(max([whole_width(w, size, True) for w in h.split(" ")]
+                       + [whole_width(r[i], size) for r in rows]) + 16 * SLACK
+                   for i, h in enumerate(heads))
         cell = f"{PLAIN}font-size:{size:g}px;padding:4px 8px;"
         cap = (f'<div style="{FONT}font-size:{self.px(15):g}px;font-weight:bold;color:{INK};'
                f'margin:0 0 6px 0">{esc(n.title)}</div>' if n.title else "")
@@ -268,11 +291,16 @@ class _Email:
         else:
             parts.append(f'<div style="{FONT}font-size:{self.min:g}px;color:{MUTED};'
                          f'margin:0 0 6px 0">One card per row: the {len(heads)} columns do not '
-                         f"fit side by side on a {lo:.0f} px wide screen.</div>")
+                         f"fit side by side in the {lo:.0f} px this table gets on a phone "
+                         f"screen.</div>")
             cards = []
             # in a card a text value may wrap (a long URL); numbers, dates and
-            # booleans stay whole
+            # booleans stay whole, and must fit the card
             whole = [ds.columns[c].dtype != "str" for c in names]
+            room = min(COLUMN // 2, lo) - CARD_INSET
+            self.path = path
+            self.whole([r[i] for r in rows for i in range(len(names)) if whole[i]], size, room,
+                       f"table {n.title or n.data!r}")
             for r in rows:
                 fields = "".join(
                     f'<div style="{FONT}font-size:{self.min:g}px;color:{MUTED}">{esc(h)}</div>'
@@ -294,7 +322,6 @@ class _Email:
         f2, items, gw, gh, order, s = fit_flow(f, lo, self.p.min_text_px, path, self.warnings)
         w, h = max(gw * s, 1.0), max(gh * s, 1.0)
         # flow_text_too_small (from fit_flow) already reports small labels
-        self.warnings += [RenderWarning(x.code, x.message, path) for x in view_glyphs(items)]
         px_w, px_h = round(w * self.p.scale), round(h * self.p.scale)
         if max(px_w, px_h) > MAX_PNG_SIDE_PX or px_w * px_h > MAX_PNG_PIXELS:
             from ..render import RenderError
@@ -304,8 +331,9 @@ class _Email:
                 f"the flow's image would be {px_w} x {px_h} px; the limits are "
                 f"{MAX_PNG_SIDE_PX} px a side and {MAX_PNG_PIXELS / 1e6:g} megapixels. Split "
                 "the flow or use a grid layout."))])
-        png = to_png([Rect(0, 0, w, h, fill="#ffffff"), Group(items, scale=s)], w, h,
-                     self.p.scale, lambda e, pw, ph: None)
+        png = png_with_glyph_check([Rect(0, 0, w, h, fill="#ffffff"), Group(items, scale=s)],
+                                   w, h, self.p.scale, lambda e, pw, ph: None, self.warnings,
+                                   path)
         title = (f'<div style="{FONT}font-size:{self.px(15):g}px;font-weight:bold;color:{INK};'
                  f'margin:0 0 6px 0">{esc(f.title)}</div>' if f.title else "")
         lis = "".join(f"<li>{esc(line.split('. ', 1)[1])}</li>"
@@ -414,7 +442,8 @@ def figure_summary(spec: Any, resolver: Resolver | None = None, limit: int = 400
     whose images are blocked): per layer, its name, how many values and their
     range with the unit. Only value channels are summarised - y (x for
     horizontal bars), the samples of a histogram, a heatmap's colour, a
-    quiver's vector magnitude - never positions. References are resolved
+    quiver's vector magnitude (u, v and w in 3D); in 3D only a colour channel,
+    since x, y and z are all positions - never positions. References are resolved
     with ``resolver`` first; ``""`` when nothing can be summarised."""
     import math
 
@@ -434,13 +463,16 @@ def figure_summary(spec: Any, resolver: Resolver | None = None, limit: int = 400
             continue
         what = ""
         if m.type == "quiver" and "u" in enc and "v" in enc:
-            u, v = cols[enc["u"].field], cols[enc["v"].field]
-            vals = [math.hypot(a, b) for a, b in zip(u.values, v.values)
-                    if a is not None and b is not None]
-            unit, what, label = u.unit, "vector magnitude, ", "vectors"
+            comps = [cols[enc[k].field] for k in ("u", "v", "w") if k in enc]
+            vals = [math.sqrt(sum(c * c for c in row)) for row in zip(*(c.values for c in comps))
+                    if None not in row]
+            unit, what, label = comps[0].unit, "vector magnitude, ", "vectors"
         else:
-            ch = {"histogram": "x", "heatmap": "color"}.get(
-                m.type, "x" if getattr(m, "orientation", None) == "horizontal" else "y")
+            if spec.coordinate_system == "cartesian3d":
+                ch = "color"  # x, y and z are all positions in 3D
+            else:
+                ch = {"histogram": "x", "heatmap": "color"}.get(
+                    m.type, "x" if getattr(m, "orientation", None) == "horizontal" else "y")
             col = cols.get(enc[ch].field) if ch in enc else None
             if col is None or col.dtype not in ("int", "float"):
                 continue
@@ -454,3 +486,11 @@ def figure_summary(spec: Any, resolver: Resolver | None = None, limit: int = 400
                      f"{format_number(max(vals))}{unit}")
     text = "; ".join(parts)
     return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def whole_width(text: str, size: float, bold: bool = False) -> float:
+    """CSS px a value that must not be split needs at ``size``: its DejaVu
+    width plus :data:`SLACK` for a substitute font. Every keep-whole decision
+    (table or cards, KPI lines, card values) compares this with the room the
+    value really gets."""
+    return text_width(text[:200], size, bold) * SLACK

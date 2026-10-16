@@ -148,7 +148,8 @@ bottom (the layout is only a hint); if still too small,
 and with a profile says so (`table_cells_truncated`). The email shows a
 table that does not fit the phone width as one card per row with every cell
 whole, and writes "One card per row: the N columns do not fit side by side
-on a 320 px wide screen" above it. There is no horizontal scrolling.
+in the N px this table gets on a phone screen" above it (the slot, not the
+screen width). There is no horizontal scrolling.
 
 ## The send gate
 
@@ -160,10 +161,15 @@ could not be laid out - `value_labels_omitted`, `value_label_outside_axes`,
 `flow_text_too_small`, `kpi_value_compacted`, `labels_abbreviated` /
 `labels_skipped` / `matrix_labels_omitted` (networks),
 `annotation_outside_view`, `annotation_skipped`, `layout_collapsed`,
-`email_clipped_by_gmail`, `email_not_phone_safe`, and `glyph_missing` (a
-character the font has no glyph for, drawn as an empty box: figure text,
-and in PNG views and email flows every label is checked against DejaVu
-Sans). A pipeline that must not
+`email_clipped_by_gmail`, `email_not_phone_safe`,
+`value_too_wide_for_screen` (a value that must stay whole is wider than the
+room it gets on the phone, so it would run off the screen), and
+`glyph_missing`: a character drawn as an empty box. That one is not
+predicted: it comes from Matplotlib's own signals during the real draw
+(its "Glyph N missing from font(s)" warning and mathtext's "does not have a
+glyph" log record), so font fallback lists, italics and mathtext count as
+actually drawn; it covers figures, networks, view PNGs and email flows. SVG
+and HTML text is left to the reader's fonts and not checked. A pipeline that must not
 send an illegible or incomplete report calls it on every output. The tests
 check the property it protects: for every template at every profile, each
 word a desktop render draws outside the tick labels is drawn outside the
@@ -182,16 +188,21 @@ Delivery (MIME assembly) stays out of scope.
 - Every text container has `overflow-wrap:anywhere; word-break:break-word`,
   so a URL or id longer than the screen wraps instead of widening the email.
   Table values never wrap (`white-space:nowrap`): a number or date split over
-  two lines reads as two values. A table is used only when every column fits
-  its widest value whole and its longest header word, with 20 % to spare for
-  a substitute font; otherwise one card per row, where only text values may
-  wrap.
+  two lines reads as two values. One measure (`whole_width`: DejaVu width
+  plus 20 % for a substitute font) decides every keep-whole case against the
+  room the value really gets at its depth - the slot minus every enclosing
+  card (26 px), table card (30 px) or KPI tile (30 px): a table only when
+  every column fits its widest value and longest header word, otherwise one
+  card per row, where only text values may wrap; a number, date or KPI line
+  that does not fit even its card is `value_too_wide_for_screen`, never
+  split and never silently over the edge.
 - Image names are Content-IDs, `figure-<n>.<12 hex of the PNG's SHA-256>.png@ieevisualizer`:
   the same picture keeps its name, other data gives another. A figure's
   `alt` summarises its measured values (references resolved first) for
   clients that block images: per layer the count and range of the value
   channel - y (x for horizontal bars), a histogram's samples, a heatmap's
-  colour, a quiver's vector magnitude - never positions.
+  colour, a quiver's vector magnitude (with w in 3D); in 3D only a colour
+  channel, since x, y and z are positions - never positions.
 - Lines break at spaces outside quoted attributes so none exceeds 900
   UTF-8 bytes (SMTP's limit is 998 bytes); `lang` must be a language tag.
 - A slot narrower than 120 px on the phone (deep nesting) is refused with a
@@ -208,7 +219,10 @@ horizontal overflow, no two text boxes overlapping, no computed font below
 13 px, images inside the screen, KPI tiles one per row up to 430 px and two
 across at 768 px, and every table value on one line (weekly briefing, a
 revenue table with 23 456 789.5-style values, a short table with long
-headers); also for a view with 140-character URLs in every text field. CI installs Chromium and sets `IEEV_REQUIRE_BROWSER=1`, so they run
+headers); also for a view with 140-character URLs in every text field, and
+a seeded fuzz (random tables of int/float/str/datetime columns in 0-6 nested
+cards, some in grids) where each email must fit 320 and 360 px with no split
+value or else be refused by the gate. CI installs Chromium and sets `IEEV_REQUIRE_BROWSER=1`, so they run
 there; locally they skip with the reason when no browser is available.
 
 **Renders without a profile** are compared with SHA-256 hashes recorded from
