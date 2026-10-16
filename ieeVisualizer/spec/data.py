@@ -48,6 +48,7 @@ import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from itertools import repeat
 from typing import Any, Union
 
 from ._common import (
@@ -214,6 +215,10 @@ def normalize_values(values: Any, dtype: str | None) -> tuple[list[Any], str | N
     else:
         raw = list(values.tolist() if hasattr(values, "tolist") else values)
 
+    fast = _plain_floats(raw, dtype)
+    if fast is not None:
+        return fast, "float"
+
     out: list[Any] = []
     kinds = set()
     for i, v in enumerate(raw):
@@ -261,6 +266,36 @@ def normalize_values(values: Any, dtype: str | None) -> tuple[list[Any], str | N
     elif dtype == "datetime":
         out = _canon_datetimes(out)
     return out, dtype
+
+
+_FLOAT_KINDS = frozenset({float, type(None)})
+
+
+def finite_plain_floats(raw: list[Any], kinds: set | None = None) -> bool:
+    """True when ``raw`` holds only exact ``float`` / ``None`` values and every
+    float is finite (no NaN, no infinity). Built from C-level builtins, so a
+    sampled column of many rows is checked without a per-value Python loop.
+    False means "take the per-value path", never "invalid"; in particular a
+    sum that overflows sends a valid column down the slow path. ``kinds`` is
+    ``set(map(type, raw))`` when the caller already has it."""
+    if not (set(map(type, raw)) if kinds is None else kinds) <= _FLOAT_KINDS:
+        return False
+    return math.isfinite(sum(filter(None, raw)))  # filter(None) drops None (and 0.0)
+
+
+def _plain_floats(raw: list[Any], dtype: str | None) -> list[Any] | None:
+    """Fast path of :func:`normalize_values` for a float column of finite
+    Python floats and ``None`` (what numeric numpy arrays and the legacy
+    bridge produce): the same result as the per-value path (-0.0 becomes
+    0.0), or None to take that path."""
+    if dtype not in (None, "float") or not raw:
+        return None
+    kinds = set(map(type, raw))
+    if float not in kinds or not finite_plain_floats(raw, kinds):
+        return None  # all-null columns too: their dtype is inferred as before
+    if type(None) in kinds:
+        return [None if v is None else v + 0.0 for v in raw]
+    return list(map(float.__add__, raw, repeat(0.0)))  # -0.0 + 0.0 == +0.0
 
 
 def _infer(kinds: set) -> str | None:
