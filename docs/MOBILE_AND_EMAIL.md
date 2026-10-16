@@ -209,7 +209,8 @@ by default) and warnings. Inline styles only; no `<style>`, script, SVG,
 class, link or media query; `role="presentation"` tables for the column;
 KPI tiles and table cards as fluid `inline-block` boxes; each flow followed
 by its text version (shown, since `<details>` is not dependable in mail).
-Delivery (MIME assembly) stays out of scope.
+`EmailRender.text` carries the same content as plain text; assembling the
+message is `build_message` (next section).
 
 - Every text container has `overflow-wrap:anywhere; word-break:break-word`,
   so a URL or id longer than the screen wraps instead of widening the email.
@@ -271,6 +272,68 @@ re-record, export main (`git archive origin/main | tar -x -C /tmp/main`) and
 run `PYTHONPATH=/tmp/main python tests/render/data/record_main_hashes.py`
 with the new matplotlib; commit the updated `main_render_hashes.json`.
 
+## Sending a briefing
+
+```python
+from ieeVisualizer.view import build_message, render_email, write_eml
+
+email = render_email(view, "email-phone")
+msg = build_message(email, subject="Weekly briefing: week 41",
+                    sender="Reporting <reports@example.com>",
+                    recipients=["Management <management@example.com>"])
+write_eml(msg, "briefing.eml")        # preview; smtplib.SMTP(...).send_message(msg) sends
+```
+
+`build_message` returns a stdlib `EmailMessage`: `multipart/alternative`
+holding a `text/plain` part and a `multipart/related` part with the HTML and
+one `image/png` per image (`Content-ID: <figure-0.<hash>.png@ieevisualizer>`,
+`Content-Disposition: inline`, a filename). Every `cid:` the HTML references
+has exactly one part and every image is referenced; otherwise it raises
+`MessageError` `cid_mismatch` (an email rendered with a custom `image_src`
+cannot be sent this way). Text parts are UTF-8 quoted-printable and images
+base64, with CRLF line ends and no line over 76 characters (RFC 2045).
+
+**Plain text.** Clients that block images or show no HTML get the numbers
+anyway: `EmailRender.text` has the title, every text and note, each KPI's
+value with its unit, its comparison line ("▲ +23 orders vs week 40 (389
+orders)") and source, exactly as written (never the compacted tile form),
+every table cell as a `header (unit): value` line, each figure's `alt`
+summary and each flow's text version. `text_fallback=` replaces it.
+
+**Gate.** `build_message` calls `check_legible` first and raises
+`EmailGateError` (a `LegibilityError`; `.codes` lists the gating codes, and
+`.issues` has their messages and pointers) for any render the gate refuses,
+including every `email-tablet` render (`email_not_phone_safe`).
+`allow_ungated=True` builds it anyway; that is the caller's explicit choice.
+
+**Headers.** Subject, sender, recipients, `date` and `message_id` are
+checked before anything is built: a CR, LF, other control character or
+U+2028/2029 is `header_injection`; an address must be exactly one
+`Name <local@domain>` or `local@domain` (ASCII, dotted domain; one per
+list entry, so `"a@x.example, b@y.example"` in one string is refused, not
+split); an empty subject or recipient list is refused. Each issue points at
+its argument (`/subject`, `/recipients/1`). Non-ASCII subjects and display
+names are written as RFC 2047 encoded words.
+
+**Previewing.** `write_eml` writes the message as sent; open the `.eml`
+in Thunderbird, Apple Mail or Outlook (double-click, or drag it into the
+client) to see it as a recipient would, images included. Python's own
+parser reads it back (`email.message_from_bytes(..., policy=policy.default)`).
+`examples/weekly_briefing.py` builds a whole briefing for a fictional
+company, prints the gate verdict and writes `briefing.eml`, plus
+`briefing.html` and its PNGs for a browser (narrow the window to 360 px).
+
+**Known client caveats** (from the sections above; not yet confirmed in
+real-client screenshots, follow-up 7): Outlook for Windows ignores
+`max-width` on images and lays tiles out without `inline-block`
+(they stack); Gmail with non-Google accounts and Outlook for Windows ignore
+media queries (none are used); dark-mode clients may invert the page but not
+the images, which stay light cards; Gmail clips HTML over about 102 KB (the
+gate refuses that, `email_clipped_by_gmail`); images may be blocked until
+the reader allows them, so the `alt` text and the plain-text part carry the
+values. A KPI delta in `%` units is the difference of the two values
+(percentage points), written with `%`.
+
 ## Measured in this slice
 
 `examples/mobile_gallery.py` renders every template and gallery view at both
@@ -300,7 +363,7 @@ These are layout improvements; the gate already refuses each case.
 6. Annotations that cannot wrap at the right edge: move them left of their
    anchor instead of reporting them clipped.
 7. Ghost tables (`<!--[if mso]>`) so Outlook for Windows shows tiles side by
-   side on desktop; MIME assembly helper; real-client screenshots (Litmus /
+   side on desktop; real-client screenshots (Litmus /
    Email on Acid) before relying on the email layout in production.
 8. A text summary visible under each figure (not only `alt`), for clients
    that block images and do not show `alt`.

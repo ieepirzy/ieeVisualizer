@@ -19,13 +19,18 @@ inline SVG or ``data:`` image, so this output differs from ``render_view(...,
 * a table too wide for the narrowest screen is written as one card per row
   (every cell, whole) and says so, instead of being cut or scrolled;
 * ``color-scheme: light`` asks clients that honour it not to recolour; the
-  images carry their own opaque background either way.
+  images carry their own opaque background either way;
+* ``EmailRender.text`` says the same in plain text (headline, every KPI line
+  exactly as written, every table cell, each figure's text alternative, each
+  flow's text version) for the ``text/plain`` part of the message
+  (:func:`ieeVisualizer.view.message.build_message`).
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
+import textwrap
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -49,7 +54,7 @@ from .layout import (
 from .limits import MAX_PNG_PIXELS, MAX_PNG_SIDE_PX
 from .model import Card, FigureComponent, Flow, Grid, Kpi, Node, Note, Stack, Table, Text, ViewSpec
 from .render import label_glyphs
-from .text import NO_DATA, NULL_CELL
+from .text import NO_DATA, NULL_CELL, parse_markdown
 from .validate import errors
 
 #: A language tag (BCP 47 shape: letters, then ``-`` subtags); no spaces or CR/LF.
@@ -89,16 +94,21 @@ TABLE = ('role="presentation" width="100%" cellpadding="0" cellspacing="0" borde
          'style="width:100%;')
 #: Smallest slot (CSS px) a component may get on the narrowest screen.
 MIN_EMAIL_SLOT = 120.0
+#: Plain-text lines are wrapped at spaces to this many characters (RFC 5322
+#: recommends 78); a longer word (a URL) is never split.
+TEXT_WIDTH = 76
 
 
 @dataclass
 class EmailRender:
-    """``html`` plus the images it references (``{name: PNG bytes}``)."""
+    """``html`` plus the images it references (``{name: PNG bytes}``) and
+    ``text``, the same content as plain text."""
 
     html: str
     images: dict[str, bytes] = field(default_factory=dict)
     warnings: list[RenderWarning] = field(default_factory=list)
     profile: str = ""
+    text: str = ""
 
 
 class _Email:
@@ -109,6 +119,15 @@ class _Email:
         self.warnings: list[RenderWarning] = []
         self.min = profile.min_html_text_px
         self.path = ""
+        self.text: list[str] = []  # plain-text blocks, in reading order
+
+    def say(self, *lines: str, indent: str = "") -> None:
+        """A plain-text block: each line wrapped at spaces, never inside a word."""
+        out = []
+        for line in lines:
+            out += textwrap.wrap(line, TEXT_WIDTH, subsequent_indent=indent,
+                                 break_long_words=False, break_on_hyphens=False) or [""]
+        self.text.append("\n".join(out))
 
     def px(self, size: float) -> float:
         return max(size, self.min)
@@ -124,6 +143,8 @@ class _Email:
                 f"{max(lo, 0):.0f} px; the minimum is {MIN_EMAIL_SLOT:g} px. Nest fewer cards "
                 "or columns."))])
         if isinstance(n, Card):
+            if n.title:
+                self.say(n.title.upper())
             body = "".join(self.block(self.node(c, ptr_join(path, "children", i), lo - 26,
                                                 hi - 26))
                            for i, c in enumerate(n.children))
@@ -137,8 +158,10 @@ class _Email:
             return self.figure(n, path, lo, hi)
         if isinstance(n, Text):
             size, lh, bold, color = TEXT_STYLES.get(n.style, TEXT_STYLES["body"])
+            self.say_prose(n.text)
             return self.prose(n.text, self.px(size), color, bold)
         if isinstance(n, Note):
+            self.say_prose(("" if n.type == "footnote" else "Caveat: ") + n.text)
             if n.type == "footnote":
                 return (f'<div style="border-top:1px solid {LINE};padding-top:6px">'
                         f'{self.prose(n.text, self.px(12), MUTED)}</div>')
@@ -151,6 +174,14 @@ class _Email:
         if isinstance(n, Table):
             return self.table(n, path, lo)
         return self.flow(n, path, lo)
+
+    def say_prose(self, text: str) -> None:
+        for kind, runs in parse_markdown(text):
+            line = "".join(r.text for r in runs)
+            if kind == "li":
+                self.say("- " + line, indent="  ")
+            else:
+                self.say(line)
 
     def block(self, inner: str) -> str:
         return f'<div style="margin:0 0 16px 0">{inner}</div>\n'
@@ -205,6 +236,7 @@ class _Email:
                 "a light theme for email.", pointer + "/theme"))
         alt = ". ".join(x for x in (spec.title or "Figure", figure_summary(spec, self.resolver))
                         if x)
+        self.say(f"[Figure: {alt}]")
         return self.image(f"figure-{len(self.images)}.png", result.content, hi, alt)
 
     def kpi(self, n: Kpi, lo: float) -> str:
@@ -212,6 +244,9 @@ class _Email:
         iw = room / SLACK
         variants = _kpi_variants(n)
         small = tuple(s for s in KPI_SMALL_SIZES if s >= self.min)
+        exact = variants[0][0]
+        self.say(f"{n.label}: {exact[0]}", *([f"  {exact[1]}"] if exact[1] else []),
+                 *([f"  Source: {n.source}"] if n.source else []), indent="  ")
         if n.value is None:
             value = (f'<div style="{FONT}font-size:22px;font-style:italic;color:{MUTED};'
                      f'margin:4px 0">{NO_DATA}</div>')
@@ -278,6 +313,11 @@ class _Email:
         cap = (f'<div style="{FONT}font-size:{self.px(15):g}px;font-weight:bold;color:{INK};'
                f'margin:0 0 6px 0">{esc(n.title)}</div>' if n.title else "")
         parts = [cap]
+        if n.title:
+            self.say(n.title.upper())
+        for r in rows:  # one block per row, one "header: value" line per cell
+            self.say(*(("- " if i == 0 else "  ") + f"{h}: {c}"
+                       for i, (h, c) in enumerate(zip(heads, r))), indent="    ")
         if want <= lo:
             th = "".join(f'<th align="{"right" if num[i] else "left"}" style="{cell}'
                          f'background:#eaeef2;color:{INK}">{esc(h)}</th>'
@@ -317,6 +357,7 @@ class _Email:
                              f'line-height:1.45">{fields}</div></div>\n')
             parts.append(f'<div style="font-size:0;line-height:0">{"".join(cards)}</div>')
         if len(rows) < total:
+            self.say(f"Showing {len(rows)} of {total} rows")
             parts.append(f'<div style="{FONT}font-size:{self.min:g}px;color:{MUTED}">'
                          f"Showing {len(rows)} of {total} rows</div>")
         return "".join(parts)
@@ -347,6 +388,9 @@ class _Email:
                 f'<ol style="margin:4px 0 0 0;padding-left:22px">{lis}</ol></div>')
         img = self.image(f"flow-{len(self.images)}.png", png, w,
                          (f.title or "Flow diagram") + " (text version below)")
+        self.say(f"[Flow diagram: {f.title or 'untitled'}]", *([f.description] if f.description
+                                                               else []),
+                 *flow_outline(f2, order), indent="   ")
         return title + img + text
 
 
@@ -389,6 +433,9 @@ def render_email(view: ViewSpec, profile: str = "email-phone", *,
         f'border="0" style="width:100%;max-width:{COLUMN}px"><tr><td align="left">'
         f"{title}\n{body}</td></tr></table>\n</td></tr></table>\n</body>\n</html>\n")
     html = "\n".join(_short_lines(line) for line in html.split("\n"))
+    if view.title:
+        e.text.insert(0, view.title + "\n" + "=" * min(len(view.title), TEXT_WIDTH))
+    text = "\n\n".join(e.text) + "\n"
     if not prof.narrow:
         e.warnings.append(RenderWarning(
             "email_not_phone_safe",
@@ -402,7 +449,8 @@ def render_email(view: ViewSpec, profile: str = "email-phone", *,
             f"the email HTML is {size // 1024} KB; Gmail hides everything after about "
             f"{GMAIL_CLIP_BYTES // 1024} KB behind 'View entire message'. Split the view or "
             "show fewer table rows.", ""))
-    return EmailRender(html=html, images=e.images, warnings=e.warnings, profile=prof.name)
+    return EmailRender(html=html, images=e.images, warnings=e.warnings, profile=prof.name,
+                       text=text)
 
 
 def _short_lines(line: str) -> str:
