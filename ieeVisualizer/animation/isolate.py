@@ -337,11 +337,14 @@ def _kill(proc) -> None:
 
 def _types() -> dict[str, type]:
     """The classes a worker's answer may contain."""
+    from ..artifacts.manifest import DatasetRecord, FileEntry, RenderVariant
     from ..spec import FigureSpec, ValidationIssue
     from .base import AnimationRequest, AnimationResult
+    from .export import AnimationArtifact
 
     return {c.__name__: c for c in (AnimationResult, AnimationRequest, RenderWarning,
-                                    ValidationIssue, FigureSpec)}
+                                    ValidationIssue, FigureSpec, AnimationArtifact,
+                                    FileEntry, RenderVariant, DatasetRecord)}
 
 
 def _encode(obj: Any, blobs: list[bytes], types: dict[str, type]) -> Any:
@@ -510,8 +513,10 @@ def _main(out: int) -> None:
     deadline.report = lambda d: send(_message("progress", phase=d.phase,
                                               counts=dict(d.progress)))
     try:
-        from .base import render_inline as run
-
+        if task == "render":
+            from .base import render_inline as run
+        else:
+            from .export import build as run
         msg = _message("ok", run(**payload, deadline=deadline))
     except BaseException as e:  # noqa: BLE001 - every failure goes back to the caller
         msg = _message("error", error=_error_dict(e))

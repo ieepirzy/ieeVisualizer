@@ -9,12 +9,14 @@ import matplotlib.
 
 ```python
 from ieeVisualizer.animation import (AnimationSpec, ParameterSweep, FrameColumn,
-                                     AnimationRequest, render_animation)
+                                     AnimationRequest, render_animation, export_animation)
+from ieeVisualizer.artifacts import LocalDirectoryWriter
 
 anim = AnimationSpec(figure=fig, fps=12, hold_end=6,
                      timeline=ParameterSweep(parameter="phase", start=0, end=6.283, duration=2))
 result = render_animation(anim, AnimationRequest(format="gif", width=480, height=320,
-                                                 units="px"), deadline=60)
+                                                 units="px"))
+artifact = export_animation(anim, ["gif"], LocalDirectoryWriter("out"), deadline=60)
 ```
 
 ## The spec
@@ -61,7 +63,7 @@ appearance. State *k* shows the rows whose value is the *k*-th
 (`current`), any of the first *k* (`cumulative`) or the last `window` values
 (`window`). Other datasets are drawn unchanged in every frame. Rows with no
 frame value appear in no frame (`frame_value_missing` warning). A `DatasetRef`
-is resolved once per `render_animation` call, through
+is resolved once per `render_animation` (or `export_animation`) call, through
 `resolver=` (equal references are one dataset), before
 frames are cut; the frame, duration and poster guards are checked against the
 resolved count before any frame is built (validation can only check the hold
@@ -102,30 +104,33 @@ every dimension it does not model can make it wrong by orders of magnitude
 
 ## Deadline
 
-`render_animation` takes `deadline=` (seconds, or a
+`render_animation` and `export_animation` take `deadline=` (seconds, or a
 `Deadline` to share; default `DEFAULT_DEADLINE_S` = 60) and
 `isolation=` (`"process"` by default where it can run;
 `$IEEVISUALIZER_ANIMATION_ISOLATION` changes the default). With `"process"`
 references are resolved in the caller and only the data cell cap is checked
 there, from column lengths (O(columns)), before anything is serialised; the
 spec is validated and hashed once, in the worker. Then the render
-runs in a fresh worker interpreter (`ieeVisualizer.animation.isolate`);
+or export runs in a fresh worker interpreter (`ieeVisualizer.animation.isolate`);
 phase and progress stream back, and at the deadline the worker's whole
 process group (ffmpeg included) is killed and its temporary directory
 removed. The deadline is then a wall-clock bound: **overrun at most
-`ISOLATION_SLACK_S` = 1 s** (measured 5-6 ms over 1, 2 and 5 s deadlines).
+`ISOLATION_SLACK_S` = 1 s** (measured 5-6 ms over 1, 2 and 5 s deadlines for GIF, MP4 and GIF + MP4
+exports, and for an ffmpeg that blocks the frame pipe).
 Starting a worker costs about 0.9 s, inside the deadline, so a deadline of
 about 1 s can expire while the worker starts; concurrent renders each pay it,
 and at most `$IEEVISUALIZER_ANIMATION_WORKERS` (default: the CPU count)
 workers run at once per process (a value that is not a positive integer is
 `invalid_setting`), a render waiting for a slot waiting inside its own
 deadline. A worker also cannot leave Matplotlib's global state
-changed.
+changed. The writer of an export runs in the caller, after the deadline is
+checked once more.
 
 **Where process isolation runs:** POSIX systems with a real Python
 interpreter as `sys.executable`. On Windows, in a frozen application, or
 with an empty or non-executable `sys.executable` the default is inline and
-the result carries a `deadline_best_effort` warning; asking for
+the result (each variant of an export) carries a `deadline_best_effort`
+warning; asking for
 `isolation="process"` there raises `isolation_unavailable`. Adapters,
 registries and resolvers sent to the worker must be importable by module
 name: one defined in a script's or notebook's `__main__` is refused
@@ -148,7 +153,8 @@ temporary directory when the caller exits or is killed (SIGKILL included).
 runs in the caller with cooperative checks only, between pipeline phases
 (validate, prepare, plan, parse, limits, draw, encode) and before every
 state and frame: best effort, for tests and debugging. One step that holds
-the GIL (a draw, a SymPy build, the GIF write) overruns it. A render that
+the GIL (a draw, a SymPy build, the GIF write, a pipe write to an ffmpeg
+that stopped reading) overruns it. A render that
 ran inline for any reason (asked for, by argument or environment, or the
 fallback) carries a `deadline_best_effort` warning saying why, and
 `AnimationResult.isolation` is `"inline"` (`"process"` from a worker; an
@@ -171,15 +177,16 @@ characters; a template's data columns are charged in the estimate.
 
 **Per-step work** is what the state changes: undrawn datasets are dropped
 once, a mark sweep shares the data, each expression is built once per
-render, a frame column reads each row's frame value once, and the poster is
-kept as drawn.
+render, a frame column reads each row's frame value once, the data is
+validated once per export, and the poster is kept as drawn.
 
 **Memory.** Frames are streamed (one RGB frame exists at a time). A GIF
 keeps one palette byte per output-frame pixel, which Pillow's writer copies
-once. Peak RSS above the interpreter's is about
+once; an MP4 keeps nothing. Peak RSS above the interpreter's is about
 2 bytes x `MAX_TOTAL_PIXELS` + one frame being drawn (about 45 bytes per
 pixel): measured +303 MB for 120 frames of 1000 x 1000
-px, +635 MB for 14 frames of 3840 x 2160 px (the worst case).
+px (GIF), +635 MB for 14 frames of 3840 x 2160 px (GIF, the worst case),
++147 MB for the 120-frame MP4.
 
 ## Matplotlib adapter (`matplotlib-animation`)
 
@@ -215,6 +222,32 @@ frame with the state label, in the render's theme (`frame_no_data`).
 timestamps; bytes are identical across runs. Delays are stored in 10 ms
 steps (`frame_timing_rounded`); Pillow merges identical consecutive frames,
 so a decoder may count fewer frames than `frame_count` (same duration).
+
+**MP4** needs `ffmpeg` (`$IEEVISUALIZER_FFMPEG` or on `PATH`); without it
+`mp4` is not in `capabilities.output_formats` and a request is refused
+(`format_unavailable` / `CapabilityError`), never turned into a GIF. Frames
+are streamed to ffmpeg's stdin under the deadline (its `phase` says whether
+a frame was being drawn, ffmpeg had stopped reading, or had every frame but
+did not finish); ffmpeg failing or exiting 0 without a file is
+`encoder_failed`. libx264 (`-threads 1`, bitexact, yuv420p, odd sizes
+padded: `frame_size_padded`) or MPEG-4 part 2; byte reproducibility depends
+on the ffmpeg build and is not promised.
+
+## Export
+
+`export_animation(anim, formats, writer, *, resolver, clock, request, name,
+registry, deadline)` resolves each reference once for the whole export and
+renders every format under one deadline (the Matplotlib adapter draws every
+state once and streams the frames to the GIF and MP4 encoders together),
+then writes `animation.<fmt>`, `poster.png`, `animation.json` and
+`manifest.json` last; a failure, a deadline included, writes nothing. The
+poster is frame `poster_frame` as the adapter drew it (for Matplotlib, the
+poster state's still), recorded with that adapter. The manifest
+(`AnimationArtifact`) records the artifact id, `animation_hash`,
+`figure_spec_hash`, timeline, frame and state counts, timing, every state
+and the state of every frame, dataset provenance (for a template sweep, the
+poster state's generated data), each variant with adapter, request and
+warnings, library versions and `created_at`.
 
 ## Tests
 
