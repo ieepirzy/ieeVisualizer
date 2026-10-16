@@ -174,20 +174,27 @@ fallback) and each character is looked up in those fonts (`get_char_index`).
 Only " " and "\n" are skipped: tabs, carriage returns (a stray CSV "\r"),
 other controls and other spaces are looked up like any character, because Agg
 draws them as boxes when the font lacks them. With text shaping (matplotlib
-3.11+, HarfBuzz) a lacking default-ignorable (U+200B, U+200D, U+FE0F, ...)
-draws nothing and a lacking fallback space (U+00A0, U+2000-200A, U+202F,
+3.11+, HarfBuzz) a lacking default-ignorable (U+200B, U+200D, U+FE0F, ...;
+not the Hangul fillers U+115F, U+1160, U+3164, U+FFA0, nor U+180F or
+U+1BCA0-1BCA3, which HarfBuzz still draws as boxes) draws nothing and a lacking fallback space (U+00A0, U+2000-200A, U+202F,
 U+205F, U+3000) draws a space, so those are not reported there; before 3.11
 they are boxes and are. Mathtext is parsed by Matplotlib's mathtext parser:
 more dummy glyphs (¤) than the text itself holds means a character is
-missing; the parser's own "does not have a glyph" log records are filtered
-on that one logger during the parse. View PNG labels and email flows are
+missing. The parser's own "does not have a glyph" log records are filtered
+on that one logger, for the checking thread only, during the parse.
+Matplotlib's shared mathtext parser is not thread-safe, so the checker's
+parses are serialised behind a lock and retried once; if a parse still fails
+after the draw succeeded (another thread's draw racing it), the text is
+reported unchecked as gating `glyph_check_failed` - the check fails closed. View PNG labels and email flows are
 checked with the exact font the PNG draws them in. The answer depends only on
-the text and its font, so the host's logging or warnings configuration and
-concurrent renders cannot change it. `tests/render/test_glyph_truth.py`
+the text and its font, so the host's logging or warnings configuration
+cannot change it; concurrent renders cannot make it pass a text it should
+refuse (at worst they turn a mathtext answer into `glyph_check_failed`). `tests/render/test_glyph_truth.py`
 checks it against pixels: each character drawn alone is compared with how the
 running matplotlib draws a missing glyph (LastResort box on 3.11+, .notdef
-before), for several fonts and the three mathtext font sets; CI runs it on
-matplotlib 3.6.3 (the declared floor), 3.9 and 3.11. SVG and HTML text is
+before), for several fonts and the three mathtext font sets. CI runs it on
+whatever matplotlib the 3.9 and 3.12 jobs install (the latest release for
+each Python: 3.9.4 and 3.11.x today) and on the 3.6.3 floor job. SVG and HTML text is
 left to the reader's fonts and not checked. A pipeline that must not
 send an illegible or incomplete report calls it on every output. The tests
 check the property it protects: for every template at every profile, each
@@ -258,7 +265,11 @@ there; locally they skip with the reason when no browser is available.
 a `git archive` of main per matplotlib version
 (`tests/render/data/record_main_hashes.py`, which says how to re-record). CI
 sets `IEEV_REQUIRE_MAIN_HASHES=1`, so an unrecorded matplotlib version fails
-there instead of skipping.
+there instead of skipping. That is by design: a new matplotlib release
+changes the bytes, and the test fails until its hashes are recorded. To
+re-record, export main (`git archive origin/main | tar -x -C /tmp/main`) and
+run `PYTHONPATH=/tmp/main python tests/render/data/record_main_hashes.py`
+with the new matplotlib; commit the updated `main_render_hashes.json`.
 
 ## Measured in this slice
 

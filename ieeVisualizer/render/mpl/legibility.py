@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -421,11 +422,13 @@ _LAID_OUT_AS_SPACE = frozenset(" \n")
 #: each is drawn as an empty box like any other. The pixel ground-truth test
 #: (tests/render/test_glyph_truth.py) checks both on the running version.
 _DEFAULT_IGNORABLE = ((0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C),
-                      (0x115F, 0x1160), (0x17B4, 0x17B5), (0x180B, 0x180F),
+                      (0x17B4, 0x17B5), (0x180B, 0x180E),
                       (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F),
-                      (0x3164, 0x3164), (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF),
-                      (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3),
-                      (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF))
+                      (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF),
+                      (0xFFF0, 0xFFF8), (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF))
+# Not here although Default_Ignorable: the Hangul fillers U+115F, U+1160,
+# U+3164, U+FFA0, U+180F and the shorthand format controls U+1BCA0-1BCA3 -
+# HarfBuzz draws them as the missing-glyph box (pixel-verified).
 
 
 def _shapes_text() -> bool:
@@ -459,11 +462,43 @@ def _font_paths(prop: Any) -> list[str]:
 
 
 class _NoGlyphLog(logging.Filter):
-    """Drops mathtext's own "does not have a glyph" records while the
-    checker parses (the check reports them itself)."""
+    """Drops mathtext's own "does not have a glyph" records emitted by the
+    checking thread while it parses (the check reports them itself); other
+    threads' records, e.g. of a draw running at the same time, pass."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.thread = threading.get_ident()
 
     def filter(self, record: logging.LogRecord) -> bool:
-        return "does not have a glyph" not in record.getMessage()
+        return (record.thread != self.thread
+                or "does not have a glyph" not in record.getMessage())
+
+
+#: matplotlib's mathtext parser (pyparsing) is shared and not thread-safe;
+#: the checker's own parses are serialised.
+_MATH_LOCK = threading.Lock()
+
+
+class GlyphCheckFailed(Exception):
+    """The checker could not parse a mathtext string the draw did render."""
+
+
+def _parse_math(text: str, prop: Any) -> Any:
+    from matplotlib.mathtext import MathTextParser
+
+    log, quiet = logging.getLogger("matplotlib.mathtext"), _NoGlyphLog()
+    with _MATH_LOCK:
+        log.addFilter(quiet)  # only that logger, only this thread, only now
+        try:
+            for attempt in (1, 2):  # a draw on another thread can still race
+                try:
+                    return MathTextParser("path").parse(text, 72, prop)
+                except ValueError:
+                    if attempt == 2:
+                        raise GlyphCheckFailed(text) from None
+        finally:
+            log.removeFilter(quiet)
 
 
 def missing_glyphs_in(text: str, prop: Any, math: bool = False) -> str:
@@ -474,16 +509,7 @@ def missing_glyphs_in(text: str, prop: Any, math: bool = False) -> str:
     parser, and a substituted dummy glyph beyond the ``¤`` the text itself
     holds means a character is missing."""
     if math:
-        from matplotlib.mathtext import MathTextParser
-
-        log, quiet = logging.getLogger("matplotlib.mathtext"), _NoGlyphLog()
-        log.addFilter(quiet)  # only that logger, only during the parse
-        try:
-            parsed = MathTextParser("path").parse(text, 72, prop)
-        except ValueError:  # malformed mathtext fails the draw itself
-            return ""
-        finally:
-            log.removeFilter(quiet)
+        parsed = _parse_math(text, prop)  # GlyphCheckFailed: fail closed
         drawn = [chr(g[2]) for g in parsed.glyphs]
         if drawn.count(_MATH_DUMMY) > text.count(_MATH_DUMMY):
             have = set(drawn)
@@ -519,13 +545,25 @@ def figure_glyphs(fig: Any) -> list[RenderWarning]:
     from matplotlib import cbook
     from matplotlib.text import Text
 
-    found = []
+    found, failed = [], []
     for t in fig.findobj(Text):
         s = t.get_text()
         if not (t.get_visible() and s.strip()):
             continue
         math = t.get_parse_math() and cbook.is_math_text(s)
-        m = missing_glyphs_in(s, t.get_fontproperties(), math)
+        try:
+            m = missing_glyphs_in(s, t.get_fontproperties(), math)
+        except GlyphCheckFailed:
+            failed.append(s)
+            continue
         if m:
             found.append((s, m))
-    return glyph_warning(found)
+    out = glyph_warning(found)
+    if failed:  # fail closed: an unchecked text is not reported as fine
+        out.append(RenderWarning(
+            "glyph_check_failed",
+            f"{len(failed)} mathtext text(s) were drawn but could not be checked for missing "
+            "glyphs (the shared mathtext parser failed twice, e.g. under concurrent "
+            "renders): " + ", ".join(repr(x[:40]) for x in failed[:_MAX_EXAMPLES])
+            + ". Render again, one figure at a time.", ""))
+    return out
