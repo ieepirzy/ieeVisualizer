@@ -202,7 +202,8 @@ def apply_legend(ctx: DrawContext) -> None:
     if not handles:
         return
     labelled_roles = any(m.role != "observed" for m in spec.layers)
-    if len(handles) < 2 and not spec.legend.title and not labelled_roles:
+    if len(handles) < 2 and not spec.legend.title and not labelled_roles \
+            and not ctx.interval_labels:
         return  # a single unqualified series: the axis label already names it
     kw: dict[str, Any] = {"title": spec.legend.title}
     if spec.legend.position == "outside-right":

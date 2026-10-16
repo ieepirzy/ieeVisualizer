@@ -42,9 +42,11 @@ from ieeVisualizer.render import RenderRequest
 from ieeVisualizer.spec import (
     AreaMark,
     Axis,
+    BandMark,
     BarMark,
     DataSnapshot,
     Encoding,
+    ErrorbarMark,
     FigureSpec,
     FunctionMark,
     HeatmapMark,
@@ -193,6 +195,100 @@ def mark_function() -> FigureSpec:
     )
 
 
+def _quantile_fan() -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    """Synthetic forecast quantiles that widen with the horizon (a formula,
+    not a model): median 20 + 0.5 h, half-width z_q * (1 + 0.15 h)."""
+    h = np.arange(0.0, 25.0, 1.0)
+    mid, spread = 20.0 + 0.5 * h, 1.0 + 0.15 * h
+    cols = {"h": h, "median": mid}
+    for name, z in (("q05", -1.645), ("q25", -0.674), ("q75", 0.674), ("q95", 1.645)):
+        cols[name] = mid + z * spread
+    return h, cols
+
+
+def mark_band() -> FigureSpec:
+    _, cols = _quantile_fan()
+    unit = {k: "°C" for k in cols}
+    unit["h"] = "h"
+    return FigureSpec(
+        title="band: 50 % and 90 % quantile intervals (fan)",
+        caption="Synthetic quantiles from a formula; drawn as given, not computed.",
+        datasets={"d": _snap(cols, units=unit)},
+        layers=[
+            BandMark(data="d", encoding={"x": "h", "y_lower": "q05", "y_upper": "q95"},
+                     interval_kind="quantile", interval_level=0.9, role="forecast",
+                     style={"color_of": "median"}),
+            BandMark(data="d", encoding={"x": "h", "y_lower": "q25", "y_upper": "q75"},
+                     interval_kind="quantile", interval_level=0.5, role="forecast",
+                     style={"color_of": "median"}),
+            LineMark(data="d", encoding={"x": "h", "y": "median"}, name="median",
+                     role="forecast"),
+        ],
+        axes={"x": Axis(label="Horizon"), "y": Axis(label="Temperature")},
+    )
+
+
+def mark_errorbar() -> FigureSpec:
+    rng = np.random.default_rng(3)
+    dose = np.array([0.5, 1.0, 2.0, 4.0, 8.0])
+    mean = 10.0 * dose / (1.5 + dose) + rng.normal(0, 0.2, dose.size)
+    se = np.array([0.6, 0.5, 0.45, 0.5, None], dtype=object)  # last: SE not available
+    lo = [None if s is None else m - s for m, s in zip(mean, se)]
+    hi = [None if s is None else m + s for m, s in zip(mean, se)]
+    return FigureSpec(
+        title="errorbar: mean ±1 SE (one SE missing: no bar there)",
+        datasets={"d": _snap({"dose": dose, "mean": mean, "lo": lo, "hi": hi},
+                             units={"dose": "mg", "mean": "mmol/l", "lo": "mmol/l",
+                                    "hi": "mmol/l"})},
+        layers=[ErrorbarMark(data="d", name="mean of 8 samples",
+                             encoding={"x": "dose", "y": "mean", "y_lower": "lo",
+                                       "y_upper": "hi"},
+                             interval_kind="standard-error", interval_multiplier=1.0)],
+        axes={"x": Axis(label="Dose", scale="log"), "y": Axis(label="Response")},
+    )
+
+
+def interval_marks() -> dict[str, FigureSpec]:
+    """y_lower / y_upper on a line (band), a scatter and a bar (error bars)."""
+    _, cols = _quantile_fan()
+    keep = ("h", "median", "q05", "q95")
+    line = FigureSpec(
+        title="line with y_lower/y_upper: 90 % prediction interval",
+        datasets={"d": _snap({k: cols[k] for k in keep},
+                             units={k: "h" if k == "h" else "°C" for k in keep})},
+        layers=[LineMark(data="d", name="forecast", role="forecast",
+                         encoding={"x": "h", "y": "median", "y_lower": "q05", "y_upper": "q95"},
+                         interval_kind="prediction", interval_level=0.9)],
+        axes={"x": Axis(label="Horizon"), "y": Axis(label="Temperature")},
+    )
+    rng = np.random.default_rng(5)
+    x = np.linspace(1.0, 9.0, 9)
+    y = 1.5 * x + rng.normal(0, 1.0, x.size)
+    scatter = FigureSpec(
+        title="scatter with y_lower/y_upper: min-max of 5 runs",
+        datasets={"d": _snap({"load": x, "t": y, "t_min": y - 0.8 - 0.1 * x,
+                              "t_max": y + 0.6 + 0.1 * x},
+                             units={"load": "kN", "t": "ms", "t_min": "ms", "t_max": "ms"})},
+        layers=[ScatterMark(data="d", name="median of 5 runs",
+                            encoding={"x": "load", "y": "t", "y_lower": "t_min",
+                                      "y_upper": "t_max"},
+                            interval_kind="min-max")],
+        axes={"x": Axis(label="Load"), "y": Axis(label="Latency")},
+    )
+    bar = FigureSpec(
+        title="bar with y_lower/y_upper: 95 % credible interval",
+        datasets={"d": _snap({"site": ["north", "south", "east", "west"],
+                              "rate": [12.4, 9.8, None, 15.1],
+                              "lo": [10.9, 8.1, 7.0, 13.2], "hi": [14.0, 11.6, 12.5, 17.2]},
+                             units={"rate": "%", "lo": "%", "hi": "%"})},
+        layers=[BarMark(data="d", name="posterior mean",
+                        encoding={"x": "site", "y": "rate", "y_lower": "lo", "y_upper": "hi"},
+                        interval_kind="credible", interval_level=0.95)],
+        axes={"x": Axis(label="Site"), "y": Axis(label="Defect rate")},
+    )
+    return {"interval-line": line, "interval-scatter": scatter, "interval-bar": bar}
+
+
 MARKS = {
     "mark-line": mark_line,
     "mark-scatter": mark_scatter,
@@ -202,6 +298,8 @@ MARKS = {
     "mark-heatmap": mark_heatmap,
     "mark-quiver": mark_quiver,
     "mark-function": mark_function,
+    "mark-band": mark_band,
+    "mark-errorbar": mark_errorbar,
 }
 
 
@@ -221,7 +319,7 @@ def template_specs() -> dict:
 
 #: Themes the reporting templates are also shown in (entry suffix -> theme).
 THEMED = {"report-light": "report-light", "dashboard-dark": "dashboard-dark"}
-THEMED_TEMPLATES = ("bar_comparison", "funnel", "timeseries")
+THEMED_TEMPLATES = ("bar_comparison", "estimate_comparison", "funnel", "timeseries")
 
 
 def themed_specs() -> dict[str, FigureSpec]:
@@ -310,6 +408,7 @@ def network_specs() -> dict[str, NetworkSpec]:
 
 def all_specs() -> dict:
     specs = {name: build() for name, build in MARKS.items()}
+    specs.update(interval_marks())
     specs.update(template_specs())
     specs.update(themed_specs())
     specs.update(legacy_specs())

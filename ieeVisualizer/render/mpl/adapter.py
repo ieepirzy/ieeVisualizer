@@ -35,7 +35,7 @@ from ..base import (
 from ..prepare import PreparedSpec, prepare
 
 ADAPTER_NAME = "matplotlib"
-ADAPTER_VERSION = "1.0.0"
+ADAPTER_VERSION = "1.1.0"  # 1.1.0: band and errorbar marks, interval encodings
 #: Salt for SVG element ids; fixed so ids (and therefore bytes) are stable.
 SVG_HASHSALT = "ieeVisualizer"
 
@@ -49,6 +49,7 @@ CAPABILITIES = Capabilities(
     vector_export=True,
     max_points=1_000_000,
     max_bins=10_000,
+    intervals=True,
 )
 
 
@@ -220,6 +221,7 @@ class MatplotlibAdapter:
 
         from .data import infer_axes
         from .decorate import apply_annotations, apply_axes, apply_caption, apply_legend
+        from .intervals import caption_with_intervals
         from .marks import DRAW, DrawContext, fit_value_labels, report_bar_overlaps
 
         spec = prepared.spec
@@ -241,7 +243,8 @@ class MatplotlibAdapter:
             cap["color"] = theme.muted
         if theme is not None and theme.typography.caption:
             cap["fontsize"] = theme.typography.caption
-        caption = apply_caption(fig, spec.caption, figsize[1], figsize[0], **cap)
+        text = caption_with_intervals(spec.caption, spec.legend.show, ctx.interval_labels)
+        caption = apply_caption(fig, text, figsize[1], figsize[0], **cap)
         # Value labels are fitted by the layout engine on every draw, so they
         # are already inside the (widened) axes when the legend pass below
         # lays the figure out to measure it: an "auto" legend that would

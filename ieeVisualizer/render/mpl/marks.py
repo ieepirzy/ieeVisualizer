@@ -62,6 +62,8 @@ class DrawContext:
     #: arranges them after layout (see :mod:`.value_labels`).
     value_labels: list[ValueLabel] = field(default_factory=list)
     no_data_notes: list[NoDataNote] = field(default_factory=list)
+    #: What each drawn interval is ("95 % prediction interval"), in order.
+    interval_labels: list[str] = field(default_factory=list)
     #: Category-axis centres of every bar and bar-less slot, by value channel.
     bar_centres: dict[str, np.ndarray] = field(default_factory=dict)
     #: Every drawn bar group (:func:`report_bar_overlaps`), the layers found
@@ -208,7 +210,8 @@ class DrawContext:
         self.warnings.append(RenderWarning(code, message, path))
 
 
-_SERIES_COLOURED = ("line", "scatter", "area", "bar", "histogram", "function")
+_SERIES_COLOURED = ("line", "scatter", "area", "bar", "histogram", "function", "band",
+                    "errorbar")
 
 
 _WRAP_LINESTYLES = ("--", ":", "-.")
@@ -241,6 +244,8 @@ def _series_field(m: Mark) -> str:
         return m.encoding["x"].field
     if m.type == "bar" and getattr(m, "orientation", "vertical") == "horizontal":
         return m.encoding["x"].field
+    if "y" not in m.encoding:  # a band (or errorbar without a point): its bounds
+        return f"{m.encoding['y_lower'].field}|{m.encoding['y_upper'].field}"
     return m.encoding["y"].field
 
 
@@ -406,6 +411,9 @@ def draw_line(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
             artists += ctx.ax.plot(xs, ys, zs, **kw)
         else:
             artists += ctx.ax.plot(sub[0], sub[1], **kw)
+            if "y_lower" in m.encoding:
+                artists += _iv.line_band(ctx, i, m, x, idx, artists[-1].get_color(),
+                                         kw["label"], style)
     return artists
 
 
@@ -465,6 +473,10 @@ def draw_scatter(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         artists.append(art)
         if cont:
             _colorbar(ctx, art, m)
+        if "y_lower" in m.encoding:
+            artists += _iv.point_intervals(ctx, i, m, x[rows], rows,
+                                           kw.get("color", kw.get("edgecolors", "0.25")),
+                                           kw["label"], style)
     return artists
 
 
@@ -640,6 +652,9 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         if horizontal and slots > 1 and not _explicit_placement(style):
             ctx.dodged_horizontal.add(id(artists[-1]))
         _record_centres(ctx, val_ch, pp)
+        if "y_lower" in m.encoding:
+            ink = getattr(ctx.theme, "foreground", None) or "0.15"  # legible on any fill
+            artists += _iv.point_intervals(ctx, i, m, pp, idx[valid], ink, kw["label"], {})
         if labelled:
             labels = _value_labels(ctx, m, val_ch, pp, vv, horizontal)
             ctx.value_labels += [ValueLabel(a, val_ch, i, float(q), float(each), bool(v < 0),
@@ -1045,5 +1060,9 @@ DRAW = {
     "quiver": draw_quiver,
     "function": draw_function,
 }
+
+from . import intervals as _iv  # noqa: E402 - uses the helpers above
+
+DRAW.update(band=_iv.draw_band, errorbar=_iv.draw_errorbar)
 
 __all__ = ["DRAW", "DrawContext", "FORECAST_SUFFIX"]

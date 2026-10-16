@@ -8,8 +8,8 @@ expressions. See ``docs/TEMPLATES.md``.
 
     >>> from ieeVisualizer import templates
     >>> [t["name"] for t in templates.list_templates()]  # doctest: +NORMALIZE_WHITESPACE
-    ['bar_comparison', 'dependency_map', 'funnel', 'network', 'org_chart',
-     'timeseries', 'vector_field_2d']
+    ['bar_comparison', 'dependency_map', 'estimate_comparison', 'funnel', 'network',
+     'org_chart', 'timeseries', 'vector_field_2d']
     >>> spec = templates.get("vector_field_2d").build(u="-y", v="x", grid=5)
 """
 
@@ -27,18 +27,22 @@ from .base import (
     TemplateInputError,
     TemplateRegistryError,
 )
+from .estimate_comparison import EstimateComparisonTemplate
 from .funnel import FunnelTemplate
 from .registry import TemplateRegistry, parse_semver
 from .timeseries import TimeseriesTemplate
+from .timeseries_intervals import TimeseriesTemplate110
 from .vector_field import VectorField2DTemplate
 
 
 def _builtin_registry() -> TemplateRegistry:
     reg = TemplateRegistry()
     reg.register(TimeseriesTemplate())
+    reg.register(TimeseriesTemplate110())
     reg.register(VectorField2DTemplate())
     reg.register(BarComparisonTemplate())
     reg.register(FunnelTemplate())
+    reg.register(EstimateComparisonTemplate())
     # Network templates build a NetworkSpec (ieeVisualizer.network), not a
     # FigureSpec. Imported here, after .base, so either package can be
     # imported first.
@@ -85,12 +89,14 @@ __all__ = [
     "BarComparisonTemplate",
     "ColumnRequirement",
     "ComponentTemplate",
+    "EstimateComparisonTemplate",
     "FunnelTemplate",
     "Parameter",
     "TemplateInputError",
     "TemplateRegistry",
     "TemplateRegistryError",
     "TimeseriesTemplate",
+    "TimeseriesTemplate110",
     "VectorField2DTemplate",
     "build",
     "catalog",

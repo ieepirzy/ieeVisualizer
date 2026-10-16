@@ -55,6 +55,8 @@ APPLICABLE = {
     "histogram": {"color", "linewidth", "opacity", "color_of"},
     "heatmap": {"colormap", "opacity"},
     "quiver": {"color", "colormap", "opacity"},
+    "band": {"color", "opacity", "color_of"},
+    "errorbar": {"color", "linewidth", "marker", "opacity", "color_of"},
 }
 ANNOTATION_KEYS = {"color", "linewidth", "linestyle", "opacity"}
 
@@ -90,6 +92,8 @@ class Roles:
     reference_alpha: float = REFERENCE_ALPHA
     reference_fill_alpha: float = REFERENCE_ALPHA * 0.6
     reference_linewidth: float = 1.0
+    #: Opacity of one interval band (``roles.interval_fill_alpha`` of the theme).
+    interval_alpha: float = 0.25
 
 
 DEFAULT_ROLES = Roles()
@@ -119,7 +123,8 @@ def roles_for(theme: Theme | None) -> Roles:
                      ("reference_color", "reference_color"),
                      ("reference_alpha", "reference_alpha"),
                      ("reference_fill_alpha", "reference_fill_alpha"),
-                     ("reference_linewidth", "reference_linewidth")):
+                     ("reference_linewidth", "reference_linewidth"),
+                     ("interval_fill_alpha", "interval_alpha")):
         if getattr(r, src) is not None:
             kw[dst] = getattr(r, src)
     return Roles(**kw)
