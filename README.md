@@ -135,6 +135,13 @@ drawn by the static renderer, and exports with a poster PNG and a manifest.
 Every render and export runs under an enforced wall-clock deadline (60 s by
 default). See [docs/ANIMATION.md](docs/ANIMATION.md).
 
+## Agent skills library
+
+[`skills/`](skills/README.md) holds agent skills for honest figures and
+reports, packaged as a Claude Code plugin. The skill text under `skills/` is
+licensed CC BY 4.0 (with third-party portions under the licences listed in
+[`skills/NOTICE.md`](skills/NOTICE.md)); the code in this repository is MIT.
+
 ## Development priorities
 
 1. Make the existing Python/Matplotlib functions installable, tested and functional.

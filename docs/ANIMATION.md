@@ -106,18 +106,46 @@ every dimension it does not model can make it wrong by orders of magnitude
 
 `render_animation` and `export_animation` take `deadline=` (seconds, or a
 `Deadline` to share; default `DEFAULT_DEADLINE_S` = 60) and
-`isolation=` (`"process"` by default; `$IEEVISUALIZER_ANIMATION_ISOLATION`
-changes the default). With `"process"` the render or export runs in a fresh
-worker interpreter (`ieeVisualizer.animation.isolate`): the spec, request
-and data (references are resolved in the caller first) go in, phase and
-progress stream back, and at the deadline the worker's whole process group,
-ffmpeg included, is killed and its temporary directory removed. The deadline
-is then a wall-clock bound: **overrun at most `ISOLATION_SLACK_S` = 1 s**
-(measured 5-6 ms over 1, 2 and 5 s deadlines for GIF, MP4 and GIF + MP4
-exports, and for an ffmpeg that blocks the frame pipe). Starting a worker
-costs about 0.9 s, inside the deadline. A worker also cannot leave
-Matplotlib's global state changed. The writer of an export runs in the
-caller, after the deadline is checked once more.
+`isolation=` (`"process"` by default where it can run;
+`$IEEVISUALIZER_ANIMATION_ISOLATION` changes the default). With `"process"`
+the spec is validated and references are resolved in the caller (data over
+the caps is refused there, before anything is serialised), then the render
+or export runs in a fresh worker interpreter (`ieeVisualizer.animation.isolate`);
+phase and progress stream back, and at the deadline the worker's whole
+process group (ffmpeg included) is killed and its temporary directory
+removed. The deadline is then a wall-clock bound: **overrun at most
+`ISOLATION_SLACK_S` = 1 s** (measured 5-6 ms over 1, 2 and 5 s deadlines for GIF, MP4 and GIF + MP4
+exports, and for an ffmpeg that blocks the frame pipe).
+Starting a worker costs about 0.9 s, inside the deadline, so a deadline of
+about 1 s can expire while the worker starts; concurrent renders each pay it,
+and at most `$IEEVISUALIZER_ANIMATION_WORKERS` (default: the CPU count)
+workers run at once per process, a render waiting for a slot waiting inside
+its own deadline. A worker also cannot leave Matplotlib's global state
+changed. The writer of an export runs in the caller, after the deadline is
+checked once more.
+
+**Where process isolation runs:** POSIX systems with a real Python
+interpreter as `sys.executable`. On Windows, in a frozen application, or
+with an empty or non-executable `sys.executable` the default is inline and
+the result (each variant of an export) carries a `deadline_best_effort`
+warning; asking for
+`isolation="process"` there raises `isolation_unavailable`. Adapters,
+registries and resolvers sent to the worker must be importable by module
+name: one defined in a script's or notebook's `__main__` is refused
+(`render_payload_not_importable`; render it with `isolation="inline"`).
+
+**Trust boundary.** The worker runs `python -I` (the current directory and
+`PYTHON*` variables are ignored) with `sys.path` set to the caller's absolute
+entries and only the environment it needs (`PATH`, `HOME`, locale, font and
+Matplotlib cache locations, thread counts, `IEEVISUALIZER_*`). The request
+goes in pickled (the caller is the trusted side, and the worker must rebuild
+its adapters); the answer comes back as length-framed JSON plus raw byte
+blobs, decoded only into the result classes and an allow-list of exception
+types and issue fields, so a compromised worker cannot run code in the
+caller. Its output goes to a log whose tail is quoted in
+`render_worker_failed`, never to the caller's stderr. A watchdog forked
+before any import kills the worker's process group and removes the
+temporary directory when the caller exits or is killed (SIGKILL included).
 
 `isolation="inline"` (and calling an adapter's `render`/`plan` directly)
 runs in the caller with cooperative checks only, between pipeline phases

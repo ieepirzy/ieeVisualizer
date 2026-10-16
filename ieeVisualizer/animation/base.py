@@ -325,14 +325,19 @@ def render_animation(anim: AnimationSpec, request: AnimationRequest | None = Non
     request = request or AnimationRequest()
     deadline = Deadline.of(deadline)
     resolver = memoized(resolver)
-    if isolation_mode(isolation) == "process":
-        table = resolved_payload(anim.figure, resolver)
+    mode, notes = isolation_mode(isolation)
+    errors = [i for i in validate_animation(anim, deadline=deadline) if i.severity == "error"]
+    if errors:  # in the caller: an invalid spec does not pay for a worker
+        raise SpecValidationError(errors)
+    if mode == "process":
+        table = resolved_payload(anim.figure, resolver, deadline)
         return run_isolated("render", {"anim": anim, "request": request, "registry": registry,
                                        "resolver": table_resolver(table) if table else None},
                             deadline)
-    errors = [i for i in validate_animation(anim, deadline=deadline) if i.severity == "error"]
-    if errors:
-        raise SpecValidationError(errors)
+    if notes:
+        res = render_animation(anim, request, resolver=resolver, registry=registry,
+                               deadline=deadline, isolation="inline")
+        return dataclasses.replace(res, warnings=[*res.warnings, *notes])
     adapter = (registry or default_animation_registry()).select(anim, request)
     n_states, figure, index = counted_states(anim, resolver, deadline)
     enforce_limits(anim, request, n_states, figure, index=index,
