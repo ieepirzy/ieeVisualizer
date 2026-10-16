@@ -114,7 +114,8 @@ def test_weight_to_width_is_monotone_and_the_legend_states_the_unit():
     assert leg.get_title().get_text() == "Flow (kg/s)"
     texts = [t.get_text() for t in leg.get_texts()]
     assert texts and all(t.endswith(" kg/s") for t in texts)
-    lws = [h.get_linewidth() for h in leg.legend_handles]
+    handles = getattr(leg, "legend_handles", None) or leg.legendHandles  # < 3.7: legendHandles
+    lws = [h.get_linewidth() for h in handles]
     assert lws == sorted(lws)  # reference lines grow with their values
 
 

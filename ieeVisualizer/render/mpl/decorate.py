@@ -152,20 +152,12 @@ def apply_axes(ctx: DrawContext) -> None:
             if key == "x" and not ctx.three_d and groups_digits(loc):
                 ax.xaxis.set_major_locator(spaced_tick_locator(loc))
         elif info.kind == "time":
-            from matplotlib import dates as mdates
-
-            locator = mdates.AutoDateLocator(tz=info.tz)
-            obj = _axis_obj(ax, key)
-            obj.set_major_locator(locator)
-            fmt: dict[str, Any] = {}
-            if loc is not None and loc.date_formats is not None:
-                fmt = {"formats": list(loc.date_formats),
-                       "zero_formats": list(loc.date_zero_formats or loc.date_formats),
-                       "offset_formats": list(loc.date_offset_formats or loc.date_formats)}
-            obj.set_major_formatter(mdates.ConciseDateFormatter(locator, tz=info.tz, **fmt))
+            set_time_axis(ctx, key, info)
         elif info.kind == "category":
             names = list(info.categories)
-            step = -(-len(names) // MAX_CATEGORY_LABELS)  # ceil
+            # A profile render never thins labels: they are drawn and, if they
+            # collide, reported (legibility.fit_ticks), so a phone shows no less.
+            step = 1 if ctx.min_pt else -(-len(names) // MAX_CATEGORY_LABELS)  # ceil
             if step > 1:
                 ctx.warn("category_labels_thinned",
                          f"axis {key} has {len(names)} categories; one label in every {step} is "
@@ -177,6 +169,25 @@ def apply_axes(ctx: DrawContext) -> None:
             _limits(ctx, key, info, axis.limits)
     if spec.title:
         ax.set_title(spec.title)
+
+
+def set_time_axis(ctx: DrawContext, key: str, info: AxisInfo,
+                  maxticks: int | None = None) -> None:
+    """Date ticks (matplotlib's automatic choice, at most ``maxticks``) with
+    concise labels in the theme locale's patterns."""
+    from matplotlib import dates as mdates
+
+    loc = ctx.locale
+    kw = {} if maxticks is None else {"maxticks": maxticks, "minticks": min(3, maxticks)}
+    locator = mdates.AutoDateLocator(tz=info.tz, **kw)
+    obj = _axis_obj(ctx.ax, key)
+    obj.set_major_locator(locator)
+    fmt: dict[str, Any] = {}
+    if loc is not None and loc.date_formats is not None:
+        fmt = {"formats": list(loc.date_formats),
+               "zero_formats": list(loc.date_zero_formats or loc.date_formats),
+               "offset_formats": list(loc.date_offset_formats or loc.date_formats)}
+    obj.set_major_formatter(mdates.ConciseDateFormatter(locator, tz=info.tz, **fmt))
 
 
 def _limits(ctx: DrawContext, key: str, info: AxisInfo, limits: list) -> None:
@@ -286,7 +297,7 @@ def _text(ctx: DrawContext, p: str, a: TextAnnotation, style: dict) -> Any:
                           f"{ctx.axes[k].kind} {k} axis.")
             return None
         coords.append(pos)
-    kw = {"color": style.get("color", ctx.muted("0.15")), "fontsize": "small"}
+    kw = {"color": style.get("color", ctx.muted("0.15")), "fontsize": ctx.fs("small")}
     if "opacity" in style:
         kw["alpha"] = style["opacity"]
     if ctx.three_d:

@@ -90,18 +90,28 @@ def _metadata(fmt: str) -> dict[str, str | None]:
 
 
 @contextlib.contextmanager
-def render_context(theme: Any):
+def render_context(theme: Any, min_pt: float = 0.0):
     """matplotlib defaults + theme + determinism settings, restored on exit.
-    ``theme`` is a :class:`~ieeVisualizer.themes.Theme` or an rcParams dict."""
+    ``theme`` is a :class:`~ieeVisualizer.themes.Theme` or an rcParams dict;
+    ``min_pt`` raises every rcParams font size below it (profile renders)."""
     import matplotlib
     import matplotlib.style
 
+    from .legibility import font_floor_rc
     from .style import theme_rc
 
     rc = dict(theme) if isinstance(theme, dict) else theme_rc(theme)
     rc.update({"svg.hashsalt": SVG_HASHSALT, "svg.fonttype": "path"})
     with matplotlib.style.context("default"), matplotlib.rc_context(rc):
-        yield
+        with matplotlib.rc_context(font_floor_rc(min_pt) if min_pt else {}):
+            yield
+
+
+def _min_pt(request: RenderRequest) -> float:
+    profile = request.render_profile
+    if profile is None:
+        return 0.0
+    return profile.min_text_pt(_figsize(request)[0], request.display_width)
 
 
 def _figsize(request: RenderRequest) -> tuple[float, float]:
@@ -154,11 +164,19 @@ class MatplotlibAdapter:
         self._check_capabilities(prepared.spec, request)
         warnings = list(prepared.warnings)
         theme = self._theme(prepared.spec, request, warnings)
-        with render_context(theme), _warnings.catch_warnings(record=True) as caught:
+        with render_context(theme, _min_pt(request)), \
+                _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
             built = self._draw(prepared, request, warnings, theme)
-            built.figure.draw_without_rendering()
+            if request.profile is None:
+                built.figure.draw_without_rendering()
+            else:  # the draw the audit measures, as a PNG save would make it
+                from .legibility import recording_canvas
+
+                recording_canvas(built.figure).draw()
+            _audit(built, request)
         _backend_warnings(caught, built.warnings)
+        _collapsed(built.warnings, request)
         built.warnings[:] = _dedupe(built.warnings)  # same list: draw-time warnings land here
         return built
 
@@ -174,12 +192,19 @@ class MatplotlibAdapter:
         warnings = list(prepared.warnings)
         theme = self._theme(prepared.spec, request, warnings)
         buf = io.BytesIO()
-        with render_context(theme), _warnings.catch_warnings(record=True) as caught:
+        with render_context(theme, _min_pt(request)), \
+                _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
             built = self._draw(prepared, request, warnings, theme)
+            if request.profile is not None:
+                from .legibility import recording_canvas
+
+                recording_canvas(built.figure)
             built.figure.savefig(buf, format=request.format, dpi=request.dpi,
                                  metadata=_metadata(request.format))
+            _audit(built, request)
         _backend_warnings(caught, built.warnings)
+        _collapsed(built.warnings, request)
         return RenderResult(
             content=buf.getvalue(),
             format=request.format,
@@ -229,7 +254,7 @@ class MatplotlibAdapter:
         projection = {"cartesian3d": "3d", "polar": "polar"}.get(spec.coordinate_system)
         ax = fig.add_subplot(projection=projection)
         ctx = DrawContext(spec=spec, fig=fig, ax=ax, axes=axes_info, warnings=warnings,
-                          theme=theme)
+                          theme=theme, profile=request.render_profile, min_pt=_min_pt(request))
         for i, mark in enumerate(spec.layers):
             ctx.layer_artists[i] = DRAW[mark.type](ctx, i, mark)
         report_bar_overlaps(ctx)
@@ -241,7 +266,18 @@ class MatplotlibAdapter:
             cap["color"] = theme.muted
         if theme is not None and theme.typography.caption:
             cap["fontsize"] = theme.typography.caption
+        if ctx.min_pt:
+            from .decorate import CAPTION_FONTSIZE
+
+            cap["fontsize"] = ctx.fs(cap.get("fontsize", CAPTION_FONTSIZE))
         caption = apply_caption(fig, spec.caption, figsize[1], figsize[0], **cap)
+        if ctx.min_pt:
+            from .legibility import fit_ticks, fit_title, wrap_annotations, wrap_labels
+
+            wrap_labels(ctx)
+            fit_ticks(ctx)  # before the legend: upright labels change the axes' decorations
+            fit_title(ctx)
+            wrap_annotations(ctx, ann)
         # Value labels are fitted by the layout engine on every draw, so they
         # are already inside the (widened) axes when the legend pass below
         # lays the figure out to measure it: an "auto" legend that would
@@ -251,6 +287,27 @@ class MatplotlibAdapter:
         return BuiltFigure(figure=fig, axes=ax, warnings=warnings,
                            layer_artists=ctx.layer_artists, annotation_artists=ann,
                            caption=caption)
+
+
+def _audit(built: BuiltFigure, request: RenderRequest) -> None:
+    """Profile renders: append the legibility audit of the figure as drawn."""
+    from .legibility import annotations_outside, audit, figure_glyphs
+
+    built.warnings.extend(annotations_outside(built))
+    built.warnings.extend(figure_glyphs(built.figure))  # inside the render's rc context
+    profile = request.render_profile
+    if profile is not None:
+        built.warnings.extend(audit(built.figure, profile, request.display_width, built.axes))
+
+
+def _collapsed(warnings: list[RenderWarning], request: RenderRequest) -> None:
+    """Profile renders: matplotlib giving up on the layout is a gating
+    ``layout_collapsed`` warning, not only a backend message."""
+    if request.profile is not None and any(
+            w.code == "backend_warning" and "layout not applied" in w.message for w in warnings):
+        warnings.append(RenderWarning(
+            "layout_collapsed", "the figure's text left no room for the plot at this size, so "
+            "matplotlib could not lay it out; shorten the text or use a larger figure.", ""))
 
 
 def _label_locale(spec: FigureSpec, theme: Any, warnings: list[RenderWarning]) -> None:
