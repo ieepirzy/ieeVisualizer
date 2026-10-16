@@ -233,21 +233,20 @@ def test_another_layers_parameter_of_the_swept_name_keeps_its_value():
 @needs_manim
 def test_curves_are_cut_at_the_axis_range_not_clamped(monkeypatch):
     """With y limits [-0.5, 0.5] a sine was drawn along the edges."""
-    import manim
-
+    from ieeVisualizer.animation import manim_adapter as MA
     from ieeVisualizer.spec import Axis
 
     seen = []
-    orig = manim.VMobject.set_points_as_corners
-    monkeypatch.setattr(manim.VMobject, "set_points_as_corners",
-                        lambda self, pts: seen.append(np.asarray(pts)) or orig(self, pts))
+    orig = MA._clip
+    monkeypatch.setattr(MA, "_clip", lambda run, xr, yr: seen.extend(orig(run, xr, yr)) or
+                        orig(run, xr, yr))
     anim = sine_anim()
     anim.figure.axes["y"] = Axis(limits=[-0.5, 0.5])
     ManimAdapter().render(anim, REQ)
-    curves = [p for p in seen if len(p) > 2]
-    top = max(p[:, 1].max() for p in curves)
+    ys = [np.array([y for _, y in piece]) for piece in seen]
+    assert ys and max(abs(y).max() for y in ys) <= 0.5 + 1e-9
     # a clamped curve has many points on the edge; a cut one only its ends
-    assert max(int(np.isclose(p[:, 1], top).sum()) for p in curves) <= 2
+    assert max(int(np.isclose(abs(y), 0.5).sum()) for y in ys) <= 2
 
 
 @needs_manim
@@ -332,3 +331,89 @@ def test_manim_export_builds_no_template_state(monkeypatch):
     req = AnimationRequest(format="mp4", width=160, height=120, units="px", adapter="manim")
     art = export_animation(vector_field_anim(), "mp4", MemoryWriter(), request=req)
     assert calls == [] and art.poster.adapter_name == "manim"
+
+
+# ------------------------------------------------------------ review of #23
+
+
+def _fm(expr, dom=(-1.0, 1.0), axes=None, samples=50):
+    from ieeVisualizer.animation import AnimationSpec, ParameterSweep
+
+    fig = FigureSpec(layers=[FunctionMark(expression=expr, variables=["x"], domain={"x": list(dom)},
+                                          samples=samples, parameters={"a": 1.0})], axes=axes or {})
+    return AnimationSpec(timeline=ParameterSweep(parameter="a", values=[1.0, 2.0]), figure=fig,
+                         fps=4)
+
+
+GIF = AnimationRequest(format="gif", width=160, height=120, units="px", dpi=50)
+
+
+@needs_manim
+def test_a_curve_cut_into_many_pieces_is_refused_before_manim_starts():
+    """a*10*sin(30000*x) in y [-1, 1]: 10 s estimated, 90 s past a 2 s deadline."""
+    from ieeVisualizer.spec import Axis
+
+    anim = _fm("a*10*sin(30000*x)", (0.0, 6.28), {"y": Axis(limits=[-1.0, 1.0])}, 100_000)
+    with pytest.raises(AnimationError) as e:
+        ManimAdapter().render(anim, GIF)
+    assert e.value.issues[0].code == "curve_too_fragmented"
+
+
+@needs_manim
+def test_waiting_for_another_manim_render_is_bounded_by_the_deadline():
+    import threading
+    import time
+
+    from ieeVisualizer.animation import manim_adapter as MA
+
+    MA.RENDER_LOCK.acquire()
+    threading.Timer(4.0, MA.RENDER_LOCK.release).start()
+    t = time.monotonic()
+    with pytest.raises(AnimationError) as e:
+        ManimAdapter().render(_fm("a*x"), GIF, deadline=1.0)
+    assert e.value.issues[0].code == "render_deadline_exceeded" and time.monotonic() - t < 2.0
+    time.sleep(3.2)
+
+
+@needs_manim
+@pytest.mark.parametrize("expr,dom,limits", [("1.7e308*a*x", (-1.0, 1.0), None),
+                                             ("a*x", (-1.0, 1.0), [0.0, 5e-324]),
+                                             ("a", (-1e308, 1e308), None)])
+def test_unrenderable_axis_ranges_are_structured_errors(expr, dom, limits):
+    from ieeVisualizer.spec import Axis
+
+    with pytest.raises(AnimationError) as e:
+        ManimAdapter().render(_fm(expr, dom, {"y": Axis(limits=limits)} if limits else None), GIF)
+    assert e.value.issues[0].code == "axis_range_unrenderable"
+    with pytest.raises(AnimationError) as e:
+        ManimAdapter().render(vector_field_anim(params={"x_range": [0.0, 1e-320]}), GIF)
+    assert e.value.issues[0].code == "axis_range_unrenderable"
+
+
+@needs_manim
+def test_requested_axis_limits_are_drawn_exactly(monkeypatch):
+    import manim
+
+    from ieeVisualizer.spec import Axis
+
+    seen = []
+    orig = manim.Axes.__init__
+    monkeypatch.setattr(manim.Axes, "__init__",
+                        lambda self, *a, **k: seen.append(k) or orig(self, *a, **k))
+    ManimAdapter().render(_fm("a*x", (0.0, 2.0), {"x": Axis(limits=[0.0, 1.7]),
+                                                  "y": Axis(limits=[0.0, 1.03])}), GIF)
+    assert seen[0]["x_range"][:2] == [0.0, 1.7] and seen[0]["y_range"][:2] == [0.0, 1.03]
+
+
+@needs_manim
+def test_a_matplotlib_render_does_not_import_manim():
+    import subprocess
+    import sys
+
+    code = ("import sys; sys.path[:0] = ['tests/animation']\n"
+            "from anim_helpers import SMALL, sine_anim\n"
+            "from ieeVisualizer.animation import render_animation\n"
+            "render_animation(sine_anim(), SMALL, isolation='inline')\n"
+            "print('manim' in sys.modules)")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "False"

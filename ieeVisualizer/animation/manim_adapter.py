@@ -73,15 +73,20 @@ ADAPTER_VERSION = "0.1.0"
 SUPPORTED_TEMPLATES = frozenset({"vector_field_2d"})
 #: Held for the whole of every Manim render: ``manim.config`` is global.
 RENDER_LOCK = threading.Lock()
+#: Most pieces (runs inside the axes) of all curves in one frame.
+MAX_CURVE_PIECES = 1000
 
 
 @lru_cache(maxsize=1)
 def manim_available() -> bool:
+    """Whether manim is installed, without importing it (an import costs
+    about 0.5 s and configures logging; it happens only in a Manim render)."""
+    from importlib.util import find_spec
+
     try:
-        import manim  # noqa: F401
-    except Exception:  # noqa: BLE001 - any import failure means "not available"
+        return find_spec("manim") is not None
+    except (ImportError, ValueError):
         return False
-    return True
 
 
 CAPABILITIES = AnimationCapabilities(
@@ -174,9 +179,16 @@ class ManimAdapter:
                                           "system for the whole clip; axis_limits 'auto' is "
                                           "drawn as 'fixed'.", "/axis_limits"))
         deadline.check("draw")
-        with RENDER_LOCK:
+        # in a worker process (the default) the lock is uncontended; inline it
+        # serializes renders sharing manim.config, within this render's deadline
+        if not RENDER_LOCK.acquire(timeout=max(deadline.remaining(), 1e-3)):
+            deadline.phase = "draw: waiting for another manim render"
+            raise deadline.exceeded()
+        try:
             content, decoded, poster_png = _run(build, title, anim, request, len(values), poster,
                                                 theme, deadline)
+        finally:
+            RENDER_LOCK.release()
         if decoded != n_frames:
             raise AnimationError([issue("", "frame_count_mismatch",
                                         f"manim wrote {decoded} frames, {n_frames} were planned; "
@@ -262,11 +274,22 @@ def _theme(name, warnings) -> tuple[str, str]:
     return theme.background or "#FFFFFF", theme.foreground or "#000000"
 
 
-def _nice_range(lo: float, hi: float) -> list[float]:
-    if not (math.isfinite(lo) and math.isfinite(hi)) or hi <= lo:
-        lo, hi = lo - 1.0, lo + 1.0
-    step = 10 ** math.floor(math.log10((hi - lo) / 4))
-    return [math.floor(lo / step) * step, math.ceil(hi / step) * step, step]
+def _nice_range(lo: float, hi: float, keep: tuple[bool, bool] = (False, False)) -> list[float]:
+    """``[lo, hi, tick step]``: ends rounded out to the step unless ``keep``
+    says the figure set them (requested limits are drawn exactly). A range
+    Manim cannot draw (not finite, empty, beyond float precision) is a
+    structured error."""
+    if lo == hi and math.isfinite(lo):
+        lo, hi = lo - 1.0, hi + 1.0
+    span = hi - lo
+    if not (math.isfinite(lo) and math.isfinite(hi) and math.isfinite(span)) or span <= 0 \
+            or span < 1e-9 * max(abs(lo), abs(hi), 1e-300) or span < 1e-200:
+        raise AnimationError([issue("/figure/axes", "axis_range_unrenderable",
+                                    f"the axis range [{lo!r}, {hi!r}] cannot be drawn by manim "
+                                    "(not finite, empty or below float precision).")])
+    step = 10 ** math.floor(math.log10(span / 4))
+    return [lo if keep[0] else math.floor(lo / step) * step,
+            hi if keep[1] else math.ceil(hi / step) * step, step]
 
 
 def _function_scene(anim: AnimationSpec, tl: ParameterSweep, values, warnings):
@@ -314,8 +337,24 @@ def _function_scene(anim: AnimationSpec, tl: ParameterSweep, values, warnings):
     if limits_x:
         x_lo = limits_x[0] if limits_x[0] is not None else x_lo
         x_hi = limits_x[1] if limits_x[1] is not None else x_hi
-    xr, yr = _nice_range(x_lo, x_hi), _nice_range(y_lo, y_hi)
+    xr = _nice_range(x_lo, x_hi, tuple(bool(limits_x) and v is not None
+                                       for v in (limits_x or [None, None])))
+    yr = _nice_range(y_lo, y_hi, tuple(bool(limits_y) and v is not None
+                                       for v in (limits_y or [None, None])))
     labels = (_axis_label(fig, "x", layers[0][0].variables[0]), _axis_label(fig, "y", "y"))
+    for p in values:  # pieces of curve inside the axes, before manim starts
+        pieces = 0
+        for layer in layers:
+            y, x = ys(layer, p), layer[3]
+            inside = np.isfinite(y) & (y >= yr[0]) & (y <= yr[1]) & (x >= xr[0]) & (x <= xr[1])
+            pieces += int(inside[0]) + int(np.count_nonzero(inside[1:] & ~inside[:-1]))
+        if pieces > MAX_CURVE_PIECES:
+            raise AnimationError([issue("/figure/layers", "curve_too_fragmented",
+                                        f"at {tl.parameter} = {p:g} the curves leave and re-enter "
+                                        f"the axes {pieces} times; manim draws each piece in "
+                                        f"Python per frame and accepts at most "
+                                        f"{MAX_CURVE_PIECES}. Use fewer samples or wider "
+                                        "limits.")])
 
     def construct(scene, M):
         ax = M.Axes(x_range=xr, y_range=yr, x_length=11, y_length=5.6, tips=False)
@@ -334,12 +373,14 @@ def _function_scene(anim: AnimationSpec, tl: ParameterSweep, values, warnings):
             width = float(m.style.get("linewidth", 2.0)) * 2
 
             def curve(layer=layer, color=color, width=width):
-                group = M.VGroup()
+                # ONE mobject per curve; each piece inside the axes is a subpath
+                path = M.VMobject(stroke_color=color, stroke_width=width)
                 for run in _finite_runs(layer[3], ys(layer, value())):
                     for inside in _clip(run, xr, yr):  # cut where it leaves the axes
-                        group.add(M.VMobject(stroke_color=color, stroke_width=width)
-                                  .set_points_as_corners([ax.c2p(x, y) for x, y in inside]))
-                return group
+                        pts = [ax.c2p(x, y) for x, y in inside]
+                        path.start_new_path(pts[0])
+                        path.add_points_as_corners(pts[1:])
+                return path
 
             scene.add(M.always_redraw(curve))
         scene.add(M.always_redraw(lambda: M.Text(
@@ -372,10 +413,10 @@ def _vector_field_scene(anim: AnimationSpec, tl: ParameterSweep, values):
     if max_mag <= 0:
         raise AnimationError([issue("/timeline/target/params", "empty_series",
                                     "the field is zero or non-finite everywhere.")])
+    xr, yr = _nice_range(x0, x1), _nice_range(y0, y1)  # refuses undrawable ranges
     s = min(11.0 / (x1 - x0), 5.6 / (y1 - y0))  # scene units per data unit, equal aspect
     cell = min((x1 - x0) / max(grid[0] - 1, 1), (y1 - y0) / max(grid[1] - 1, 1)) * s
     xc, yc = (x0 + x1) / 2, (y0 + y1) / 2
-    xr, yr = _nice_range(x0, x1), _nice_range(y0, y1)
     spec_title = p0.get("title")
 
     def construct(scene, M):
