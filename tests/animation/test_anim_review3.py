@@ -1,0 +1,95 @@
+"""Review round 3: annotation cap, heatmap frame columns with fixed limits."""
+
+
+import pytest
+from anim_helpers import SMALL, codes
+
+import ieeVisualizer.animation as A
+from ieeVisualizer import templates
+from ieeVisualizer.animation import (
+    AnimationSpec,
+    FrameColumn,
+    ParameterSweep,
+    render_animation,
+    validate_animation,
+)
+from ieeVisualizer.animation import frames as F
+from ieeVisualizer.animation import validate as V
+from ieeVisualizer.spec import (
+    DataSnapshot,
+    FigureSpec,
+    FunctionMark,
+    HeatmapMark,
+    SpecValidationError,
+)
+from ieeVisualizer.spec import figure as SF
+
+VF = type(templates.get("vector_field_2d", "1.0.0"))
+
+
+@pytest.fixture
+def spies(monkeypatch):
+    """Call counters for whole validations and template state builds."""
+    calls = {"build": 0, "validate": 0}
+    for owner, name, key in [(F, "_build_template", "build"), (V, "_validate", "validate")]:
+        orig = getattr(owner, name)
+
+        def wrapped(*a, _orig=orig, _key=key, **k):
+            calls[_key] += 1
+            return _orig(*a, **k)
+
+        monkeypatch.setattr(owner, name, wrapped)
+    return calls
+
+
+# ---------------------------------------------------------------- H2
+
+
+def _annotated(annotations, n_states=60):
+    fig = FigureSpec(layers=[FunctionMark(expression="p*sin(x)", variables=["x"],
+                                          domain={"x": [0, 6.0]}, samples=20,
+                                          parameters={"p": 1.0})],
+                     annotations=annotations)
+    return AnimationSpec(timeline=ParameterSweep(parameter="p",
+                                                 values=[1.0 + i for i in range(n_states)]),
+                         figure=fig, fps=10)
+
+
+def _texts(n):
+    return [SF.TextAnnotation(text=f"note {i}", x=i % 6, y=0.1) for i in range(n)]
+
+
+def test_annotation_count_is_capped_for_animations(spies):
+    anim = _annotated(_texts(A.MAX_ANIMATION_ANNOTATIONS + 1), n_states=2)
+    issues = validate_animation(anim)
+    assert [(i.path, i.code) for i in issues] == [("/figure/annotations",
+                                                   "too_many_annotations")]
+    with pytest.raises(SpecValidationError):
+        render_animation(anim, SMALL)
+    assert codes(validate_animation(_annotated(_texts(A.MAX_ANIMATION_ANNOTATIONS),
+                                               n_states=2))) == []
+
+
+# ---------------------------------------------------------------- M1
+
+
+def _heat_anim(categorical: bool, axis_limits: str = "fixed"):
+    rows = [(t, (f"c{i}" if categorical else i), (f"r{j}" if categorical else j),
+             float(i + j + t)) for t in range(3) for i in range(2) for j in range(2)]
+    kind = "str" if categorical else "int"
+    ds = DataSnapshot.from_columns(
+        {"t": [r[0] for r in rows], "x": [r[1] for r in rows], "y": [r[2] for r in rows],
+         "z": [r[3] for r in rows]}, dtypes={"t": "int", "x": kind, "y": kind, "z": "float"})
+    fig = FigureSpec(datasets={"d": ds}, layers=[HeatmapMark(
+        data="d", encoding={"x": "x", "y": "y", "color": "z"})])
+    return AnimationSpec(timeline=FrameColumn(dataset="d", column="t"), figure=fig, fps=10,
+                         axis_limits=axis_limits)
+
+
+@pytest.mark.parametrize("categorical", [True, False])
+def test_heatmap_frame_column_renders_with_fixed_limits(categorical):
+    """Every frame has its own value for each cell, so the all-frames figure
+    is not a valid heatmap (duplicate_cell); fixed limits come from the
+    frames themselves."""
+    res = render_animation(_heat_anim(categorical), SMALL)
+    assert res.frame_count == 3 and res.state_count == 3

@@ -16,12 +16,19 @@ infinite constant (``1/0``, ``tan(pi/2)``, ``log(0)``) is an
 Sampling reuses the legacy :func:`ieeVisualizer._evaluate.evaluate` rule:
 non-finite outputs are masked (gaps, reported as a warning) and an
 expression with no finite value on its domain is an error.
+
+Inside :func:`expression_cache` (an animation render enters it), each
+expression text is parsed once and each (text, parameter values) pair is
+built and compiled once, however many states or passes draw it; the result
+is the same as without the cache.
 """
 
 from __future__ import annotations
 
+import contextlib
 import re
 import warnings as _warnings
+from contextvars import ContextVar
 
 import numpy as np
 
@@ -47,11 +54,50 @@ _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _NUMBER = re.compile(r"(?<![A-Za-z_0-9])(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
 # A '.' is only allowed inside a number (no attribute access).
 _BAD_DOT = re.compile(r"(?<![0-9])\.(?![0-9])|[A-Za-z_]\.|\.[A-Za-z_]")
+_CACHE: ContextVar[dict | None] = ContextVar("ieev_expression_cache", default=None)
+
+
+@contextlib.contextmanager
+def expression_cache():
+    """Parse and compile each expression once within the block (nested
+    blocks share the outermost cache; a new thread needs ``copy_context``)."""
+    if _CACHE.get() is not None:
+        yield
+        return
+    token = _CACHE.set({})
+    try:
+        yield
+    finally:
+        _CACHE.reset(token)
+
+
+def _cached(key: tuple, make):
+    """``make()`` once per ``key`` in the current cache (errors included)."""
+    cache = _CACHE.get()
+    if cache is None:
+        return make()
+    if key not in cache:
+        try:
+            cache[key] = (True, make())
+        except RenderError as e:
+            cache[key] = (False, e)
+    ok, value = cache[key]
+    if not ok:
+        raise value
+    return value
+
+
+def _key(mark: FunctionMark) -> tuple:
+    return (mark.expression, tuple(mark.variables), tuple(sorted(mark.parameters.items())))
 
 
 def parse(mark: FunctionMark, path: str):
     """Return ``(sympy_expr, symbols)`` for ``mark`` with parameters
     substituted."""
+    return _cached(("built", path, *_key(mark)), lambda: _parse(mark, path))
+
+
+def _parse(mark: FunctionMark, path: str):
     import sympy as sp
 
     expr_s = mark.expression or ""
@@ -78,7 +124,8 @@ def parse(mark: FunctionMark, path: str):
             local[f] = getattr(sp, "Abs" if f == "abs" else f)
     values = {symbols[k]: sp.sympify(v) for k, v in mark.parameters.items()}
     try:
-        tree = parse_unevaluated(expr_s.replace("^", "**"), local)
+        text = expr_s.replace("^", "**")
+        tree = _cached(("tree", text, frozenset(names)), lambda: parse_unevaluated(text, local))
         if not isinstance(tree, sp.Expr):
             raise TypeError(f"it is a {type(tree).__name__}, not a single expression")
         # Parameters are substituted while the tree is rebuilt, so every power
@@ -120,12 +167,15 @@ def sample(mark: FunctionMark, path: str, log_axes: tuple[bool, ...],
         axes_1d.append(np.geomspace(lo, hi, mark.samples) if is_log
                        else np.linspace(lo, hi, mark.samples))
     inputs = list(np.meshgrid(*axes_1d)) if len(axes_1d) == 2 else axes_1d
-    try:
-        fn = sp.lambdify(syms, expr, modules="numpy")
-    except Exception as e:  # noqa: BLE001 - untrusted input: a printer failure is reported
-        raise RenderError([issue(path + "/expression", "invalid_expression",
-                                 f"expression {mark.expression!r} cannot be converted to a "
-                                 f"numeric function: {type(e).__name__}: {e}")]) from None
+    def compile_():
+        try:
+            return sp.lambdify(syms, expr, modules="numpy")
+        except Exception as e:  # noqa: BLE001 - untrusted input: a printer failure is reported
+            raise RenderError([issue(path + "/expression", "invalid_expression",
+                                     f"expression {mark.expression!r} cannot be converted to "
+                                     f"a numeric function: {type(e).__name__}: {e}")]) from None
+
+    fn = _cached(("fn", path, *_key(mark)), compile_)
     with _warnings.catch_warnings(record=True) as caught:
         _warnings.simplefilter("always")
         try:

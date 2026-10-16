@@ -401,7 +401,10 @@ def _approximate_role(ctx: DrawContext, i: int, m: Mark, kw: dict[str, Any]) -> 
                      f"/layers/{i}/role")
 
 
-def _colorbar(ctx: DrawContext, mappable: Any, m: Mark, ch: str = "color") -> None:
+def _colorbar(ctx: DrawContext, mappable: Any, m: Mark, ch: str = "color",
+              style: dict[str, Any] | None = None) -> None:
+    if style and "color_range" in style:  # a fixed colour scale
+        mappable.set_clim(*style["color_range"])
     col = _col(ctx, m, ch)
     label = _title(m, ch) or ""
     if col is not None and col.unit:
@@ -528,7 +531,7 @@ def draw_scatter(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         art = ctx.ax.scatter(*coords, **kw)
         artists.append(art)
         if cont:
-            _colorbar(ctx, art, m)
+            _colorbar(ctx, art, m, style=style)
         if "y_lower" in m.encoding:
             artists += _iv.point_intervals(ctx, i, m, x[rows], rows,
                                            kw.get("color", kw.get("edgecolors", "0.25")),
@@ -937,7 +940,7 @@ def draw_heatmap(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         kw["alpha"] = style["opacity"]
     _approximate_role(ctx, i, m, kw)
     mesh = ctx.ax.pcolormesh(_edges(xu), _edges(yu), grid, shading="flat", **kw)
-    _colorbar(ctx, mesh, m)
+    _colorbar(ctx, mesh, m, style=style)
     return [mesh]
 
 
@@ -1070,7 +1073,7 @@ def draw_quiver(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         kw["color"] = style.get("color", ctx.next_color(f"/layers/{i}"))
     q = ctx.ax.quiver(*args, **kw)
     if cvals is not None:
-        _colorbar(ctx, q, m)
+        _colorbar(ctx, q, m, style=style)
     return [q]
 
 

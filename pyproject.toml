@@ -32,7 +32,12 @@ include = ["ieeVisualizer*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# Slow tests (real renders that calibrate the cost estimate) are excluded by
+# default, in CI too; run them with: python -m pytest -m slow
+addopts = "-ra -m \"not slow\""
+markers = [
+    "slow: renders real animations to calibrate the cost estimate (run with -m slow)",
+]
 
 [tool.ruff]
 line-length = 100
