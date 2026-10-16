@@ -381,8 +381,9 @@ def test_explicit_color_beats_color_of_with_a_warning():
 # ----------------------------------------------------------------- size limits
 
 _SIZE_CHILD = """
-import json, sys, time
-sys.path.insert(0, "tests/render")
+import json, sys
+sys.path[:0] = ["tests/render", "tests"]
+from cost import measure
 from render_examples import one_layer
 from ieeVisualizer.render import RenderError, RenderRequest, render
 from ieeVisualizer.spec import BarMark, HistogramMark
@@ -396,14 +397,14 @@ elif kind == "edges":
 else:
     spec = one_layer(BarMark(encoding={"x": "k", "y": "v"}),
                      {"k": [f"c{k}" for k in range(n)], "v": [1.0] * n})
-t = time.perf_counter()
-try:
-    render(spec, RenderRequest(format="svg"))
-    out = {"issues": []}
-except RenderError as e:
-    out = {"issues": [[i.path, i.code] for i in e.issues], "type": type(e).__name__,
-           "message": str(e)}
-out["seconds"] = time.perf_counter() - t
+with measure() as cost:
+    try:
+        render(spec, RenderRequest(format="svg"))
+        out = {"issues": []}
+    except RenderError as e:
+        out = {"issues": [[i.path, i.code] for i in e.issues], "type": type(e).__name__,
+               "message": str(e)}
+out["seconds"], out["cost"] = cost.seconds, repr(cost)  # reference seconds: tests/cost.py
 print(json.dumps(out))
 """
 

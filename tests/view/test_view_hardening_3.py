@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import pytest
+from cost import measure
 
 from ieeVisualizer.render import RenderError
 from ieeVisualizer.spec import SpecParseError, SpecValidationError
@@ -42,7 +43,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def run_py(code: str, timeout: float) -> str:
     """Run ``code`` in a fresh interpreter (this checkout first on the path)."""
     e = dict(os.environ, MPLBACKEND="Agg")
-    e["PYTHONPATH"] = str(ROOT) + os.pathsep + e.get("PYTHONPATH", "")
+    # tests/ for cost.py: the slow-path budgets are in its reference seconds
+    e["PYTHONPATH"] = os.pathsep.join([str(ROOT), str(ROOT / "tests"), e.get("PYTHONPATH", "")])
     r = subprocess.run([sys.executable, "-c", textwrap.dedent(code)], capture_output=True,
                        text=True, timeout=timeout, env=e, cwd=str(ROOT))
     assert r.returncode == 0, r.stderr
@@ -104,10 +106,9 @@ def test_png_area_is_limited_before_rasterising():
     height = layout_view(v, 4000)[1]
     assert height * 4 < L.MAX_PNG_SIDE_PX  # within the side limit ...
     assert 16000 * height * 4 > L.MAX_PNG_PIXELS  # ... but not the area limit
-    t = time.time()
-    with pytest.raises(RenderError) as ei:  # was rasterised: 16000 x 32000 px took 2 GB
-        render_view(v, "png", width=4000, scale=4)
-    assert time.time() - t < 2
+    with measure() as cost, pytest.raises(RenderError) as ei:
+        render_view(v, "png", width=4000, scale=4)  # was rasterised: 16000 x 32000 px, 2 GB
+    assert cost.seconds < 2, cost
     issue = ei.value.issues[0]
     assert issue.code == "view_too_large" and "megapixels" in issue.message
     render_view(v, "png", width=4000, scale=1)  # 4000 x height: allowed
@@ -209,13 +210,14 @@ def test_float32_keeps_its_own_shortest_form():
 
 def test_copy_tree_copies_shared_references_once():
     out = run_py("""
-        import time
+        from cost import measure
         from ieeVisualizer.spec._common import copy_tree
         a = [1]
         for _ in range(22):
             a = [a, a]
-        t = time.time(); c = copy_tree(a, limit=1000)
-        print(round(time.time() - t, 3), c[0] is c[1], c == a)
+        with measure() as cost:
+            c = copy_tree(a, limit=1000)
+        print(cost.seconds, c[0] is c[1], c == a)
     """, timeout=60)  # was 22.9 s: every path copied again
     secs, shared, equal = out.split()
     assert float(secs) < 1 and shared == "True" and equal == "True"

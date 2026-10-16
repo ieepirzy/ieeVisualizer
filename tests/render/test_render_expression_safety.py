@@ -22,21 +22,23 @@ from ieeVisualizer.spec import Axis, FigureSpec, FunctionMark
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 _CHILD = """
-import json, sys, time
+import json, sys
+sys.path.insert(0, "tests")
+from cost import measure
 from ieeVisualizer.render import RenderError
 from ieeVisualizer.render.mpl.function import parse
 from ieeVisualizer.spec import FunctionMark
 m = FunctionMark(expression=sys.argv[1], variables=["x"], domain={"x": [0.0, 1.0]},
                  parameters=json.loads(sys.argv[2]))
-t = time.perf_counter()
-try:
-    parse(m, "/layers/0")
-    out = {"issues": []}
-except RenderError as e:
-    out = {"issues": [[i.path, i.code] for i in e.issues]}
-except Exception as e:
-    out = {"raised": type(e).__name__}
-out["seconds"] = time.perf_counter() - t
+with measure() as cost:
+    try:
+        parse(m, "/layers/0")
+        out = {"issues": []}
+    except RenderError as e:
+        out = {"issues": [[i.path, i.code] for i in e.issues]}
+    except Exception as e:
+        out = {"raised": type(e).__name__}
+out["seconds"], out["cost"] = cost.seconds, repr(cost)  # reference seconds: tests/cost.py
 print(json.dumps(out))
 """
 

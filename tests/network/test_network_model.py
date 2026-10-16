@@ -1,9 +1,9 @@
 """NetworkSpec model, validation, limits and templates (no drawing)."""
 
 import json
-import time
 
 import pytest
+from cost import measure
 
 from ieeVisualizer import templates
 from ieeVisualizer.network import (
@@ -124,9 +124,9 @@ def test_limits_refuse_before_any_other_work(monkeypatch):
     monkeypatch.setattr(layout_mod, "compute_layout", lambda s: pytest.fail("laid out"))
     huge = NetworkSpec(nodes=[Node(f"n{i}") for i in range(100_000)],
                        edges=[Edge("n0", "n1")] * 200_000)
-    t = time.perf_counter()
-    found = codes(huge)
-    assert time.perf_counter() - t < 0.5
+    with measure() as cost:
+        found = codes(huge)
+    assert cost.seconds < 0.5, cost
     assert found == [("/nodes", "too_many_nodes"), ("/edges", "too_many_edges")]
     force = NetworkSpec(nodes=[Node(f"n{i}") for i in range(MAX_FORCE_NODES + 1)])
     assert codes(force) == [("/layout/algorithm", "too_many_nodes")]

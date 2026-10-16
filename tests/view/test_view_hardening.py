@@ -50,7 +50,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def run_py(code: str, timeout: float, **env: str) -> str:
     """Run ``code`` in a fresh interpreter (this checkout first on the path)."""
     e = dict(os.environ, MPLBACKEND="Agg", **env)
-    e["PYTHONPATH"] = str(ROOT) + os.pathsep + e.get("PYTHONPATH", "")
+    # tests/ for cost.py: the slow-path budgets are in its reference seconds
+    e["PYTHONPATH"] = os.pathsep.join([str(ROOT), str(ROOT / "tests"), e.get("PYTHONPATH", "")])
     r = subprocess.run([sys.executable, "-c", textwrap.dedent(code)], capture_output=True,
                        text=True, timeout=timeout, env=e, cwd=str(ROOT))
     assert r.returncode == 0, r.stderr
@@ -78,13 +79,14 @@ def _chain(n, **layout):
 
 def test_long_table_cell_truncates_quickly():
     out = run_py("""
-        import time
+        from cost import measure
         from ieeVisualizer.spec import DataSnapshot
         from ieeVisualizer.view import Stack, Table, ViewSpec, render_view
         ds = DataSnapshot.from_columns({"a": ["x" * 10000], "b": ["y" * 10000]})
         v = ViewSpec(root=Stack([Table(data="d")]), datasets={"d": ds})
-        t = time.time(); svg = render_view(v, "svg").content.decode()
-        print(round(time.time() - t, 2), svg.count("\\u2026"))
+        with measure() as c:
+            svg = render_view(v, "svg").content.decode()
+        print(c.seconds, svg.count("\\u2026"))
     """, timeout=60)
     seconds, ellipses = out.split()
     assert float(seconds) < 15 and int(ellipses) == 2
@@ -110,13 +112,14 @@ def test_fit_keeps_the_longest_prefix_that_fits():
 
 def test_oversized_flow_is_refused_before_layout():
     out = run_py("""
-        import time
+        from cost import measure
         from ieeVisualizer.view import Flow, FlowEdge, FlowNode, Stack, ViewSpec, validate_view
         n = 10000
         f = Flow(nodes=[FlowNode(f"n{i}", f"N{i}") for i in range(n)],
                  edges=[FlowEdge(f"n{i}", f"n{i+1}") for i in range(n - 1)])
-        t = time.time(); issues = validate_view(ViewSpec(root=Stack([f])))
-        print(round(time.time() - t, 2), [(i.path, i.code) for i in issues])
+        with measure() as c:
+            issues = validate_view(ViewSpec(root=Stack([f])))
+        print(c.seconds, [(i.path, i.code) for i in issues])
     """, timeout=60)
     seconds, codes = out.split(" ", 1)
     assert float(seconds) < 5
@@ -142,14 +145,15 @@ def test_flow_budgets_are_per_view_and_dummy_slots_are_counted():
 
 def test_layering_is_linear():
     out = run_py("""
-        import time
+        from cost import measure
         from ieeVisualizer.view import Flow, FlowEdge, FlowNode
         from ieeVisualizer.view.flow import _layers, back_edges
         n = 30000
         f = Flow(nodes=[FlowNode(f"n{i}", "x") for i in range(n)],
                  edges=[FlowEdge(f"n{i}", f"n{i+1}") for i in range(n - 1)])
-        t = time.time(); layer, _ = _layers(f, set(back_edges(f)))
-        print(round(time.time() - t, 2), layer["n29999"])
+        with measure() as c:
+            layer, _ = _layers(f, set(back_edges(f)))
+        print(c.seconds, layer["n29999"])
     """, timeout=60)
     seconds, last = out.split()
     assert float(seconds) < 5 and last == "29999"
@@ -157,7 +161,8 @@ def test_layering_is_linear():
 
 def test_largest_allowed_flow_lays_out_in_seconds():
     out = run_py("""
-        import random, time
+        import random
+        from cost import measure
         from ieeVisualizer.view import Flow, FlowEdge, FlowNode, Stack, ViewSpec, render_view
         from ieeVisualizer.view import validate_view
         from ieeVisualizer.view import limits as L
@@ -170,8 +175,9 @@ def test_largest_allowed_flow_lays_out_in_seconds():
             edges.append(FlowEdge(f"n{a}", f"n{min(n - 1, a + r.randint(20, 60))}"))
         v = ViewSpec(root=Stack([Flow(nodes=nodes, edges=edges)]))
         assert not [i for i in validate_view(v) if i.severity == "error"]
-        t = time.time(); render_view(v, "svg"); render_view(v, "html")
-        print(round(time.time() - t, 2))
+        with measure() as c:
+            render_view(v, "svg"); render_view(v, "html")
+        print(c.seconds)
     """, timeout=120)
     assert float(out) < 20
 
