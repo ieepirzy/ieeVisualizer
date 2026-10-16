@@ -237,8 +237,12 @@ def template_build_us(t: TemplateTarget) -> float:
 def min_work_us(anim: AnimationSpec, n_states: int, n_frames: int) -> float:
     """The cheaper cost model's estimate at zero frame area: a lower bound for
     any adapter and request (used by validation, which knows neither)."""
-    return min(matplotlib_work_us(anim, (0, 0), n_states, anim.figure),
-               manim_work_us(anim, n_frames))
+    mpl = matplotlib_work_us(anim, (0, 0), n_states, anim.figure)
+    tl = anim.timeline
+    if isinstance(tl, ParameterSweep) and isinstance(tl.target, TemplateTarget) \
+            and tl.target.data is not None:
+        return mpl  # Manim draws templates in expression mode only
+    return min(mpl, manim_work_us(anim, n_frames))
 
 
 def matplotlib_work_us(anim: AnimationSpec, size_px: tuple[int, int], n_states: int,
