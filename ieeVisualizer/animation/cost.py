@@ -95,6 +95,13 @@ def _layer_parts(spec: FigureSpec, m) -> tuple[float, float]:
     if m.type == "histogram":
         nbins = (len(m.bin_edges) - 1 if m.bin_edges else m.bins) or 10
         fixed += MPL_BIN_US * nbins
+    if m.type == "heatmap":  # the grid is allocated and drawn whole: distinct x x y
+        ds = spec.datasets.get(m.data)
+        cols = [ds.columns.get(m.encoding[a].field) if isinstance(ds, DataSnapshot)
+                and a in m.encoding else None for a in ("x", "y")]
+        if all(c is not None for c in cols):
+            fixed += _point_us(spec, "heatmap") * len(set(cols[0].values)) \
+                * len(set(cols[1].values))
     return fixed, _point_us(spec, m.type)
 
 
@@ -231,8 +238,11 @@ def matplotlib_work_us(anim: AnimationSpec, size_px: tuple[int, int], n_states: 
     if figure is None:  # template sweep: the figure exists only after the template runs
         rows, grid = _template_points(tl.target) if isinstance(tl, ParameterSweep) \
             and isinstance(tl.target, TemplateTarget) else (0, 0)
-        per_state += TEMPLATE_LAYERS * MPL_LAYER_US + rows * MPL_POINT_US["line"] \
-            + grid * MPL_POINT_US["quiver"]
+        data = getattr(tl.target, "data", None) if isinstance(tl, ParameterSweep) else None
+        cols = len(data.columns) if isinstance(data, DataSnapshot) else 1
+        # every data column may become a layer with a legend entry
+        per_state += max(TEMPLATE_LAYERS, cols) * (MPL_LAYER_US + MPL_LAYER_LEGEND_US) \
+            + rows * cols * MPL_POINT_US["line"] + grid * MPL_POINT_US["quiver"]
         if isinstance(tl, ParameterSweep) and isinstance(tl.target, TemplateTarget):
             per_state += template_build_us(tl.target)
         return n_states * per_state

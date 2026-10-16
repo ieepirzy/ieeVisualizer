@@ -27,7 +27,7 @@ from .base import (
     memoized,
     render_animation,
 )
-from .spec import AnimationSpec, animation_hash, timeline_to_dict, to_json
+from .spec import AnimationSpec, timeline_to_dict, to_json
 
 MANIFEST_NAME = "manifest.json"
 SPEC_NAME = "animation.json"
@@ -101,25 +101,50 @@ def export_animation(
     name: str | None = None,
     registry: AnimationRegistry | None = None,
     deadline=None,
+    isolation: str | None = None,
 ) -> AnimationArtifact:
-    from ..render.prepare import prepare
-    from .base import default_animation_registry
+    """Render every format, the poster and the manifest under one deadline
+    (in a worker process unless ``isolation="inline"``), then write them."""
     from .deadline import Deadline
-    from .frames import drawn_only
-    from .validate import validate_animation
+    from .isolate import isolation_mode, resolved_payload, run_isolated, table_resolver
 
     if writer is None:
         raise ValueError("export_animation() needs a writer, e.g. LocalDirectoryWriter('out/').")
     fmts = list(dict.fromkeys([formats] if isinstance(formats, str) else formats))
     if not fmts or any(f not in ANIMATION_MEDIA_TYPES for f in fmts):
         raise ValueError(f"formats must be a non-empty subset of {list(ANIMATION_MEDIA_TYPES)}.")
-    base = request or AnimationRequest()
     # One resolution per reference for the whole export: every format, the
     # poster and the manifest's dataset records all see the snapshot that
     # was rendered, even if the source changes meanwhile.
     resolver = memoized(resolver)
-
     deadline = Deadline.of(deadline)
+    kw = {"anim": anim, "fmts": fmts, "base": request or AnimationRequest(), "name": name,
+          "registry": registry,
+          "created": (clock or (lambda: _dt.datetime.now(_dt.timezone.utc)))()}
+    if isolation_mode(isolation) == "process":
+        table = resolved_payload(anim.figure, resolver)
+        artifact, blobs = run_isolated("export", {
+            **kw, "resolver": table_resolver(table) if table else None}, deadline)
+    else:
+        artifact, blobs = build(**kw, resolver=resolver, deadline=deadline)
+    deadline.check("write")  # the writer is the caller's code: checked before, not during
+    write_all = getattr(writer, "write_artifact", None)
+    if callable(write_all):
+        write_all(artifact.artifact_id, blobs)
+    else:
+        for fname, content, media in blobs:
+            writer.write(artifact.artifact_id, fname, content, media)
+    return artifact
+
+
+def build(anim, fmts, base, name, registry, created, resolver, deadline, isolation=None):
+    """``(artifact, blobs)`` of an export, everything but the writing."""
+    import hashlib
+
+    from ..render.prepare import bound_refs
+    from .base import counted_states, default_animation_registry
+    from .validate import validate_animation
+
     errors = [i for i in validate_animation(anim, deadline=deadline) if i.severity == "error"]
     if errors:
         raise SpecValidationError(errors)
@@ -132,8 +157,8 @@ def export_animation(
         results = [by_fmt[f] for f in fmts]
     else:
         results = [render_animation(anim, dataclasses.replace(base, format=f, adapter=adapter.name),
-                                    resolver=resolver, registry=registry, deadline=deadline)
-                   for f in fmts]
+                                    resolver=resolver, registry=registry, deadline=deadline,
+                                    isolation="inline") for f in fmts]
     outputs = []
     for fmt, res in zip(fmts, results):
         req = dataclasses.replace(base, format=fmt)
@@ -161,14 +186,18 @@ def export_animation(
                                                  f"({poster_state['label']})"},
                                      *(w.to_dict() for w in first.poster_warnings)])
 
-    if anim.figure is not None:
-        prepared = prepare(drawn_only(anim.figure), resolver)
-        records = _records(anim.figure, prepared.resolved)
+    deadline.check("manifest")
+    if anim.figure is not None:  # the data the render resolved, validated once
+        figure = counted_states(anim, resolver, deadline)[1]
+        records = _records(anim.figure, {k: figure.datasets[k]
+                                         for k in bound_refs(anim.figure)})
         fig_hash = spec_hash(anim.figure)
     else:  # template sweep: the data is generated per state; record the poster's
         records = _records(first.poster_spec, {}) if first.poster_spec is not None else {}
         fig_hash = None
-    digest = animation_hash(anim)
+    deadline.check()
+    spec_bytes = to_json(anim).encode("utf-8")  # its sha256 is animation_hash
+    digest = "sha256:" + hashlib.sha256(spec_bytes).hexdigest()
     artifact_id = artifact_id_for(digest, {k: r.content_hash for k, r in records.items()},
                                   name if name is not None else "anim", formats=fmts,
                                   request=base.to_dict())
@@ -180,11 +209,9 @@ def export_animation(
     if "mp4" in fmts and exe:
         from .encode import ffmpeg_version
 
-        versions["ffmpeg"] = ffmpeg_version(exe)
+        versions["ffmpeg"] = ffmpeg_version(exe, min(20.0, deadline.remaining()))
     versions.update(getattr(adapter, "library_versions", dict)())
-
-    spec_bytes = to_json(anim).encode("utf-8")
-    created = (clock or (lambda: _dt.datetime.now(_dt.timezone.utc)))()
+    deadline.check()
     artifact = AnimationArtifact(
         artifact_id=artifact_id, animation_hash=digest,
         spec_file=_file(SPEC_NAME, spec_bytes, "application/json"),
@@ -201,10 +228,4 @@ def export_animation(
     blobs += [(POSTER_NAME, poster_bytes, "image/png"),
               (SPEC_NAME, spec_bytes, "application/json"),
               (MANIFEST_NAME, (artifact.to_json() + "\n").encode("utf-8"), "application/json")]
-    write_all = getattr(writer, "write_artifact", None)
-    if callable(write_all):
-        write_all(artifact_id, blobs)
-    else:
-        for fname, content, media in blobs:
-            writer.write(artifact_id, fname, content, media)
-    return artifact
+    return artifact, blobs

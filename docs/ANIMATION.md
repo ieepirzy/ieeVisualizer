@@ -104,44 +104,46 @@ every dimension it does not model can make it wrong by orders of magnitude
 
 ## Deadline
 
-`render_animation`, `export_animation` and the adapter's `render`/`plan`
-take `deadline=` (seconds, or a `Deadline` to share; default
-`DEFAULT_DEADLINE_S` = 60). It is checked cooperatively between pipeline
-phases (validate, prepare, plan, parse, limits, draw, encode) and before
-every state and every encoded frame inside them; an export uses ONE deadline
-for every format and the poster. On expiry the work stops at the next check,
-ffmpeg is killed and reaped, temporary files are removed and
-`DeadlineExceeded` (an `AnimationError`) is raised with one issue
+`render_animation` and `export_animation` take `deadline=` (seconds, or a
+`Deadline` to share; default `DEFAULT_DEADLINE_S` = 60) and
+`isolation=` (`"process"` by default; `$IEEVISUALIZER_ANIMATION_ISOLATION`
+changes the default). With `"process"` the render or export runs in a fresh
+worker interpreter (`ieeVisualizer.animation.isolate`): the spec, request
+and data (references are resolved in the caller first) go in, phase and
+progress stream back, and at the deadline the worker's whole process group,
+ffmpeg included, is killed and its temporary directory removed. The deadline
+is then a wall-clock bound: **overrun at most `ISOLATION_SLACK_S` = 1 s**
+(measured 5-6 ms over 1, 2 and 5 s deadlines for GIF, MP4 and GIF + MP4
+exports, and for an ffmpeg that blocks the frame pipe). Starting a worker
+costs about 0.9 s, inside the deadline. A worker also cannot leave
+Matplotlib's global state changed. The writer of an export runs in the
+caller, after the deadline is checked once more.
+
+`isolation="inline"` (and calling an adapter's `render`/`plan` directly)
+runs in the caller with cooperative checks only, between pipeline phases
+(validate, prepare, plan, parse, limits, draw, encode) and before every
+state and frame: best effort, for tests and debugging. One step that holds
+the GIL (a draw, a SymPy build, the GIF write, a pipe write to an ffmpeg
+that stopped reading) overruns it.
+
+On expiry `DeadlineExceeded` (an `AnimationError`) is raised with one issue
 `render_deadline_exceeded` at the root path (`""`, printed as `/`) and
-`stats`: `phase`, `elapsed_s`, `deadline_s` and progress counters
-(`states_built`, `states_limited`, `states_drawn`, `frames_encoded`).
+`stats`: `phase` (the phase that was running), `elapsed_s`, `deadline_s` and
+progress counters (`states_built`, `states_limited`, `states_drawn`,
+`frames_encoded`).
 
-**Slack.** The deadline is overrun by at most one uninterruptible step:
+**Up-front refusals** keep single steps short whatever the isolation: data
+at most 1 M cells, inline or resolved (`data_too_large`, checked on resolved
+data before it is validated), a heatmap grid (distinct x x distinct y) at
+most 250,000 cells, line widths at least 0.05 pt (dash patterns scale with
+the width), math text at most 6 levels deep and 40 commands
+(`text_too_complex`), expressions within the Min/Max cost, text at most 2000
+characters; a template's data columns are charged in the estimate.
 
-* validating the spec once (about 3.7 us per inline data cell; at most
-  `MAX_ANIMATION_CELLS` = 1 M cells, `data_too_large`, so about 4 s);
-* one expression build (capped as above, about 0.55 s) or one template state
-  build (two expressions plus sampling, about 1.2 s): expressions are built
-  one at a time in a `parse` phase and cached for the render, so a state's
-  draw only looks them up;
-* drawing one state, which the estimate bounds on its model (a state the
-  estimate under-counts can still overrun by its own draw time);
-* the final GIF write, which is not started unless the time left covers
-  `GIF_WRITE_S_PER_PIXEL` x all frame pixels (at most 2.9 s at 120 M px,
-  about 1 s for chart-like frames);
-* stopping an MP4 encode: ffmpeg is killed at once; a frame being drawn in
-  the writer thread is waited for at most `STOP_JOIN_S` = 2 s.
-
-`tests/animation/test_anim_deadline.py` runs reviewer inputs (a 0.5 s
-expression over 120 states as a function sweep, a template sweep, an MP4 and
-a GIF + MP4 export) with a 2 s deadline: they stop after 2.03-2.39 s here
-(the test allows 4.5 s for slower runners).
-
-**Per-step work** is what the state changes (see `frames.py` and
-`mpl.py`): undrawn datasets are dropped once, a mark sweep shares the data,
-each expression is built once per render, a frame column reads each row's
-frame value once, and the poster is kept as drawn (an export plans and
-draws nothing again for it).
+**Per-step work** is what the state changes: undrawn datasets are dropped
+once, a mark sweep shares the data, each expression is built once per
+render, a frame column reads each row's frame value once, the data is
+validated once per export, and the poster is kept as drawn.
 
 **Memory.** Frames are streamed (one RGB frame exists at a time). A GIF
 keeps one palette byte per output-frame pixel, which Pillow's writer copies
@@ -167,7 +169,8 @@ written into every frame spec's `limits`; for a frame column, the range of
 the whole figure (all frames' rows) is used, because autoscaling a lone
 point or date is degenerate, except where a frame's range is not its rows'
 range: a heatmap takes the union of its frames on both axes, a histogram
-(which counts its frame's rows) on y. Category axes and polar/3D figures
+(which counts its frame's rows) on y. Only drawn rows count: a row in no frame is excluded, and a
+colour value whose position is null (so not drawn) is not in the colour range. Category axes and polar/3D figures
 keep automatic limits (`axis_limits_auto`).
 
 **Fixed colour scale.** A continuous colour scale (heatmap, or a scatter or

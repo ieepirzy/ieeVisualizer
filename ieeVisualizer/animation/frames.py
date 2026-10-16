@@ -277,6 +277,11 @@ def _build_template(tl: ParameterSweep, i: int, v: float) -> FigureSpec:
             for x in getattr(e, "issues", []) if x.severity == "error"
         ] or [ValidationIssue(at, "template_build_failed",
                               f"at {tl.parameter} = {v:g} (state {i}): {e}")]) from None
+    except Exception as e:  # noqa: BLE001 - a template that raises: located, structured
+        at = f"/timeline/values/{i}" if tl.values is not None else "/timeline"
+        raise SpecValidationError([ValidationIssue(
+            at, "template_build_failed", f"at {tl.parameter} = {v:g} (state {i}): "
+            f"{type(e).__name__}: {e}")]) from None
 
 
 def _guard(anim: AnimationSpec, n_states: int, resolved: bool) -> None:

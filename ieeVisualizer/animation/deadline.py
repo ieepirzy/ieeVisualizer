@@ -3,12 +3,12 @@
 The cost estimate is only an early refusal; this is the guarantee.
 ``render_animation``/``export_animation`` create a :class:`Deadline` (default
 :data:`DEFAULT_DEADLINE_S`; ``deadline=`` seconds or a shared Deadline) and
-check it between pipeline phases and before every state and frame. On
-expiry the work stops, ffmpeg is killed and reaped, temporary files are
-removed, and :class:`DeadlineExceeded` (``render_deadline_exceeded`` at the
-root path ``""``, shown as ``/``) carries ``stats``. The checks are
-cooperative: the overrun is at most one uninterruptible step, bounded as
-documented in ``docs/ANIMATION.md`` ("Deadline").
+check it between pipeline phases and before every state and frame. By
+default the work runs in a worker process killed at the deadline
+(:mod:`ieeVisualizer.animation.isolate`), so the bound is wall-clock; inline
+the checks are cooperative (best effort). On expiry
+:class:`DeadlineExceeded` (``render_deadline_exceeded`` at the root path
+``""``, shown as ``/``) carries ``stats``.
 """
 
 from __future__ import annotations
@@ -38,9 +38,13 @@ class Deadline:
         self.started = clock()
         self.phase = "start"
         self.progress: dict[str, int] = {}
-        #: Per-call memo (validation results by spec identity), so nested
+        #: Per-call memo (validation results by ``animation_hash``), so nested
         #: entry points (export -> render -> adapter) validate once.
         self.memo: dict[Any, Any] = {}
+        #: Called with this Deadline at most every 0.1 s from :meth:`check`
+        #: (a worker process reports its phase and progress this way).
+        self.report: Callable[[Deadline], None] | None = None
+        self._reported = self.started
 
     @classmethod
     def of(cls, value: Deadline | float | None) -> Deadline:
@@ -64,7 +68,11 @@ class Deadline:
         ``phase`` as the current pipeline phase."""
         if phase is not None:
             self.phase = phase
-        if self.elapsed() >= self.seconds:
+        now = self._clock()
+        if self.report is not None and now - self._reported >= 0.1:
+            self._reported = now
+            self.report(self)
+        if now - self.started >= self.seconds:
             raise self.exceeded()
 
     def exceeded(self) -> DeadlineExceeded:

@@ -47,9 +47,16 @@ from .spec import (
 
 #: Longest drawn text (title, label, annotation, string data value).
 MAX_TEXT_CHARS = 2000
-#: Most inline data cells (rows x columns, all datasets): validating a spec
-#: takes about 3.7 us per cell, in one uninterruptible step.
+#: Most data cells (rows x columns, all datasets, inline or resolved, or a
+#: template's data): validating a spec takes about 3.7 us per cell.
 MAX_ANIMATION_CELLS = 1_000_000
+#: Most grid cells (distinct x x distinct y) of one heatmap layer.
+MAX_HEATMAP_CELLS = 250_000
+#: Thinnest line (pt): dash patterns scale with the width.
+MIN_LINEWIDTH = 0.05
+#: Deepest ``{}`` nesting and most ``\`` commands in one math text.
+MAX_MATHTEXT_DEPTH = 6
+MAX_MATHTEXT_COMMANDS = 40
 #: Most :func:`minmax_cost` of one expression: one group of 11 arguments
 #: (121) builds in at most about 0.55 s however complex its arguments.
 MAX_MINMAX_COST = 128
@@ -76,10 +83,15 @@ def validate_animation(anim: AnimationSpec, *, deadline=None) -> list[Validation
     is checked between the checks."""
     if deadline is None:
         return _validate(anim, None)
-    key = ("validate", id(anim))
+    from .spec import animation_hash
+
+    try:  # by content, not identity: a spec mutated since is validated again
+        key = ("validate", animation_hash(anim))
+    except Exception:  # noqa: BLE001 - not serializable: validated every time
+        return _validate(anim, deadline)
     if key not in deadline.memo:
-        deadline.memo[key] = (anim, _validate(anim, deadline))  # anim kept: ids stay unique
-    return list(deadline.memo[key][1])
+        deadline.memo[key] = _validate(anim, deadline)
+    return list(deadline.memo[key])
 
 
 def _validate(anim: AnimationSpec, deadline) -> list[ValidationIssue]:
@@ -164,6 +176,8 @@ def _check_text(out: _Issues, path: str, text) -> None:
         out.add(path, "text_too_long",
                 f"this text has {len(text)} characters; an animation draws it in every state "
                 f"and accepts at most {MAX_TEXT_CHARS}. Shorten it.")
+    else:
+        _check_mathtext(out, path, text)
 
 
 def _is_minmax(node) -> bool:
@@ -203,16 +217,67 @@ def _check_expression(out: _Issues, path: str, text) -> None:
                 "Min/Max of 11 arguments). Use fewer Min/Max arguments.")
 
 
-def _check_figure_work(out: _Issues, fig) -> None:
-    """Text length and expression complexity of the figure (see module doc)."""
-    cells = sum(sum(len(c.values) for c in ds.columns.values())
-                for ds in (fig.datasets.values() if isinstance(fig.datasets, dict) else ())
-                if isinstance(ds, DataSnapshot))
+def _cells(datasets) -> int:
+    return sum(sum(len(c.values) for c in ds.columns.values()) for ds in datasets
+               if isinstance(ds, DataSnapshot))
+
+
+def data_issues(fig, path: str = "/figure") -> list[ValidationIssue]:
+    """The data caps, for inline or resolved data: at most
+    :data:`MAX_ANIMATION_CELLS` cells, and at most :data:`MAX_HEATMAP_CELLS`
+    grid cells (distinct x times distinct y) per heatmap layer."""
+    out = _Issues()
+    datasets = fig.datasets if isinstance(fig.datasets, dict) else {}
+    cells = _cells(datasets.values())
     if cells > MAX_ANIMATION_CELLS:
-        out.add("/figure/datasets", "data_too_large",
-                f"the inline datasets hold {cells} cells; an animation accepts at most "
+        out.add(path + "/datasets", "data_too_large",
+                f"the datasets hold {cells} cells; an animation accepts at most "
                 f"{MAX_ANIMATION_CELLS} (validating them is one step the deadline cannot "
                 "interrupt). Drop unused columns and datasets or aggregate upstream.")
+    for i, m in enumerate(fig.layers if isinstance(fig.layers, list) else ()):
+        ds = datasets.get(getattr(m, "data", None) or "")
+        enc = m.encoding if isinstance(m.encoding, dict) else {}
+        if getattr(m, "type", "") != "heatmap" or not isinstance(ds, DataSnapshot):
+            continue
+        side = [len({v for v in ds.columns[enc[a].field].values if v is not None})
+                if a in enc and enc[a].field in ds.columns else 0 for a in ("x", "y")]
+        if side[0] * side[1] > MAX_HEATMAP_CELLS:
+            out.add(f"{path}/layers/{i}", "data_too_large",
+                    f"the heatmap grid is {side[0]} x {side[1]} cells; an animation accepts "
+                    f"at most {MAX_HEATMAP_CELLS} (each frame allocates and draws the whole "
+                    "grid). Aggregate to fewer distinct x or y values.")
+    return list(out)
+
+
+def _check_style(out: _Issues, path: str, style) -> None:
+    lw = style.get("linewidth") if isinstance(style, dict) else None
+    if isinstance(lw, (int, float)) and not isinstance(lw, bool) and lw < MIN_LINEWIDTH:
+        out.add(path + "/linewidth", "invalid_value",
+                f"linewidth {lw!r} is below {MIN_LINEWIDTH} pt; a hairline dash pattern "
+                "draws millions of segments in one uninterruptible step. Use at least "
+                f"{MIN_LINEWIDTH}, or remove the layer.")
+
+
+def _check_mathtext(out: _Issues, path: str, text) -> None:
+    """``$...$`` text is laid out by Matplotlib's recursive mathtext parser."""
+    if not isinstance(text, str) or text.count("$") < 2:
+        return
+    depth = deepest = 0
+    for ch in text:
+        depth += (ch == "{") - (ch == "}")
+        deepest = max(deepest, depth)
+    commands = text.count("\\")
+    if deepest > MAX_MATHTEXT_DEPTH or commands > MAX_MATHTEXT_COMMANDS:
+        out.add(path, "text_too_complex",
+                f"this math text nests {deepest} levels with {commands} commands; an animation "
+                f"accepts at most {MAX_MATHTEXT_DEPTH} levels and {MAX_MATHTEXT_COMMANDS} "
+                "commands per text (deeper nesting overflows the parser).")
+
+
+def _check_figure_work(out: _Issues, fig) -> None:
+    """Data caps, text length and complexity, line widths and expression
+    complexity of the figure (see module doc)."""
+    out.extend(data_issues(fig))
     _check_text(out, "/figure/title", fig.title)
     _check_text(out, "/figure/caption", fig.caption)
     _check_text(out, "/figure/legend/title", getattr(fig.legend, "title", None))
@@ -222,9 +287,11 @@ def _check_figure_work(out: _Issues, fig) -> None:
     for i, a in enumerate(fig.annotations if isinstance(fig.annotations, list) else ()):
         for f in ("text", "label"):
             _check_text(out, f"/figure/annotations/{i}/{f}", getattr(a, f, None))
+        _check_style(out, f"/figure/annotations/{i}/style", getattr(a, "style", None))
     for i, m in enumerate(fig.layers if isinstance(fig.layers, list) else ()):
         p = f"/figure/layers/{i}"
         _check_text(out, p + "/name", getattr(m, "name", None))
+        _check_style(out, p + "/style", getattr(m, "style", None))
         if isinstance(m, FunctionMark):
             _check_expression(out, p + "/expression", m.expression)
         ds = fig.datasets.get(m.data) if getattr(m, "data", None) is not None \
@@ -283,6 +350,11 @@ def _check_sweep(anim: AnimationSpec, tl: ParameterSweep, out: _Issues, deadline
         return False
     if isinstance(tl.target, MarkTarget):
         return _check_mark_target(anim, tl, out)
+    if not isinstance(tl.target, TemplateTarget):
+        out.add("/timeline/target", "invalid_type",
+                f"target must be a MarkTarget or TemplateTarget, got "
+                f"{type(tl.target).__name__}.")
+        return False
     return _check_template_target(anim, tl, out, deadline)
 
 
@@ -337,6 +409,10 @@ def _check_template_target(anim: AnimationSpec, tl: ParameterSweep, out: _Issues
                 _check_expression(out, f"{p}/params/{k}", v)
             else:
                 _check_text(out, f"{p}/params/{k}", v)
+    if isinstance(t.data, DataSnapshot) and _cells([t.data]) > MAX_ANIMATION_CELLS:
+        out.add(p + "/data", "data_too_large",
+                f"the template data holds {_cells([t.data])} cells; an animation accepts at "
+                f"most {MAX_ANIMATION_CELLS}.")
     if out.errors:
         return False
     # The estimate before the template runs: the cheapest adapter at zero
@@ -349,7 +425,13 @@ def _check_template_target(anim: AnimationSpec, tl: ParameterSweep, out: _Issues
     if deadline is not None:
         deadline.check("validate")
     first = tl.values[0] if tl.values is not None else tl.start
-    for i in tpl.check(t.data, **template_params(t, tl.parameter, first)):
+    try:
+        checked = tpl.check(t.data, **template_params(t, tl.parameter, first))
+    except Exception as e:  # noqa: BLE001 - a template that raises: a structured issue
+        out.add(p, "template_check_failed", f"template {t.name!r} could not check its "
+                f"parameters at {tl.parameter} = {first:g}: {type(e).__name__}: {e}")
+        return False
+    for i in checked:
         at = "/timeline/values/0" if tl.values is not None else "/timeline"
         if i.path == "/params/" + name or i.path.startswith(f"/params/{name}/"):
             out.add(at, i.code, f"at {tl.parameter} = {first:g} (state 0), {p}{i.path}: "

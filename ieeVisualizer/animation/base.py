@@ -8,6 +8,7 @@ chosen, and the error lists what each one lacks.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
@@ -310,21 +311,29 @@ def default_animation_registry() -> AnimationRegistry:
 
 def render_animation(anim: AnimationSpec, request: AnimationRequest | None = None, *,
                      resolver=None, registry: AnimationRegistry | None = None,
-                     deadline=None) -> AnimationResult:
+                     deadline=None, isolation: str | None = None) -> AnimationResult:
     """Validate, select an adapter, enforce the guards, render, all under
     ``deadline`` (seconds or a shared
-    :class:`~ieeVisualizer.animation.deadline.Deadline`; default 60 s). Each
-    reference is resolved once, so the count checked is the count rendered."""
+    :class:`~ieeVisualizer.animation.deadline.Deadline`; default 60 s), in a
+    worker process unless ``isolation="inline"`` (see
+    :mod:`ieeVisualizer.animation.isolate`). Each reference is resolved once,
+    so the count checked is the count rendered."""
     from .deadline import Deadline
+    from .isolate import isolation_mode, resolved_payload, run_isolated, table_resolver
     from .validate import validate_animation
 
     request = request or AnimationRequest()
     deadline = Deadline.of(deadline)
+    resolver = memoized(resolver)
+    if isolation_mode(isolation) == "process":
+        table = resolved_payload(anim.figure, resolver)
+        return run_isolated("render", {"anim": anim, "request": request, "registry": registry,
+                                       "resolver": table_resolver(table) if table else None},
+                            deadline)
     errors = [i for i in validate_animation(anim, deadline=deadline) if i.severity == "error"]
     if errors:
         raise SpecValidationError(errors)
     adapter = (registry or default_animation_registry()).select(anim, request)
-    resolver = memoized(resolver)
     n_states, figure, index = counted_states(anim, resolver, deadline)
     enforce_limits(anim, request, n_states, figure, index=index,
                    cost_model=getattr(adapter.capabilities, "cost_model", "matplotlib"))
@@ -335,17 +344,30 @@ def counted_states(anim: AnimationSpec, resolver=None, deadline=None):
     """``(states, resolved base figure without undrawn datasets, frame index
     or None)`` without building any state (kept for the call with a
     ``deadline``)."""
-    key = ("counted", id(anim))
-    if deadline is not None and key in deadline.memo:
-        return deadline.memo[key][1]
+    from .spec import animation_hash
+
+    key = ("counted", animation_hash(anim), id(resolver)) if deadline is not None else None
+    if key in (deadline.memo if deadline is not None else ()):
+        return deadline.memo[key]
     from ..render.prepare import prepare
     from .frames import drawn_only, resolved_frame_index
     from .limits import sweep_state_count
 
     if deadline is not None:
         deadline.check("prepare")
-    figure = prepare(drawn_only(anim.figure), resolver).spec if anim.figure is not None \
-        else None
+    figure = None
+    if anim.figure is not None:
+        drawn = drawn_only(anim.figure)
+        if resolver is not None:  # the data caps hold for resolved data too
+            from ..render.prepare import bound_refs
+            from .validate import data_issues
+
+            resolved = {k: resolver(r) for k, r in bound_refs(drawn).items()}
+            errors = data_issues(dataclasses.replace(drawn, datasets={**drawn.datasets,
+                                                                      **resolved}))
+            if errors:
+                raise SpecValidationError(errors)
+        figure = prepare(drawn, resolver).spec
     tl = anim.timeline
     if isinstance(tl, FrameColumn):
         index = resolved_frame_index(figure, tl)
@@ -353,7 +375,7 @@ def counted_states(anim: AnimationSpec, resolver=None, deadline=None):
     else:
         out = (sweep_state_count(tl, anim.fps), figure, None)
     if deadline is not None:
-        deadline.memo[key] = (anim, out)
+        deadline.memo[key] = out
     return out
 
 
@@ -367,16 +389,10 @@ def memoized(resolver):
     returns it unchanged, so callers can wrap freely."""
     if resolver is None or getattr(resolver, "_ieev_memoized", False):
         return resolver
-    from ..spec._common import canonical_json
-    from ..spec.data import dataset_to_dict
-
     cache: dict[Any, tuple[Any, Any]] = {}
 
     def resolve(ref):
-        try:
-            key: Any = canonical_json(dataset_to_dict(ref))
-        except Exception:  # noqa: BLE001 - not a serializable reference: key by identity
-            key = ("id", id(ref))
+        key = ref_key(ref)
         hit = cache.get(key)
         if hit is None:
             hit = cache[key] = (ref, resolver(ref))  # the ref is kept: ids stay unique
@@ -385,3 +401,13 @@ def memoized(resolver):
     resolve._ieev_memoized = True  # type: ignore[attr-defined]
     return resolve
 
+
+def ref_key(ref) -> Any:
+    """A DatasetRef's identity by content (its canonical JSON)."""
+    from ..spec._common import canonical_json
+    from ..spec.data import dataset_to_dict
+
+    try:
+        return canonical_json(dataset_to_dict(ref))
+    except Exception:  # noqa: BLE001 - not a serializable reference: key by identity
+        return ("id", id(ref))
