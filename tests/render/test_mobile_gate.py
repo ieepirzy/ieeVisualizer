@@ -4,7 +4,10 @@ off, category labels, annotations that vanish, clipped text."""
 
 from __future__ import annotations
 
+from collections import Counter
+
 import pytest
+from anchored import anchored
 from test_mobile_profiles import example, gate_refuses, measure, problems
 
 from ieeVisualizer import templates
@@ -26,6 +29,7 @@ from ieeVisualizer.spec import (
 )
 
 PHONE = get_profile("email-phone")
+DESKTOP = RenderRequest(format="png", width=1920, height=1152, units="px", dpi=192)
 
 
 def words(texts, ticks=False) -> set:
@@ -40,16 +44,91 @@ TEMPLATES = [e["name"] for e in templates.list_templates()]
 def test_every_template_is_legible_at_every_profile_and_shows_every_word(monkeypatch, name,
                                                                          profile):
     """Every template's example passes the send gate at every profile, and
-    every word a plain desktop render draws outside the tick labels (titles,
-    labels, legend, value labels, notes, annotations, node labels) is drawn
-    outside the tick labels of the profile render too: nothing is left out,
-    shortened or hidden to make it fit."""
+    every text of a plain desktop render is in the profile render too with
+    the same words in the same order, belonging to the same thing (its
+    anchor: node, bar, legend entry, category tick, annotation position;
+    tests/render/anchored.py) - and nothing else: nothing left out,
+    shortened, moved off its data or attributable to another node."""
     spec = example(name)
-    _, desk, _ = measure(monkeypatch, spec, RenderRequest(format="png", width=1920, height=1152,
-                                                          units="px", dpi=192), css=960)
+    _, desk, _ = measure(monkeypatch, spec, DESKTOP, css=960)
     result, texts, _ = measure(monkeypatch, spec, get_profile(profile).figure_request("png"))
     check_legible(result)
     assert words(desk) - words(texts) == set()
+    want, got = anchored(spec, DESKTOP), anchored(spec, get_profile(profile).figure_request("png"))
+    assert (want - got, got - want) == (Counter(), Counter())
+
+
+def _funnel_with_a_note() -> FigureSpec:
+    """The funnel with a caller's own annotation at a data position."""
+    spec = example("funnel")
+    spec.annotations.append(TextAnnotation(text="Budget cap here", x=20000.0, y="Visited site"))
+    return spec
+
+
+@pytest.mark.parametrize("profile", [p.name for p in list_profiles()])
+def test_a_callers_annotation_keeps_its_data_position(profile):
+    """Only a template's row notes (whose x is a layout position) may move;
+    a caller's annotation stays at its data anchor at every profile."""
+    spec = _funnel_with_a_note()
+    want, got = anchored(spec, DESKTOP), anchored(spec, get_profile(profile).figure_request("png"))
+    assert (want - got, got - want) == (Counter(), Counter())
+    built = build_figure(spec, get_profile(profile).figure_request("png"))
+    (note,) = [a for a in built.annotation_artists if "Budget" in a.get_text()]
+    assert note.xy[0] == 20000.0
+
+
+def _random_network(rnd, trial):
+    from ieeVisualizer.network import Edge, NetworkSpec, Node
+    from ieeVisualizer.network.model import Layout
+
+    words = ["Chief", "executive", "Operations", "Finance", "Accounting", "Business", "sales",
+             "Consumer", "Fleet", "Field", "teams", "Support", "Logistics", "Warehouse", "North"]
+    n = rnd.randint(4, 22)
+    nodes = [Node(id=f"n{i}", label=" ".join(rnd.choice(words) for _ in range(rnd.randint(1, 3))))
+             for i in range(n)]
+    edges = [Edge(source=f"n{rnd.randrange(i)}", target=f"n{i}") for i in range(1, n)]
+    layout = Layout(algorithm=rnd.choice(["force", "circular", "layered"]),
+                    direction=rnd.choice(["TB", "LR"]), seed=trial)
+    return NetworkSpec(nodes=nodes, edges=edges, layout=layout, title="T")
+
+
+def _network_cases():
+    import random
+
+    rnd = random.Random(1)
+    cases = [(f"template {e['name']}", example(e["name"])) for e in templates.list_templates()
+             if e["name"] in ("org_chart", "network", "dependency_map")]
+    return cases + [(f"random {k}", _random_network(rnd, k)) for k in range(30)]
+
+
+@pytest.mark.parametrize("request_name", ["no profile", "email-phone", "email-tablet", "desktop"])
+def test_every_node_label_is_clearly_its_own_nodes_or_said_not_to_be(request_name):
+    """A drawn node label is nearer its own node than any other (by a
+    margin), or the render says it is not (``label_ambiguous``, gating) -
+    for the templates and 30 seeded random networks, with and without a
+    profile."""
+    from anchored import MARGIN_PX, owner
+
+    from ieeVisualizer.network.render import build_network
+
+    req = DESKTOP if request_name == "no profile" else \
+        get_profile(request_name).figure_request("png")
+    silent = []
+    for name, spec in _network_cases():
+        built = build_network(spec, req)
+        fig, ax = built.figure, built.axes
+        renderer = fig.canvas.get_renderer()
+        centres = ax.transData.transform(built.node_xy)
+        radii = [(a ** 0.5) / 2 * fig.dpi / 72.0 for a in built.node_areas]
+        flagged = set(built.ambiguous_labels)
+        for i, t in built.labels.items():
+            who = owner(i, t.get_window_extent(renderer), centres, radii,
+                        MARGIN_PX * fig.dpi / 192.0)
+            if who != i and i not in flagged:
+                silent.append((name, spec.nodes[i].display_label, who))
+        if flagged:
+            assert "label_ambiguous" in {w.code for w in built.warnings}
+    assert silent == []
 
 
 def view_words(monkeypatch, make) -> tuple:
@@ -234,3 +313,29 @@ def test_funnel_rates_sit_under_their_own_rows_value_label_on_a_phone():
         assert not any(box.overlaps(o.text.get_window_extent()) for o in ctx.value_labels)
         assert " ".join(a.get_text().split()).endswith("of previous")
     assert "figure_grown" in {w.code for w in built.warnings}
+
+
+def _wide_tree(direction: str = "TB", n: int = 12):
+    from ieeVisualizer.network import Edge, NetworkSpec, Node
+    from ieeVisualizer.network.model import Layout
+
+    nodes = [Node(id="root", label="Head office")] + [
+        Node(id=f"l{i}", label=f"Regional warehouse {i}") for i in range(n)]
+    edges = [Edge(source="root", target=f"l{i}") for i in range(n)]
+    return NetworkSpec(nodes=nodes, edges=edges, layout=Layout("layered", direction=direction))
+
+
+def test_a_network_too_big_for_the_phone_is_refused_with_the_real_reason():
+    from ieeVisualizer.network import render_network
+
+    top_down = render_network(_wide_tree("TB"), PHONE.figure_request("png"))
+    assert gate_refuses(top_down)
+    (w,) = [w for w in top_down.warnings if w.code in ("labels_skipped", "labels_abbreviated",
+                                                       "label_ambiguous")][:1]
+    assert "a taller figure does not help" in w.message and "grown" not in w.message
+    assert "too big for this screen" in w.message
+    left_right = render_network(_wide_tree("LR", 60), PHONE.figure_request("png"))
+    assert gate_refuses(left_right)
+    msgs = [w.message for w in left_right.warnings
+            if w.code in ("labels_skipped", "labels_abbreviated", "label_ambiguous")]
+    assert msgs and all("grown to" in m and "too big for this screen" in m for m in msgs)

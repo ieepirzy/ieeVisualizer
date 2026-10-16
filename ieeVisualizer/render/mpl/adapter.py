@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import contextlib
 import io
-import logging
 import math
 import warnings as _warnings
 from dataclasses import dataclass, field
@@ -110,26 +109,10 @@ def render_context(theme: Any, min_pt: float = 0.0):
 
         floor = font_floor_rc(min_pt) if min_pt else {}
         floor["font.family"] = with_fallbacks(matplotlib.rcParams["font.family"])
-        with matplotlib.rc_context(floor), _quiet_font_weights():
+        from .style import quiet_fallback_weights
+
+        with matplotlib.rc_context(floor), quiet_fallback_weights():
             yield
-
-
-class _NoWeightLog(logging.Filter):
-    """Drops matplotlib's "Failed to find font weight" record: a CJK
-    fallback often has only one weight, which is the one it is drawn in."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        return "Failed to find font weight" not in record.getMessage()
-
-
-@contextlib.contextmanager
-def _quiet_font_weights():
-    log, quiet = logging.getLogger("matplotlib.font_manager"), _NoWeightLog()
-    log.addFilter(quiet)  # only that logger, only while rendering
-    try:
-        yield
-    finally:
-        log.removeFilter(quiet)
 
 
 def _min_pt(request: RenderRequest) -> float:
@@ -344,7 +327,13 @@ class MatplotlibAdapter:
         if ctx.min_pt:
             from matplotlib.text import Annotation
 
-            ctx.text_annotations = [a for a in ann if isinstance(a, Annotation)]
+            # only text whose x is a layout position, not data: a template
+            # says which (the funnel's rate column); a caller's annotation
+            # keeps its data position and the audit reports a collision
+            meta = spec.metadata.get("template") if isinstance(spec.metadata, dict) else None
+            movable = set(meta.get("row_notes") or ()) if isinstance(meta, dict) else set()
+            ctx.text_annotations = [a for a in ann if isinstance(a, Annotation)
+                                    and getattr(a, "_ieev_index", None) in movable]
         fit_value_labels(ctx)
         apply_legend(ctx)  # last: an "auto" legend is placed against the final layout
         return BuiltFigure(figure=fig, axes=ax, warnings=warnings,

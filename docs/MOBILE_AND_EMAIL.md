@@ -159,24 +159,34 @@ profile wraps long names at spaces until one column fits under the plot,
 then takes as many columns as fit. Views and emails lay a figure out at the
 height its render will take (`FigureRenderer.fitted_height`).
 
-**Text annotations on bar rows** (a funnel's rate column): when one lies
-over a value label or past the plot's right edge, every annotation anchored
-on a horizontal bar's row moves under its own row's value label, wrapped to
-the room left, and the plot grows until each row holds both. Words and rows
-stay; only the position changes.
+**Row notes** (a funnel's rate column): a template lists the text
+annotations whose x is only a layout position, not data
+(`metadata["template"]["row_notes"]`). When one lies over a value label or
+past the plot's right edge, every row note moves under its own row's value
+label, wrapped to the room left, and the plot grows until each row holds
+both. Words and rows stay. Any other annotation keeps its data position; if
+it collides, the audit reports the overlap or clipping and the gate refuses.
 
 **Networks** (node-link layouts; the adjacency matrix view is not yet
 adapted): labels, legend and caption at least the minimum, the title 3 pt
 larger. On a phone the graph takes the full width with the legend sections
 below it, side by side where they fit; elsewhere the legend keeps its column
-on the right. A label that collides tries its full text wrapped at spaces
-(2, 3, ... lines) and more places (above, beside, below kept inside the
-image, clear of the legend and title) before the old shortening, and the
-figure grows while labels do not fit (not for top-down layered layouts,
-which are crowded across). A network still too big is refused with
-`labels_skipped` / `labels_abbreviated`, whose message then says the network
-is too big for the profile and what to do (wider profile, fewer nodes, the
-text outline).
+on the right. The layout leaves room at its edges for half a label across and
+two lines up and down. A label tries its full text, then wrapped at spaces
+(2, 3, ... lines), at the layout's own places, then at more places (above,
+beside, below kept inside the image, clear of the legend and title), before
+the old shortening; labels that found no clear place are placed first in a
+second try, and the figure grows while labels do not fit (not for top-down
+layered layouts, which are crowded across). A network still too big is
+refused with `labels_skipped`, `labels_abbreviated` or `label_ambiguous`,
+whose message says why it stopped (height limit, top-down layout, rounds)
+and what to do (wider profile, fewer nodes, the text outline).
+
+**A node label belongs to its node** (every network render, profile or
+not): a place is taken only if the label box is at least 3 pt nearer its own
+node's centre than the rim of any other node. A label with free places but
+no such one is drawn at the first free place with a gating
+`label_ambiguous` warning naming the node.
 
 **Flows** on a profile: after the top-to-bottom fallback, node boxes narrow
 step by step (labels wrap at spaces onto more lines, never narrower than the
@@ -186,8 +196,9 @@ instead of 24 px, like the email's own gutters.
 
 **Wide tables.** A view PNG with a profile never cuts a cell: a table whose
 columns do not fit is drawn as one card per row (each cell under its column
-name; text values wrapped, numbers, dates and booleans whole - one wider
-than its card is `value_too_wide_for_screen`), with the same "One card per
+name; text values wrapped between words, numbers, dates and booleans whole -
+a value or word wider than its card is `value_too_wide_for_screen`, never
+split), with the same "One card per
 row" note as the email. Without a profile the PNG cuts cells with "…" as
 before. The email shows a
 table that does not fit the phone width as one card per row with every cell
@@ -199,11 +210,14 @@ screen width). There is no horizontal scrolling.
 TC, KR), Source Han Sans, WenQuanYi Zen Hei / Micro Hei or Droid Sans
 Fallback is appended to every render's font family list (figures, networks
 and view PNG labels), so a character DejaVu Sans lacks is drawn from it
-instead of as a box. Latin text is drawn by the theme's font as before
-(renders without a profile keep main's bytes). The glyph check resolves the
-same list, so a character no installed font has is still `glyph_missing`.
-Matplotlib's "Failed to find font weight" log record (such fonts often have
-one weight) is filtered on its logger while rendering.
+instead of as a box. This applies to every render, with or without a
+profile: text the theme's font draws (Latin, the recorded cases) keeps
+main's bytes, but text with characters it lacks (CJK) now draws them instead
+of boxes, so those renders change. The glyph check resolves the same list,
+so a character no installed font has is still `glyph_missing`. Matplotlib's
+"Failed to find font weight ... for <the fallback>" record (such fonts often
+have one weight) is dropped on its logger while rendering, on the rendering
+thread only; the same record for a theme's own font still reaches the log.
 
 ## The send gate
 
@@ -213,7 +227,7 @@ above, and every code meaning the output shows less than the data holds or
 could not be laid out - `value_labels_omitted`, `value_label_outside_axes`,
 `no_data_unplaceable`, `category_labels_thinned`, `table_cells_truncated`,
 `flow_text_too_small`, `kpi_value_compacted`, `labels_abbreviated` /
-`labels_skipped` / `matrix_labels_omitted` (networks),
+`labels_skipped` / `label_ambiguous` / `matrix_labels_omitted` (networks),
 `annotation_outside_view`, `annotation_skipped`, `layout_collapsed`,
 `email_clipped_by_gmail`, `email_not_phone_safe`,
 `value_too_wide_for_screen` (a value that must stay whole is wider than the
@@ -330,10 +344,15 @@ email profiles and writes, per file, every warning the gate refuses
 (`legibility.json`). Every template example (bar comparison, funnel,
 timeseries, vector field, dependency map, network, org chart), both gallery
 views as phone and tablet PNG and both emails pass the gate.
-`tests/render/test_mobile_gate.py` checks, for every template example and
-both gallery views at every profile (desktop included), that the gate passes
-and that every word a desktop render draws outside the tick labels is drawn
-on the profile render too.
+`tests/render/test_mobile_gate.py` checks, for every template example at
+every profile (desktop included), that the gate passes and that every text
+of the desktop render is in the profile render with the same words in the
+same order and the same anchor - node (as a reader attributes it), bar,
+legend entry, category tick, annotation data position or row
+(`tests/render/anchored.py`) - and nothing else; for both gallery views that
+the gate passes and no word of the desktop render is missing; and, for the
+templates and 30 seeded random networks with and without a profile, that
+every node label is clearly its own node's or reported `label_ambiguous`.
 
 ## Follow-ups
 

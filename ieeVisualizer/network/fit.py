@@ -40,7 +40,8 @@ class Frame:
     legend_xy: tuple = ()  # figure-fraction upper-left corner per legend section
     axes_rect: tuple = (0.02, 0.07, 0.68, 0.84)
     profile: str = ""
-    capped: bool = False
+    capped: bool = False  # the figure is at its height limit
+    gave_up: str = ""  # why labels still do not fit: "limit", "across" or "rounds"
     sizes: tuple = field(default=(), compare=False)
 
     def legend_at(self, k: int, sections: list) -> tuple[float, float]:
@@ -63,6 +64,19 @@ class Frame:
                 out.append(text)
         return out
 
+    def side_pad(self, spec: Any, ax: Any) -> tuple[float, float]:
+        """Extra x and y range (data units; the layout spans 1) on each side
+        so a label beside, above or below a node at the edge stays inside
+        the graph: half the widest label (wrapped onto two lines where it has
+        spaces) across, two lines of text up and down."""
+        widest = 0.0
+        for n in spec.nodes:
+            text = (self.wrapped(n.display_label, self.small) or [n.display_label])[0]
+            widest = max(widest, _width(text, self.small))
+        box = ax.get_position()
+        return (_pad(widest / 2 + 3.0, box.width * self.width_in * 72.0, 1.16, 0.08),
+                _pad(2.6 * self.small + 6.0, box.height * self.height_in * 72.0, 1.18, 0.1))
+
     @staticmethod
     def spots(r: float) -> list[tuple]:
         """Places tried after a layout's own: above, right, left of the node."""
@@ -78,13 +92,19 @@ class Frame:
         return bb.x0 >= 0 and bb.y0 >= 0 and bb.x1 <= fig.bbox.width and bb.y1 <= fig.bbox.height
 
     def too_big_advice(self) -> str:
-        if not self.capped:
+        why = {
+            "limit": "even with the figure grown to its limit of "
+                     f"{self.height_in / self.width_in:.1f} times its width",
+            "across": "and a taller figure does not help: a top-down layout's layers are "
+                      "crowded across, and the width is fixed",
+            "rounds": f"even with the figure grown to {self.height_in / self.width_in:.1f} times "
+                      "its width",
+        }.get(self.gave_up)
+        if why is None:
             return ""
-        return (f" At the {self.profile} profile's minimum text size the labels do not fit even "
-                f"with the figure grown to {self.height_in / self.width_in:.1f} times its width: "
-                "the network is too big for this screen. Use a wider profile, show fewer nodes "
-                "or send the text outline.")
-
+        return (f" At the {self.profile} profile's minimum text size the labels do not fit "
+                f"{why}: the network is too big for this screen. Use a wider profile, show "
+                "fewer nodes or send the text outline.")
 
 def _width(text: str, size: float, bold: bool = False) -> float:
     from matplotlib.font_manager import FontProperties
@@ -93,6 +113,16 @@ def _width(text: str, size: float, bold: bool = False) -> float:
     prop = FontProperties(size=size, weight="bold" if bold else "normal")
     return max(TextToPath().get_text_width_height_descent(line, prop, ismath=False)[0]
                for line in text.split("\n"))
+
+
+def _pad(need_pt: float, axes_pt: float, span: float, have: float) -> float:
+    """Extra range p on each side of [-have - p, 1 + have + p] (spanning
+    ``span`` + 2p) so that ``need_pt`` of the axes' ``axes_pt`` lies beyond
+    the layout's edge."""
+    k = need_pt / axes_pt
+    if k >= 0.45:
+        return 0.0
+    return max(0.0, (span * k - have) / (1 - 2 * k))
 
 
 def _lines(text: str) -> int:
@@ -124,15 +154,20 @@ def fit_network(spec: Any, request: Any, draw: Any) -> Any:
         sizes = tuple((leg.get_window_extent(built.figure.canvas.get_renderer()).width / dpi,
                        leg.get_window_extent(built.figure.canvas.get_renderer()).height / dpi)
                       for leg in built.legends)
-        if (built.skipped_labels or built.abbreviated_labels) and tall_helps:
+        if _unfitted(built) and tall_helps:
             grow *= GROW
         new = _layout(frame, sizes, grow, h_in, MAX_GROWN_ASPECT * w_in)
         if new == frame:
             break
         frame = new
-    if built.skipped_labels or built.abbreviated_labels:  # say so, with what to do
-        built = draw(replace(frame, capped=True))
+    if _unfitted(built):  # say so, with the reason and what to do
+        why = "across" if not tall_helps else "limit" if frame.capped else "rounds"
+        built = draw(replace(frame, gave_up=why))
     return built
+
+
+def _unfitted(built: Any) -> bool:
+    return bool(built.skipped_labels or built.abbreviated_labels or built.ambiguous_labels)
 
 
 def _layout(f: Frame, sizes: tuple, grow: float, min_h: float, max_h: float) -> Frame:

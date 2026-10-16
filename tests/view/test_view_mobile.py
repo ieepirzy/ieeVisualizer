@@ -179,3 +179,17 @@ def test_email_reports_gmail_clipping():
     email = render_email(view)
     assert len(email.html.encode()) > 102 * 1024
     assert "email_clipped_by_gmail" in {w.code for w in email.warnings}
+
+
+def test_phone_png_table_cards_keep_long_tokens_whole_and_gate_them():
+    from ieeVisualizer.render import LegibilityError, check_legible
+
+    url = "https://example.com/a/very/long/unbroken/path/segment/that/cannot/wrap?id=123456"
+    view = ViewSpec(datasets={"t": DataSnapshot.from_columns({
+        "Customer reference": [url, "Helsinki A"], "Revenue total for the period": [1.0, 3.0],
+        "Created at": ["2026-01-07", "2026-01-08"]})},
+        root=Stack(children=[Table(data="t")]))
+    items, _, _ = layout_view(view, 320, get_profile("email-phone"))
+    assert url in [lab.text for lab in _labels(items)]  # whole, on one line
+    with pytest.raises(LegibilityError, match="value_too_wide_for_screen"):
+        check_legible(render_view(view, "png", profile="email-phone"))

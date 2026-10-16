@@ -73,6 +73,7 @@ class BuiltNetwork:
     labels: dict[int, Any] = field(default_factory=dict)
     skipped_labels: list[int] = field(default_factory=list)
     abbreviated_labels: list[int] = field(default_factory=list)
+    ambiguous_labels: list[int] = field(default_factory=list)
     legends: list = field(default_factory=list)
     matrix: Any = None
     sections: list = field(default_factory=list)
@@ -249,8 +250,9 @@ def _draw(spec: NetworkSpec, lay: LayoutResult, request: RenderRequest,
     ax.set_axis_off()
     equal = spec.layout.algorithm in ("force", "circular")
     xy = _frame(lay.xy, equal)
-    ax.set_xlim(-0.08, 1.08)
-    ax.set_ylim(-0.1, 1.08)
+    pad, vpad = (0.0, 0.0) if frame is None else frame.side_pad(spec, ax)
+    ax.set_xlim(-0.08 - pad, 1.08 + pad)
+    ax.set_ylim(-0.1 - vpad, 1.08 + vpad)
     if equal:
         ax.set_aspect("equal", adjustable="box",
                       anchor="C" if frame is not None and frame.narrow else "W")
@@ -421,8 +423,12 @@ def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]
                   frame: Any = None) -> None:
     """Greedy collision avoidance in display space. Nodes in priority order
     (degree, then size, then declaration order) try their full label, then
-    abbreviations of 12 and 6 characters; a label that would still overlap a
-    placed label or another node is left out. Both outcomes are warned."""
+    abbreviations of 12 and 6 characters (profile renders: wrapped versions
+    and more places first). A place is taken only when it is free and the
+    label is clearly nearer its own node than any other
+    (:func:`_attributable`); a label with free but no such place is drawn at
+    the first free one with a ``label_ambiguous`` warning, a label with no
+    free place is left out. Each outcome is warned."""
     from matplotlib.transforms import Bbox
 
     ax, fig = built.axes, built.figure
@@ -439,52 +445,97 @@ def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]
         deg[idx[e.target]] += 1
     prio = sorted(range(len(spec.nodes)),
                   key=lambda i: (-deg[i], -(spec.nodes[i].size or 0.0), i))
-    placed: list[Any] = []
-    if frame is not None:  # profile renders: labels keep clear of the legend and title
-        placed += [leg.get_window_extent(renderer) for leg in built.legends]
-        if ax.title.get_text():
-            placed.append(ax.title.get_window_extent(renderer))
-    fontsize = 7.5 if len(spec.nodes) <= 60 else 6.5
-    if frame is not None:
-        fontsize = max(fontsize, frame.small)
-    for i in prio:
-        full = spec.nodes[i].display_label
-        cands = [full] + ([] if frame is None else frame.wrapped(full, fontsize)) \
-            + [full[:c].rstrip() + "…" for c in (12, 6) if len(full) > c + 1]
-        below = ((0.0, -(radius_pt[i] + 2)), "center", "top", False)
-        spots = [below]
-        if spec.layout.algorithm == "layered" and spec.layout.direction == "TB":
-            # beside the node first (below it is where the edges to its children
-            # start), if that stays inside the axes; else below as elsewhere
-            spots = [((radius_pt[i] + 3, 0.0), "left", "center", True), below]
-        elif spec.layout.algorithm == "circular":  # radially outwards
-            dx, dy = built.node_xy[i] - 0.5
-            norm = max((dx * dx + dy * dy) ** 0.5, 1e-9)
-            spots = [((dx / norm * (radius_pt[i] + 3), dy / norm * (radius_pt[i] + 3)),
-                      "left" if dx > 0.05 else "right" if dx < -0.05 else "center",
-                      "bottom" if dy > 0.05 else "top" if dy < -0.05 else "center", False)]
-        if frame is not None:  # profile renders: more places before giving up on a label
-            spots = spots + [sp for sp in frame.spots(radius_pt[i]) if sp not in spots]
-        for text, (off, ha, va, inside) in ((c, sp) for c in cands for sp in spots):
-            t = ax.annotate(text, xy=tuple(built.node_xy[i]), xytext=off,
-                            textcoords="offset points", ha=ha, va=va,
-                            fontsize=fontsize, color="0.15", zorder=4,
-                            bbox={"boxstyle": "round,pad=0.12", "fc": "white", "ec": "none",
-                                  "alpha": 0.8})
-            bb = t.get_window_extent(renderer)
-            clash = any(bb.overlaps(o) for o in placed) or any(
-                bb.overlaps(o) for j, o in enumerate(obstacles) if j != i) or (
-                inside and bb.x1 > ax.bbox.x1) or (
-                frame is not None and not frame.inside(bb, fig))
-            if not clash:
-                placed.append(bb)
-                built.labels[i] = t
-                if text != full:
-                    built.abbreviated_labels.append(i)
-                break
+
+    def place(order: list[int]) -> None:
+        built.labels, built.abbreviated_labels = {}, []
+        built.skipped_labels, built.ambiguous_labels = [], []
+        placed: list[Any] = []
+        if frame is not None:  # profile renders: labels keep clear of the legend and title
+            placed += [leg.get_window_extent(renderer) for leg in built.legends]
+            if ax.title.get_text():
+                placed.append(ax.title.get_window_extent(renderer))
+        fontsize = 7.5 if len(spec.nodes) <= 60 else 6.5
+        if frame is not None:
+            fontsize = max(fontsize, frame.small)
+        for i in order:
+            full = spec.nodes[i].display_label
+            whole = [full] + ([] if frame is None else frame.wrapped(full, fontsize))
+            short = [full[:c].rstrip() + "…" for c in (12, 6) if len(full) > c + 1]
+            below = ((0.0, -(radius_pt[i] + 2)), "center", "top", False)
+            spots = [below]
+            if spec.layout.algorithm == "layered" and spec.layout.direction == "TB":
+                # beside the node first (below it is where the edges to its children
+                # start), if that stays inside the axes; else below as elsewhere
+                spots = [((radius_pt[i] + 3, 0.0), "left", "center", True), below]
+            elif spec.layout.algorithm == "circular":  # radially outwards
+                dx, dy = built.node_xy[i] - 0.5
+                norm = max((dx * dx + dy * dy) ** 0.5, 1e-9)
+                spots = [((dx / norm * (radius_pt[i] + 3), dy / norm * (radius_pt[i] + 3)),
+                          "left" if dx > 0.05 else "right" if dx < -0.05 else "center",
+                          "bottom" if dy > 0.05 else "top" if dy < -0.05 else "center", False)]
+            extra = [] if frame is None else [  # profile renders: more places
+                sp for sp in frame.spots(radius_pt[i]) if sp not in spots]
+            # the whole label (or, on a profile, wrapped) at the layout's own
+            # places, then at the extra ones, then shortened anywhere
+            tries = [(c, sp) for sp in spots for c in whole] \
+                + [(c, sp) for sp in extra for c in whole] \
+                + [(c, sp) for c in short for sp in spots + extra]
+            if frame is None:  # main's order: each text at every place in turn
+                tries = [(c, sp) for c in whole + short for sp in spots]
+            fallback = None  # the first free place, if no place is clearly this node's
+            for text, (off, ha, va, inside) in tries:
+                t = ax.annotate(text, xy=tuple(built.node_xy[i]), xytext=off,
+                                textcoords="offset points", ha=ha, va=va,
+                                fontsize=fontsize, color="0.15", zorder=4,
+                                bbox={"boxstyle": "round,pad=0.12", "fc": "white", "ec": "none",
+                                      "alpha": 0.8})
+                bb = t.get_window_extent(renderer)
+                clash = any(bb.overlaps(o) for o in placed) or any(
+                    bb.overlaps(o) for j, o in enumerate(obstacles) if j != i) or (
+                    inside and bb.x1 > ax.bbox.x1) or (
+                    frame is not None and not frame.inside(bb, fig))
+                if not clash and _attributable(i, bb, pts, radius_pt, px):
+                    fallback = None
+                    break
+                if not clash and fallback is None:
+                    fallback = (text, off, ha, va)
+                t.remove()
+            else:
+                t = None
+                if fallback is not None:  # drawn, but said to be ambiguous
+                    text, off, ha, va = fallback
+                    t = ax.annotate(text, xy=tuple(built.node_xy[i]), xytext=off,
+                                    textcoords="offset points", ha=ha, va=va,
+                                    fontsize=fontsize, color="0.15", zorder=4,
+                                    bbox={"boxstyle": "round,pad=0.12", "fc": "white",
+                                          "ec": "none", "alpha": 0.8})
+                    bb = t.get_window_extent(renderer)
+                    built.ambiguous_labels.append(i)
+            if t is None:
+                built.skipped_labels.append(i)
+                continue
+            placed.append(bb)
+            built.labels[i] = t
+            if " ".join(text.split()) != " ".join(full.split()):  # wrapping is not shortening
+                built.abbreviated_labels.append(i)
+
+    place(prio)
+    for _ in range(2 if frame is not None else 0):
+        # profile renders: the labels that found no clear place go first
+        failed = built.skipped_labels + built.ambiguous_labels + built.abbreviated_labels
+        if not failed:
+            break
+        first = len(failed)
+        for t in built.labels.values():
             t.remove()
-        else:
-            built.skipped_labels.append(i)
+        place(failed + [i for i in prio if i not in failed])
+        if len(built.skipped_labels + built.ambiguous_labels + built.abbreviated_labels) < first:
+            continue
+        for t in built.labels.values():  # no better: the first placement again
+            t.remove()
+        place(prio)
+        break
+    advice = "" if frame is None else frame.too_big_advice()
     for code, which, verb in (("labels_abbreviated", built.abbreviated_labels, "abbreviated"),
                               ("labels_skipped", built.skipped_labels, "left out")):
         if which:
@@ -492,8 +543,32 @@ def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]
             built.warnings.append(RenderWarning(
                 code, f"{len(which)} node label(s) were {verb} because they would overlap "
                 f"other labels or nodes ({names}{', ...' if len(which) > 8 else ''}); the "
-                "text outline lists every label in full." + (
-                    "" if frame is None else frame.too_big_advice()), "/nodes"))
+                "text outline lists every label in full." + advice, "/nodes"))
+    if built.ambiguous_labels:
+        which = built.ambiguous_labels
+        names = ", ".join(repr(spec.nodes[i].id) for i in sorted(which)[:8])
+        built.warnings.append(RenderWarning(
+            "label_ambiguous", f"{len(which)} node label(s) could only be placed as near "
+            f"another node as their own ({names}{', ...' if len(which) > 8 else ''}), so a "
+            "reader may attribute them to the wrong node; the text outline lists every "
+            "label with its node." + advice, "/nodes"))
+
+
+#: A label must be at least this much nearer its own node than any other (pt).
+ATTRIBUTION_MARGIN_PT = 3.0
+
+
+def _attributable(i: int, bb: Any, pts: Any, radius_pt: list[float], px: float) -> bool:
+    """Is label box ``bb`` clearly node ``i``'s: its nearest point to node
+    ``i``'s centre is :data:`ATTRIBUTION_MARGIN_PT` nearer than to the rim of
+    every other node?"""
+    def dist(x: float, y: float) -> float:
+        dx = max(bb.x0 - x, 0.0, x - bb.x1)
+        dy = max(bb.y0 - y, 0.0, y - bb.y1)
+        return (dx * dx + dy * dy) ** 0.5
+
+    own = dist(*pts[i]) + ATTRIBUTION_MARGIN_PT * px
+    return all(dist(*p) - radius_pt[j] * px > own for j, p in enumerate(pts) if j != i)
 
 
 def render_network(spec: NetworkSpec, request: RenderRequest | None = None) -> RenderResult:

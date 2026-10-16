@@ -437,9 +437,9 @@ def _fit(s: str, size: float, w: float, bold: bool = False) -> str:
 def _table_cards(n: Table, ds: DataSnapshot, names, heads, rows, path, x, y, w, ctx: Ctx):
     """A table whose columns do not fit side by side, as one card per row
     (as the email draws it): each cell under its column name, text values
-    wrapped, numbers, dates and booleans whole - one wider than the card is
-    ``value_too_wide_for_screen``, drawn whole past the card's edge rather
-    than cut or split."""
+    wrapped between words, numbers, dates and booleans whole - a value or
+    word wider than the card is ``value_too_wide_for_screen``, drawn whole
+    past the card's edge rather than cut or split."""
     from ..render import RenderWarning
 
     items: list[Item] = []
@@ -460,9 +460,10 @@ def _table_cards(n: Table, ds: DataSnapshot, names, heads, rows, path, x, y, w, 
             for line in wrap_text(h, 12, inner):
                 body.append(Label(x + 12, cy + 13, line, 12, MUTED))
                 cy += 17
-            lines = [v] if keep else wrap_text(v, 13, inner)
-            if keep and text_width(v, 13) > inner:
-                wide.append(v)
+            # a text value wraps between words only: a token (an id, a URL)
+            # split over two lines reads as two values
+            lines = [v] if keep else _wrap_words(v, 13, inner)
+            wide += [ln for ln in lines if text_width(ln, 13) > inner]
             for line in lines:
                 body.append(Label(x + 12, cy + 14, line, 13, MUTED if v == NULL_CELL else INK))
                 cy += 19
@@ -477,6 +478,20 @@ def _table_cards(n: Table, ds: DataSnapshot, names, heads, rows, path, x, y, w, 
             f"{len(wide)} value(s) of the table are wider than its {inner:.0f} px card and "
             f"must stay whole (e.g. {wide[0][:40]!r}); they run past the card's edge.", path))
     return items, cy - y
+
+
+def _wrap_words(s: str, size: float, w: float) -> list[str]:
+    """``s`` broken at spaces only; a word wider than ``w`` stays whole on
+    its own line (the caller reports it)."""
+    out, line = [], ""
+    for word in s.split(" "):
+        cand = f"{line} {word}" if line else word
+        if line and text_width(cand, size) > w:
+            out.append(line)
+            line = word
+        else:
+            line = cand
+    return out + [line]
 
 
 def _title(title: str, x: float, y: float, w: float) -> tuple[list[Item], float]:

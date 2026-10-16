@@ -57,3 +57,35 @@ def test_view_labels_use_the_fallback_too(cjk):
 
     assert label_font(Label(0, 0, "x", 13)).get_family()[-1] == fallback_families()[0]
     assert with_fallbacks("DejaVu Sans")[0] == "DejaVu Sans"  # the theme's font comes first
+
+
+def test_only_the_fallbacks_weight_record_is_filtered_and_only_on_this_thread(cjk):
+    """matplotlib logs "Failed to find font weight" when the CJK fallback
+    has one weight; that record is dropped while rendering, the same record
+    for any other font (a theme's own) and other threads' records are not."""
+    import logging
+    import threading
+
+    from ieeVisualizer.render.mpl.style import quiet_fallback_weights
+
+    seen: list = []
+
+    class Keep(logging.Handler):
+        def emit(self, record):
+            seen.append(record.getMessage())
+
+    log = logging.getLogger("matplotlib.font_manager")
+    keep = Keep()
+    log.addHandler(keep)
+    fallback = fallback_families()[0]
+    msg = "findfont: Failed to find font weight normal for %s, now using 500."
+    try:
+        with quiet_fallback_weights():
+            log.warning(msg, fallback)
+            log.warning(msg, "Some Theme Font")
+            other = threading.Thread(target=log.warning, args=(msg, fallback))
+            other.start()
+            other.join()
+    finally:
+        log.removeHandler(keep)
+    assert seen == [msg % "Some Theme Font", msg % fallback]  # the other thread's passes

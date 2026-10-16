@@ -26,6 +26,7 @@ import xml.etree.ElementTree as ET  # noqa: N817
 from typing import Any
 
 from ..render import RenderError, RenderRequest, RenderResult, RenderWarning, Resolver, render
+from ..render.mpl.style import quiet_fallback_weights
 from ..spec import SpecValidationError, ValidationIssue
 from .draw import Embed, Group, Label, esc, num, to_png, to_svg
 from .layout import NARROW_MIN_SLOT, layout_view
@@ -175,6 +176,7 @@ def nest_parts(svg: bytes, prefix: str) -> tuple[str, str]:
     return root.get("viewBox", "0 0 100 100"), inner
 
 
+@quiet_fallback_weights()
 def render_view(view: ViewSpec, format: str = "svg", *, width: float | None = None,
                 scale: float | None = None, resolver: Resolver | None = None,
                 profile: str | None = None) -> RenderResult:
