@@ -32,3 +32,43 @@ def test_infinity_is_still_refused_and_reported():
     col.values[1] = float("-inf")  # changed after construction
     spec = FigureSpec(datasets={"d": DataSnapshot(columns={"c": col})})
     assert "non_finite_number" in [i.code for i in validate(spec)]
+
+
+def _counting(monkeypatch, module, name):
+    real = getattr(module, name)
+    hits = []
+
+    def wrapper(*a, **k):
+        out = real(*a, **k)
+        hits.append(out)
+        return out
+
+    monkeypatch.setattr(module, name, wrapper)
+    return hits
+
+
+def test_the_fast_path_is_taken_for_plain_float_columns(monkeypatch):
+    """Deleting the fast path (in construction, validation or the renderer)
+    fails here, not only in a benchmark."""
+    import importlib
+
+    data = importlib.import_module("ieeVisualizer.spec.data")
+    val = importlib.import_module("ieeVisualizer.spec.validate")  # the name is shadowed
+
+    built = _counting(monkeypatch, data, "_plain_floats")
+    checked = _counting(monkeypatch, val, "finite_plain_floats")
+    col = Column([0.5, None, -0.0, 2.0])
+    assert built and built[-1] == [0.5, None, 0.0, 2.0]  # fast branch produced it
+    spec = FigureSpec(datasets={"d": DataSnapshot(columns={"c": col})})
+    validate(spec)
+    assert checked == [True]
+
+
+def test_the_renderer_reads_plain_float_columns_without_a_per_value_loop(monkeypatch):
+    import ieeVisualizer.render.mpl.data as rdata
+
+    hits = _counting(monkeypatch, rdata, "finite_plain_floats")
+    monkeypatch.setattr(rdata, "to_float", lambda *a: pytest.fail("per-value path used"))
+    out = rdata.numbers(Column([1.0, None, 3.0]), "/x")
+    assert hits == [True]
+    assert out.tolist() == [1.0, None, 3.0]

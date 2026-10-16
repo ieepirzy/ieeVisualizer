@@ -99,3 +99,22 @@ def test_colormap_is_only_resolved_where_it_is_used():
         Visualizer(colormap="no-such-map").visualize(lambda x, y: x * y, dim=3)
     with pytest.raises(ValueError, match="unknown colormap"):
         Visualizer(colormap="no-such-map").visualize_vf(rotation, dim=2)
+
+
+def _gappy(t):  # finite only at t == 0 and |t| > 3: t == 0 is an isolated point
+    return np.where(np.isclose(t, 0) | (np.abs(t) > 3), t, np.nan)
+
+
+@pytest.mark.filterwarnings("ignore:.*non-finite:RuntimeWarning")
+def test_isolated_points_keep_a_marker_the_caller_chose():
+    _, ax = plt.subplots()
+    ax.set_prop_cycle(marker=["x"])
+    Visualizer(N=9).visualize(_gappy, dim=2, ax=ax)
+    (line,) = ax.get_lines()
+    assert line.get_marker() == "x" and line.get_markevery() is None  # as ax.plot drew it
+    with plt.rc_context({"lines.marker": "s"}):
+        (line,) = Visualizer(N=9).visualize(_gappy, dim=2).axes[0].get_lines()
+    assert line.get_marker() == "s" and line.get_markevery() is None
+    # no marker chosen: the isolated point is marked (documented improvement)
+    (line,) = Visualizer(N=9).visualize(_gappy, dim=2).axes[0].get_lines()
+    assert line.get_marker() == "o" and list(line.get_markevery()) == [4]

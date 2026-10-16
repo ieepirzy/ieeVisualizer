@@ -285,7 +285,7 @@ def test_missing_weight_keeps_the_kind_dash_and_uses_a_colour_the_scale_never_us
     assert max(r, g, b) - min(r, g, b) > 0.3  # a hue: no shade of the grey scale
     weight_leg = built.legends[0]
     rows = dict(zip([t.get_text() for t in weight_leg.get_texts()],
-                    weight_leg.legend_handles))
+                    _handles(weight_leg)))
     assert to_rgba(rows["not recorded (2)"].get_color()) == to_rgba(MISSING_COLOR)
     kinds = [t.get_text() for t in built.legends[1].get_texts()]
     assert kinds == ["rail", "road"]
@@ -399,3 +399,8 @@ def test_round_trip_of_valid_unicode_text_is_unchanged():
     assert errors(spec) == []
     assert network_from_json(json.dumps(d)).title == d["title"]
     assert network_hash(spec) == network_hash(network_from_dict(d))
+
+
+def _handles(legend):
+    """``Legend.legend_handles`` (matplotlib >= 3.7; ``legendHandles`` before)."""
+    return getattr(legend, "legend_handles", None) or legend.legendHandles

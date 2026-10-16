@@ -167,7 +167,8 @@ def _figure_text(spec: Any) -> int:
     return total
 
 
-def too_narrow_at(view: ViewSpec, width: float) -> ValidationIssue | None:
+def too_narrow_at(view: ViewSpec, width: float, min_slot: float | None = None
+                  ) -> ValidationIssue | None:
     """The first container (document order) that would give a child a slot
     narrower than ``MIN_SLOT_WIDTH`` px when the view is drawn ``width`` px
     wide, as a ``too_narrow`` issue; None if every slot is wide enough. Mirrors
@@ -184,7 +185,7 @@ def too_narrow_at(view: ViewSpec, width: float) -> ValidationIssue | None:
             cols, cw, where = 1, w - 32, path
             what = "a card's frame"
         else:
-            cols = slot_columns(n)
+            cols = slot_columns(n, w, min_slot)
             cw = (w - GAP * (cols - 1)) / cols
             where = ptr_join(path, "columns") if isinstance(n, Grid) else path
             what = (f"{cols} columns" if isinstance(n, Grid)

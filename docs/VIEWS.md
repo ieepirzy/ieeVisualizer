@@ -285,6 +285,12 @@ slightly; the HTML output reflows natively and is unaffected.
 Output is deterministic: the same view, width, scale and library versions
 give byte-identical SVG, HTML and PNG.
 
+**Profiles.** `render_view(view, fmt, profile="email-phone")` takes width
+and scale from the profile, keeps text at its minimum, stacks columns on a
+narrow profile and reports what still does not fit; `render_email(view)`
+writes email-safe HTML with the figures as attached PNGs
+([MOBILE_AND_EMAIL.md](MOBILE_AND_EMAIL.md)).
+
 ## Export
 
 `export_view(view, formats=("html", "svg", "png"), writer, *, width, scale,

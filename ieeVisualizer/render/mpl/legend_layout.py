@@ -130,7 +130,7 @@ def _outside(ctx: Any, handles: list[Any], labels: list[str], kw: dict[str, Any]
         deco = ax.get_tightbbox().frozen()  # axes, tick labels, axis labels; no legend
         frame = ax.get_window_extent().frozen()  # frozen: positions are restored below
     width_in, height_in = fig.get_size_inches()
-    if width_in / height_in < WIDE_ASPECT:
+    if width_in / height_in < WIDE_ASPECT and not ctx.narrow:  # narrow: width is scarce
         gap = max(0.0, deco.x1 - frame.x1) / fig.dpi + PAD_IN
         shift = ScaledTranslation(gap, 0.0, fig.dpi_scale_trans)
         legend = ax.legend(handles, labels, loc="center left", bbox_to_anchor=(1.0, 0.5),

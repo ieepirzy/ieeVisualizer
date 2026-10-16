@@ -76,6 +76,10 @@ class DrawContext:
     role_styling: bool = True
     #: True when drawing into a caller's existing axes (``draw_into``).
     caller_axes: bool = False
+    #: The request's :class:`~ieeVisualizer.render.profiles.RenderProfile`
+    #: (None = no profile) and the smallest font size (pt) it allows here.
+    profile: Any = None
+    min_pt: float = 0.0
     _color_i: int = 0
     _series: dict[tuple, _Series] = field(default_factory=dict)
     _color_of: dict[int, int | None] = field(default_factory=dict)
@@ -88,6 +92,19 @@ class DrawContext:
     @property
     def three_d(self) -> bool:
         return self.spec.coordinate_system == "cartesian3d"
+
+    @property
+    def narrow(self) -> bool:
+        return self.profile is not None and self.profile.narrow
+
+    def fs(self, size: Any) -> Any:
+        """Font size ``size`` (pt or a name like ``"small"``), raised to the
+        profile's minimum; unchanged without a profile."""
+        if not self.min_pt:
+            return size
+        from .legibility import points
+
+        return max(points(size), self.min_pt)
 
     @property
     def roles(self) -> Roles:
@@ -416,7 +433,7 @@ def draw_line(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         # else as ax.plot: colour/linestyle from the style or the axes' own
         # property cycle, and no legend label
         lone = _isolated(_mask(*sub))
-        if lone and "marker" not in kw:
+        if lone and "marker" not in kw and not caller:
             # A valid point between two gaps has no segment; mark it so it is
             # not invisible.
             kw.update(marker="o", markevery=lone, markersize=3.5)
@@ -424,10 +441,24 @@ def draw_line(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                 kw["markerfacecolor"] = "none"
         if ctx.three_d:
             xs, ys, zs = (np.ma.filled(a.astype(float), np.nan) for a in sub)
-            artists += ctx.ax.plot(xs, ys, zs, **kw)
+            drawn = ctx.ax.plot(xs, ys, zs, **kw)
         else:
-            artists += ctx.ax.plot(sub[0], sub[1], **kw)
+            drawn = ctx.ax.plot(sub[0], sub[1], **kw)
+        if lone and caller:
+            _mark_lone_points(drawn, lone)
+        artists += drawn
     return artists
+
+
+def _mark_lone_points(lines: list[Any], lone: list[int]) -> None:
+    """Caller-styled line: mark isolated points only when the caller's
+    effective style (axes property cycle, ``lines.marker``) chose no marker,
+    so a marker the caller asked for is left exactly as ``ax.plot`` drew it."""
+    for ln in lines:
+        if ln.get_marker() in (None, "", " ", "None", "none"):
+            ln.set_marker("o")
+            ln.set_markevery(lone)
+            ln.set_markersize(3.5)
 
 
 def draw_scatter(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
@@ -701,7 +732,7 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                 "no data", xy, xycoords=coords, xytext=(3, 0) if horizontal else (0, 3),
                 textcoords="offset points", ha="left" if horizontal else "center",
                 va="center" if horizontal else "bottom", rotation=0 if horizontal else 90,
-                fontsize="x-small", color=ctx.muted("0.4"), style="italic")
+                fontsize=ctx.fs("x-small"), color=ctx.muted("0.4"), style="italic")
             ctx.no_data_notes.append(NoDataNote(note, val_ch, i, float(q), float(each),
                                                 _where(ctx, cat_ch, float(c))))
             artists.append(note)
@@ -791,7 +822,7 @@ def _value_labels(ctx: DrawContext, m: Mark, val_ch: str, pos: np.ndarray,
             kw = {"xytext": (0, -3 if neg else 3), "ha": "center",
                   "va": "top" if neg else "bottom"}
             xy = (float(q), float(v))
-        out.append(ctx.ax.annotate(text, xy, textcoords="offset points", fontsize="small",
+        out.append(ctx.ax.annotate(text, xy, textcoords="offset points", fontsize=ctx.fs("small"),
                                    color=ctx.muted("0.25"), **kw))
     return out
 
