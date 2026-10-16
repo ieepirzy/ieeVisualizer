@@ -28,7 +28,7 @@ import ast
 import math
 
 from ..spec import DatasetRef, DataSnapshot, FunctionMark, QuiverMark, ValidationIssue, validate
-from ..spec._common import is_number, suggest
+from ..spec._common import is_number, ptr, suggest
 from .frames import frame_keys, template_params
 from .limits import frame_limit_issues, frame_total, poster_issues, sweep_state_count
 from .spec import (
@@ -171,13 +171,16 @@ def _validate(anim: AnimationSpec, deadline) -> list[ValidationIssue]:
 # --------------------------------------------------------------------------
 
 
-def _check_text(out: _Issues, path: str, text) -> None:
+def _check_text(out: _Issues, path: str, text) -> bool:
+    """Add the issue of one drawn text, if any; True when one was added."""
+    n = len(out)
     if isinstance(text, str) and len(text) > MAX_TEXT_CHARS:
         out.add(path, "text_too_long",
                 f"this text has {len(text)} characters; an animation draws it in every state "
                 f"and accepts at most {MAX_TEXT_CHARS}. Shorten it.")
     else:
         _check_mathtext(out, path, text)
+    return len(out) > n
 
 
 def _is_minmax(node) -> bool:
@@ -224,8 +227,10 @@ def _cells(datasets) -> int:
 
 def data_issues(fig, path: str = "/figure") -> list[ValidationIssue]:
     """The data caps, for inline or resolved data: at most
-    :data:`MAX_ANIMATION_CELLS` cells, and at most :data:`MAX_HEATMAP_CELLS`
-    grid cells (distinct x times distinct y) per heatmap layer."""
+    :data:`MAX_ANIMATION_CELLS` cells, at most :data:`MAX_HEATMAP_CELLS`
+    grid cells (distinct x times distinct y) per heatmap layer, and the text
+    checks on every column name, unit and string value (each can be drawn:
+    as a default axis label, a tick or a legend entry)."""
     out = _Issues()
     datasets = fig.datasets if isinstance(fig.datasets, dict) else {}
     cells = _cells(datasets.values())
@@ -234,6 +239,15 @@ def data_issues(fig, path: str = "/figure") -> list[ValidationIssue]:
                 f"the datasets hold {cells} cells; an animation accepts at most "
                 f"{MAX_ANIMATION_CELLS} (validating them is one step the deadline cannot "
                 "interrupt). Drop unused columns and datasets or aggregate upstream.")
+        return list(out)
+    for k, ds in datasets.items():  # names are default labels; values are tick and legend text
+        for name, col in (ds.columns.items() if isinstance(ds, DataSnapshot) else ()):
+            p = path + ptr("datasets", k, "columns", name)
+            texts = [name, col.unit, *({v for v in col.values if isinstance(v, str)}
+                                       if col.dtype in ("str", None) else ())]
+            for t in texts:
+                if _check_text(out, p, t):
+                    break
     for i, m in enumerate(fig.layers if isinstance(fig.layers, list) else ()):
         ds = datasets.get(getattr(m, "data", None) or "")
         enc = m.encoding if isinstance(m.encoding, dict) else {}
@@ -294,17 +308,8 @@ def _check_figure_work(out: _Issues, fig) -> None:
         _check_style(out, p + "/style", getattr(m, "style", None))
         if isinstance(m, FunctionMark):
             _check_expression(out, p + "/expression", m.expression)
-        ds = fig.datasets.get(m.data) if getattr(m, "data", None) is not None \
-            and isinstance(fig.datasets, dict) else None
         for ch, enc in (m.encoding.items() if isinstance(m.encoding, dict) else ()):
             _check_text(out, f"{p}/encoding/{ch}/title", getattr(enc, "title", None))
-            fld = getattr(enc, "field", None)
-            col = ds.columns.get(fld) if isinstance(ds, DataSnapshot) \
-                and isinstance(fld, str) else None
-            if col is not None and col.dtype in ("str", None):
-                longest = max((v for v in col.values if isinstance(v, str)), key=len,
-                              default=None)
-                _check_text(out, f"/figure/datasets/{m.data}/columns/{fld}", longest)
 
 
 # --------------------------------------------------------------------------

@@ -4,15 +4,27 @@ cleanup); the MP4 tests skip without ffmpeg (CI installs it)."""
 import dataclasses
 import os
 import shutil
+import signal
+import subprocess
+import sys
 import threading
 import time
 
 import numpy as np
 import pytest
-from anim_helpers import SMALL, codes, png_pixels, sine_anim, vector_field_anim, weekly_anim
+from anim_helpers import (
+    HERE,
+    ROOT,
+    SMALL,
+    codes,
+    png_pixels,
+    sine_anim,
+    vector_field_anim,
+    weekly_anim,
+)
 from test_anim_deadline import HEAVY, _fn, _sweep
 from test_anim_guards import _ref_anim
-from test_anim_isolation import D, _left, _timed
+from test_anim_isolation import D, _left, _ppid, _state, _timed
 
 from ieeVisualizer.animation import (
     AnimationError,
@@ -97,13 +109,67 @@ def test_a_blocked_ffmpeg_is_killed_with_the_worker(tmp_path, monkeypatch):
     anim.axis_limits = "auto"
     req = dataclasses.replace(MP4, width=640, height=480)
     before = _left()
-    elapsed, e = _timed(lambda: render_animation(anim, req, deadline=D, isolation="process"))
-    assert D <= elapsed <= D + ISOLATION_SLACK_S, (elapsed, e.stats)
+    # long enough that a loaded runner reaches ffmpeg (worker start, parse);
+    # once ffmpeg blocks the pipe, the phase stays "draw" until the kill
+    d = 3 * D
+    elapsed, e = _timed(lambda: render_animation(anim, req, deadline=d, isolation="process"))
+    assert d <= elapsed <= d + ISOLATION_SLACK_S, (elapsed, e.stats)
     assert e.stats["phase"] == "draw" and e.stats.get("states_drawn", 0) >= 1, e.stats
     ffmpeg = int(pid.read_text())
     time.sleep(0.2)
     assert not os.path.exists(f"/proc/{ffmpeg}") or "Z" in open(f"/proc/{ffmpeg}/stat").read()
     assert _left() <= before
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads /proc")
+@pytest.mark.parametrize("sig", [signal.SIGKILL, signal.SIGTERM])
+def test_a_killed_caller_leaves_no_worker_no_ffmpeg_and_no_temporary_directory(tmp_path, sig):
+    """The caller is killed while its worker feeds an ffmpeg that never reads:
+    the worker and ffmpeg outlived it, and its temporary directory leaked."""
+    fake, pid = tmp_path / "ffmpeg", tmp_path / "pid"
+    fake.write_text(f'#!/bin/sh\ncase "$*" in *-encoders*) exit 0;; esac\necho $$ > {pid}\n'
+                    "exec sleep 1000\n")
+    fake.chmod(0o755)
+    work = tmp_path / "tmp"
+    work.mkdir()
+    code = ("import dataclasses\n"
+            "from test_anim_deadline import _fn, _sweep\n"
+            "from test_anim_mp4 import MP4\n"
+            "from ieeVisualizer.animation import render_animation\n"
+            "from ieeVisualizer.spec import FigureSpec\n"
+            "anim = _sweep(FigureSpec(layers=[_fn()]), 40)\n"
+            "anim.axis_limits = 'auto'\n"
+            "render_animation(anim, dataclasses.replace(MP4, width=640, height=480), "
+            "deadline=600, isolation='process')\n")
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(ROOT), str(HERE)]),
+               TMPDIR=str(work), IEEVISUALIZER_FFMPEG=str(fake))
+    caller = subprocess.Popen([sys.executable, "-c", code], env=env,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(600):  # until ffmpeg runs (and blocks the frame pipe)
+            if pid.exists() and pid.read_text().strip():
+                break
+            time.sleep(0.05)
+        ffmpeg = int(pid.read_text())
+        worker = _ppid(ffmpeg)
+        dirs = list(work.glob("ieev-anim-*"))
+        assert dirs and worker not in (None, caller.pid)
+        caller.send_signal(sig)
+        caller.wait(10)
+        alive = lambda p: os.path.exists(f"/proc/{p}") and _state(p) != "Z"  # noqa: E731
+        for _ in range(100):
+            if not alive(ffmpeg) and not alive(worker) and not dirs[0].exists():
+                break
+            time.sleep(0.05)
+        assert not alive(ffmpeg) and not alive(worker) and not dirs[0].exists()
+    finally:
+        caller.kill()
+        caller.wait()
+        if pid.exists() and pid.read_text().strip():
+            try:
+                os.kill(int(pid.read_text()), signal.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass
 
 
 @needs_ffmpeg

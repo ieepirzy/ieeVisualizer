@@ -107,6 +107,7 @@ def export_animation(
     (in a worker process unless ``isolation="inline"``), then write them."""
     from .deadline import Deadline
     from .isolate import isolation_mode, resolved_payload, run_isolated, table_resolver
+    from .validate import validate_animation
 
     if writer is None:
         raise ValueError("export_animation() needs a writer, e.g. LocalDirectoryWriter('out/').")
@@ -121,12 +122,17 @@ def export_animation(
     kw = {"anim": anim, "fmts": fmts, "base": request or AnimationRequest(), "name": name,
           "registry": registry,
           "created": (clock or (lambda: _dt.datetime.now(_dt.timezone.utc)))()}
-    if isolation_mode(isolation) == "process":
-        table = resolved_payload(anim.figure, resolver)
+    mode, notes = isolation_mode(isolation)
+    errors = [i for i in validate_animation(anim, deadline=deadline) if i.severity == "error"]
+    if errors:  # in the caller: an invalid spec does not pay for a worker
+        raise SpecValidationError(errors)
+    if mode == "process":
+        table = resolved_payload(anim.figure, resolver, deadline)
         artifact, blobs = run_isolated("export", {
             **kw, "resolver": table_resolver(table) if table else None}, deadline)
     else:
-        artifact, blobs = build(**kw, resolver=resolver, deadline=deadline)
+        artifact, blobs = build(**kw, resolver=resolver, deadline=deadline,
+                                notes=[w.to_dict() for w in notes])
     deadline.check("write")  # the writer is the caller's code: checked before, not during
     write_all = getattr(writer, "write_artifact", None)
     if callable(write_all):
@@ -137,8 +143,11 @@ def export_animation(
     return artifact
 
 
-def build(anim, fmts, base, name, registry, created, resolver, deadline, isolation=None):
-    """``(artifact, blobs)`` of an export, everything but the writing."""
+def build(anim, fmts, base, name, registry, created, resolver, deadline, isolation=None,
+          notes=()):
+    """``(artifact, blobs)`` of an export, everything but the writing.
+    ``notes``: warnings (dicts) recorded on every variant, e.g.
+    ``deadline_best_effort``."""
     import hashlib
 
     from ..render.prepare import bound_refs
@@ -166,7 +175,7 @@ def build(anim, fmts, base, name, registry, created, resolver, deadline, isolati
         outputs.append((fname, res.content, res.media_type, RenderVariant(
             format=fmt, file=_file(fname, res.content, res.media_type),
             adapter_name=res.adapter_name, adapter_version=res.adapter_version,
-            request=req.to_dict(), warnings=[w.to_dict() for w in res.warnings])))
+            request=req.to_dict(), warnings=[*(w.to_dict() for w in res.warnings), *notes])))
     first = results[0]
     if first.poster_png is None or any(r.frames != first.frames
                                        or r.poster_frame != first.poster_frame for r in results):
