@@ -106,8 +106,9 @@ every dimension it does not model can make it wrong by orders of magnitude
 `Deadline` to share; default `DEFAULT_DEADLINE_S` = 60) and
 `isolation=` (`"process"` by default where it can run;
 `$IEEVISUALIZER_ANIMATION_ISOLATION` changes the default). With `"process"`
-the spec is validated and references are resolved in the caller (data over
-the caps is refused there, before anything is serialised), then the render
+references are resolved in the caller and only the data cell cap is checked
+there, from column lengths (O(columns)), before anything is serialised; the
+spec is validated and hashed once, in the worker. Then the render
 runs in a fresh worker interpreter (`ieeVisualizer.animation.isolate`);
 phase and progress stream back, and at the deadline the worker's whole
 process group (ffmpeg included) is killed and its temporary directory
@@ -116,8 +117,9 @@ removed. The deadline is then a wall-clock bound: **overrun at most
 Starting a worker costs about 0.9 s, inside the deadline, so a deadline of
 about 1 s can expire while the worker starts; concurrent renders each pay it,
 and at most `$IEEVISUALIZER_ANIMATION_WORKERS` (default: the CPU count)
-workers run at once per process, a render waiting for a slot waiting inside
-its own deadline. A worker also cannot leave Matplotlib's global state
+workers run at once per process (a value that is not a positive integer is
+`invalid_setting`), a render waiting for a slot waiting inside its own
+deadline. A worker also cannot leave Matplotlib's global state
 changed.
 
 **Where process isolation runs:** POSIX systems with a real Python
@@ -146,7 +148,12 @@ temporary directory when the caller exits or is killed (SIGKILL included).
 runs in the caller with cooperative checks only, between pipeline phases
 (validate, prepare, plan, parse, limits, draw, encode) and before every
 state and frame: best effort, for tests and debugging. One step that holds
-the GIL (a draw, a SymPy build, the GIF write) overruns it.
+the GIL (a draw, a SymPy build, the GIF write) overruns it. A render that
+ran inline for any reason (asked for, by argument or environment, or the
+fallback) carries a `deadline_best_effort` warning saying why, and
+`AnimationResult.isolation` is `"inline"` (`"process"` from a worker; an
+export's manifest records it as `isolation`). The phase reported on expiry
+is the worker's current one (a new phase is reported at once).
 
 On expiry `DeadlineExceeded` (an `AnimationError`) is raised with one issue
 `render_deadline_exceeded` at the root path (`""`, printed as `/`) and

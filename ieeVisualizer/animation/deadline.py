@@ -41,7 +41,8 @@ class Deadline:
         #: Per-call memo (validation results by ``animation_hash``), so nested
         #: entry points (export -> render -> adapter) validate once.
         self.memo: dict[Any, Any] = {}
-        #: Called with this Deadline at most every 0.1 s from :meth:`check`
+        #: Called with this Deadline from :meth:`check` when the phase
+        #: changes, and otherwise at most every 0.1 s
         #: (a worker process reports its phase and progress this way).
         self.report: Callable[[Deadline], None] | None = None
         self._reported = self.started
@@ -66,10 +67,12 @@ class Deadline:
     def check(self, phase: str | None = None) -> None:
         """Raise :class:`DeadlineExceeded` if the budget is spent; record
         ``phase`` as the current pipeline phase."""
+        changed = phase is not None and phase != self.phase
         if phase is not None:
             self.phase = phase
         now = self._clock()
-        if self.report is not None and now - self._reported >= 0.1:
+        # a new phase is reported at once; progress at most every 0.1 s
+        if self.report is not None and (changed or now - self._reported >= 0.1):
             self._reported = now
             self.report(self)
         if now - self.started >= self.seconds:
