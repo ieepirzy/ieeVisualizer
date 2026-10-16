@@ -98,6 +98,18 @@ def test_flow_on_a_phone_wraps_node_labels_between_words_at_the_minimum():
     assert not [w for w in tablet.warnings if w.code.startswith(("legibility", "flow_"))]
 
 
+def test_narrow_profile_stacks_kpi_tiles():
+    view = ViewSpec(root=Grid(columns=3, children=[
+        Kpi(label=f"KPI {i}", value=1234567.0 * i, unit="EUR") for i in range(1, 4)]))
+    items, _, _ = layout_view(view, 320, get_profile("email-phone"))
+    tiles = [i for i in items if isinstance(i, Rect) and i.fill == "#f6f8fa"]
+    assert len(tiles) == 3 and len({t.x for t in tiles}) == 1  # one under another
+    labels = [i for i in items if isinstance(i, Label)]
+    assert min(lab.size for lab in labels) >= 12  # no value shrinks below the minimum
+    wide, _, _ = layout_view(view, 960)
+    assert len({t.x for t in wide if isinstance(t, Rect) and t.fill == "#f6f8fa"}) == 3
+
+
 def test_profile_and_explicit_width_are_exclusive():
     with pytest.raises(ValueError, match="profile sets width"):
         render_view(weekly_briefing(), "png", profile="email-phone", width=400)

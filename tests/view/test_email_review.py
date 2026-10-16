@@ -25,7 +25,7 @@ from ieeVisualizer.view import (
     render_email,
     render_view,
 )
-from ieeVisualizer.view.examples import reporting_pipeline, weekly_briefing
+from ieeVisualizer.view.examples import weekly_briefing
 from ieeVisualizer.view.model import FlowEdge
 
 
@@ -167,7 +167,8 @@ def test_lines_are_limited_in_bytes_not_characters():
 
 
 @pytest.mark.filterwarnings("ignore:Glyph .* missing from font")  # the case under test
-def test_missing_glyphs_fail_the_gate():
+def test_missing_glyphs_fail_the_gate(monkeypatch):
+    no_cjk_fallback(monkeypatch)
     from ieeVisualizer.render import get_profile, render
     from ieeVisualizer.spec import FigureSpec, LineMark
 
@@ -182,6 +183,12 @@ def test_missing_glyphs_fail_the_gate():
     for out in (result, render_email(flow), render_view(flow, "png", profile="email-phone")):
         with pytest.raises(LegibilityError, match="glyph_missing"):
             check_legible(out)
+
+
+def no_cjk_fallback(monkeypatch) -> None:
+    """These cases use CJK as text the fonts lack: without the CJK fallback a
+    host may have installed (tests/render/test_font_fallback.py covers it)."""
+    monkeypatch.setattr("ieeVisualizer.render.mpl.style.fallback_families", lambda: ())
 
 
 def _gated(result) -> bool:
@@ -199,7 +206,8 @@ def _gated(result) -> bool:
     ("Status ✓ ⚠ ok", "fallback-list-test", False),  # drawn by the fallback font
     ("Hyvä päivä: äöå ÄÖÅ", None, False),
 ])
-def test_missing_glyphs_are_taken_from_the_real_draw(title, theme, refused):
+def test_missing_glyphs_are_taken_from_the_real_draw(monkeypatch, title, theme, refused):
+    no_cjk_fallback(monkeypatch)
     import dataclasses
 
     from ieeVisualizer.render import get_profile, render

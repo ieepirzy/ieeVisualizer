@@ -146,3 +146,75 @@ def test_the_check_adds_nothing_to_the_hosts_log():
         root.removeHandler(keep)
     assert [r.getMessage() for r in records if "glyph" in r.getMessage()] == []
     assert mathtext.filters == before
+
+
+@pytest.mark.filterwarnings("ignore:Glyph .* missing from font")
+def test_concurrent_mathtext_is_checked_or_refused_never_passed_unchecked():
+    """The shared mathtext parser is not thread-safe: the checker's own parse
+    is serialised and retried, and if it still fails the render is refused
+    (glyph_check_failed), never reported as fine."""
+    from ieeVisualizer.render import GATING_CODES
+
+    seen: Counter = Counter()
+    lock = threading.Lock()
+
+    def work(k: int) -> None:
+        cjk = k % 2 == 0
+        for i in range(10):
+            title = f"$x_{{東}}^{{{k}{i}}}$" if cjk else f"$x^{{{k}{i}}}$ ok"
+            try:
+                result = render(fig(title), RenderRequest())
+            except ValueError:  # the draw itself lost the race: nothing was sent
+                continue
+            codes = {w.code for w in result.warnings}
+            with lock:
+                seen[(cjk, "glyph_missing" in codes, bool(codes & set(GATING_CODES)))] += 1
+
+    threads = [threading.Thread(target=work, args=(k,)) for k in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not [key for key in seen if key[0] and not key[2]]  # no CJK title passes the gate
+    assert not [key for key in seen if not key[0] and key[1]]  # no invented missing glyph
+
+
+def test_the_quiet_log_filter_only_drops_the_checking_threads_records():
+    import logging
+
+    from ieeVisualizer.render.mpl.legibility import _NoGlyphLog
+
+    quiet = _NoGlyphLog()
+    mine = logging.LogRecord("matplotlib.mathtext", logging.WARNING, "f", 1,
+                             "Font 'rm' does not have a glyph for 'x'", None, None)
+    other = logging.LogRecord("matplotlib.mathtext", logging.WARNING, "f", 1,
+                              "Font 'rm' does not have a glyph for 'x'", None, None)
+    other.thread = mine.thread + 1
+    assert quiet.filter(mine) is False and quiet.filter(other) is True
+
+
+def test_a_mathtext_check_that_cannot_parse_fails_closed(monkeypatch):
+    """If the checker's own parse fails (twice) after the draw succeeded, the
+    text is reported unchecked and the gate refuses it."""
+    from matplotlib.figure import Figure
+    from matplotlib.mathtext import MathTextParser
+
+    from ieeVisualizer.render import LegibilityError, check_legible
+    from ieeVisualizer.render.mpl.legibility import figure_glyphs
+
+    f = Figure()
+    f.text(0.1, 0.5, "$x_{1}$")
+    f.draw_without_rendering()
+
+    def broken(self, *a, **k):
+        raise ValueError("parser busy")
+
+    monkeypatch.setattr(MathTextParser, "parse", broken)
+    found = figure_glyphs(f)
+    assert [w.code for w in found] == ["glyph_check_failed"]
+
+    class Result:
+        warnings = found
+
+    with pytest.raises(LegibilityError):
+        check_legible(Result())
