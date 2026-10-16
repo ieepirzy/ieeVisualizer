@@ -314,10 +314,11 @@ images, profile and gating codes (`EmailRender.seal`), and `build_message`
 refuses a render changed since - warnings cleared, HTML edited, an image
 swapped - with `MessageError` `render_modified` and the field's pointer, an
 `EmailRender` built by hand (`not_rendered`) and a non-phone profile
-(`not_phone_safe`). `text_fallback=` (which replaces the generated text and
-could say anything) is refused too (`text_fallback_ungated`).
-`allow_ungated=True` builds any of these anyway; that is the caller's
-explicit choice.
+(`not_phone_safe`). `allow_ungated=True` builds any of these anyway; that
+is the caller's explicit choice. `text_fallback=` (which replaces the
+generated text and could say anything) needs its own
+`allow_custom_text=True` (`custom_text_not_allowed` otherwise); the gate,
+seal and profile checks still apply to it.
 
 **Headers.** Subject, sender, recipients, `date` and `message_id` are
 checked before anything is built: a CR, LF, other control character or
@@ -330,14 +331,30 @@ name holding encoded-word syntax (`=?utf-8?q?...?=`) is refused
 `"=?utf-8?q?CEO_=3Cceo=40x.example=3E?= <reports@example.com>"` would be
 written as `CEO <ceo@x.example> <reports@example.com>`, an address of the
 caller's string's choosing. So are invisible format characters (bidi
-overrides, zero-width; `format_character`) and display names that look like
-an address (`address_in_display_name`). `date` must be an RFC 5322 date with
+overrides, zero-width; `format_character`), display names that look like
+an address once NFKC-normalised (`＠`, `﹫`, `＜` included;
+`address_in_display_name`) and names that show blank (whitespace, Hangul
+fillers; `blank_display_name`). A local part must be ASCII, at most 64
+characters and free of `=?`; a domain at most 253 characters with labels of
+at most 63 (RFC 5321); an internationalised domain is written in IDNA
+(`pääkaupunki.fi` as `xn--...`). `date` must be an RFC 5322 date with
 a time zone (`invalid_date`; default: now, GMT) and `message_id` an
 `<id@domain>` (`invalid_message_id`). Each issue points at its argument
-(`/subject`, `/recipients/1`). Headers are built from
-`email.headerregistry.Address` objects, and non-ASCII subjects and display
-names are written as RFC 2047 encoded words by the stdlib; Python's parser
-and Node's `mailparser` read From/To back as exactly the addresses given.
+(`/subject`, `/recipients/1`).
+
+Subject, From and To are encoded and folded by `ieeVisualizer.view._headers`,
+not by the stdlib policy: on Python 3.9 the policy folds a long non-ASCII
+header with the space between two words *between* encoded words, where RFC
+2047 tells decoders to drop it ("kasvoi Pääkaupunkiseutu" read
+"kasvoiPääkaupunkiseutu" in 50 of 400 random Finnish subjects). Here every
+space is inside an encoded word (base64 UTF-8, at most 64 characters, cut
+after a word where possible), ASCII names are atoms or quoted strings, and
+lines are folded only between tokens. Over 400 Finnish subjects and names and
+a 4 000-case random header fuzz, Node's `mailparser` reads Subject, From and
+To back as exactly what was given, from 3.9 and 3.13 alike, and so does
+Python's `email.header.decode_header`. (Python 3.9's own *address* parser
+adds a space between adjacent encoded words, against RFC 2047 6.2; that is
+a bug of the reader, fixed in later versions.)
 
 **Previewing.** `write_eml` writes the message as sent; open the `.eml`
 in Thunderbird, Apple Mail or Outlook (double-click, or drag it into the

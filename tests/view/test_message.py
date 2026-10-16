@@ -213,10 +213,10 @@ def test_images_not_referenced_by_cid_are_refused(briefing):
 
 def test_text_fallback_replaces_the_generated_text(rendered):
     msg = _parse(build_message(rendered, text_fallback="Numbers: 412 orders\r\n",
-                               allow_ungated=True, **HEADERS))
+                               allow_custom_text=True, **HEADERS))
     assert _content(msg.get_body(("plain",))) == "Numbers: 412 orders\n"
     with pytest.raises(MessageError):
-        build_message(rendered, text_fallback="  ", allow_ungated=True, **HEADERS)
+        build_message(rendered, text_fallback="  ", allow_custom_text=True, **HEADERS)
 
 
 def test_example_script_passes_the_gate_and_writes_a_parseable_eml(tmp_path, capsys):
@@ -348,7 +348,16 @@ def test_a_render_changed_after_the_gate_is_refused():
     good = render_email(view)
     with pytest.raises(MessageError) as info:
         build_message(good, text_fallback="anything at all", **HEADERS)
-    assert [i.code for i in info.value.issues] == ["text_fallback_ungated"]
+    assert [i.code for i in info.value.issues] == ["custom_text_not_allowed"]
+    with pytest.raises(MessageError) as info:  # allow_ungated does not allow custom text
+        build_message(good, text_fallback="anything at all", allow_ungated=True, **HEADERS)
+    assert [i.code for i in info.value.issues] == ["custom_text_not_allowed"]
+    with pytest.raises(MessageError) as info:  # ... and custom text keeps the seal check
+        build_message(tablet, text_fallback="anything", allow_custom_text=True, **HEADERS)
+    assert ("/warnings", "render_modified") in {(i.path, i.code) for i in info.value.issues}
+    with pytest.raises(EmailGateError):  # ... and the gate
+        build_message(render_email(view, "email-tablet"), text_fallback="anything",
+                      allow_custom_text=True, **HEADERS)
     build_message(forged, allow_ungated=True, **HEADERS)  # the caller's explicit choice
 
 
@@ -394,7 +403,7 @@ def test_body_lines_starting_with_from_are_encoded():
 
 @pytest.mark.parametrize("unit, delta", [
     ("% YoY", "▲ +2.0 pp YoY"), ("％", "▲ +2.0 pp"), ("pct", "▲ +2.0 pp"),
-    ("%-points", "▲ +2.0 pp"), ("pp", "▲ +2.0 pp"), ("Percent", "▲ +2.0 pp"),
+    ("%-points", "▲ +2.0 %-points"), ("pp", "▲ +2.0 pp"), ("Percent", "▲ +2.0 pp"),
     ("% of revenue", "▲ +2.0 pp of revenue"), ("EUR", "▲ +2.0 EUR"), ("‰", "▲ +2.0 ‰"),
 ])
 def test_percentage_units_all_give_point_deltas(unit, delta):
@@ -430,3 +439,141 @@ def test_legend_label_never_doubles_parentheses():
         "Orders range (low to high, forecast)"
     assert legend_label("Orders", None, "forecast") == "Orders (forecast)"
     assert legend_label("Orders (forecast)", None, "forecast") == "Orders (forecast)"
+
+
+# --------------------------------------------------------------------------
+# Round 2: header encoding on every Python, addresses, QP lines, pp rules
+# --------------------------------------------------------------------------
+
+FINNISH = ("Viikkoraportti Pääkaupunkiseutu Länsi-Suomi Itä-Suomi myynti kasvoi 12 % – "
+           "johtoryhmälle tilaukset hyväksytty, työmäärä: €48 230 Ääkkönen Hämäläinen").split()
+CJK = "週次報告 売上 東京 大阪 增长 보고서 매출".split()
+
+
+def _phrases(words, seed, n):
+    import random
+
+    rnd = random.Random(seed)
+    return [" ".join(rnd.choice(words) for _ in range(rnd.randint(2, 18))) for _ in range(n)]
+
+
+@pytest.mark.parametrize("words", [FINNISH, CJK, FINNISH + CJK + ["Report", "a@b"]],
+                         ids=["fi", "cjk", "mixed"])
+def test_long_non_ascii_headers_decode_to_exactly_the_text_given(rendered, words):
+    """Folding never drops the space between two words (Python 3.9 put it
+    between encoded words, where decoders drop it). Decoded the RFC 2047 way
+    (``decode_header``, on every Python) and, from Python 3.10, by the
+    default policy too (3.9's address parser adds a space between adjacent
+    encoded words, against RFC 2047 6.2)."""
+    import sys
+    from email.header import decode_header, make_header
+    from email.utils import getaddresses
+
+    def rfc2047(value) -> str:
+        return str(make_header(decode_header(value)))
+
+    subjects = _phrases(words, 5, 80)
+    names = [n.replace("@", "") for n in _phrases(words, 6, 80)]
+    for subject, name in zip(subjects, names):
+        msg = build_message(rendered, subject=subject, sender=Address(name, "r", "example.com"),
+                            recipients=[Address(name, "a", "example.com"), "b@example.com"])
+        raw = msg.as_bytes()
+        head = raw.split(b"\r\n\r\n", 1)[0]
+        assert max(map(len, head.split(b"\r\n"))) <= 76
+        assert all(b < 128 for b in head)
+        old = email.message_from_bytes(raw, policy=policy.compat32)
+        assert rfc2047(old["Subject"]) == subject
+        assert [(rfc2047(n), a) for n, a in getaddresses([old["To"]])] == [
+            (name, "a@example.com"), ("", "b@example.com")]
+        assert [(rfc2047(n), a) for n, a in getaddresses([old["From"]])] == [
+            (name, "r@example.com")]
+        back = email.message_from_bytes(raw, policy=policy.default)
+        assert str(back["Subject"]) == subject
+        if sys.version_info >= (3, 10):
+            assert [(a.display_name, a.addr_spec) for a in back["To"].addresses] == [
+                (name, "a@example.com"), ("", "b@example.com")]
+
+
+def test_ascii_names_needing_quotes_round_trip(rendered):
+    given = [("J. R. Smith", "j@example.com"), ('Ann "Boss" Lee', "ann@example.org"),
+             ("Back\\slash", "b@example.org"), ("x" * 70, "long@example.org"),
+             ("Ops; Night, Shift", "ops@example.com")]
+    raw = build_message(rendered, subject="S" * 120, sender="r@example.com",
+                        recipients=[Address(n, addr_spec=a) for n, a in given]).as_bytes()
+    back = email.message_from_bytes(raw, policy=policy.default)
+    assert [(a.display_name, a.addr_spec) for a in back["To"].addresses] == given
+    assert str(back["Subject"]) == "S" * 120
+
+
+@pytest.mark.parametrize("recipient", [
+    "=?utf-8?q?ceo=40x.example?=@b.example",
+    "=?utf-8?b?Y2VvQHguZXhhbXBsZQ==?=@attacker.example",
+    "a.=?utf-8?q?x=3E?=@b.example",
+    "Board <=?utf-8?q?x?=@b.example>",
+    "x" * 65 + "@example.com",
+    "a@" + "b" * 64 + ".example",
+    "a@" + ".".join(["abcdefghi"] * 26) + ".example",
+])
+def test_bad_local_parts_and_lengths_are_invalid_addresses(rendered, recipient):
+    with pytest.raises(MessageError) as info:
+        build_message(rendered, **dict(HEADERS, recipients=[recipient]))
+    assert [i.code for i in info.value.issues] == ["invalid_address"]
+
+
+def test_internationalised_domains_are_written_in_punycode(rendered):
+    msg = build_message(rendered, **dict(HEADERS, recipients=["Kalle <kalle@pääkaupunki.fi>"]))
+    back = email.message_from_bytes(msg.as_bytes(), policy=policy.default)
+    assert back["To"].addresses[0].addr_spec == "kalle@" + "pääkaupunki.fi".encode("idna").decode()
+    assert back["To"].addresses[0].addr_spec.startswith("kalle@xn--")
+
+
+@pytest.mark.parametrize("name, code", [
+    ("ceo＠example.com", "address_in_display_name"),
+    ("ceo﹫example.com", "address_in_display_name"),
+    ("＜ceo＞", "address_in_display_name"),
+    ("ㅤㅤ", "blank_display_name"),
+    ("ﾠ", "blank_display_name"),
+    (" 　", "blank_display_name"),
+])
+def test_lookalike_and_blank_display_names_are_refused(rendered, name, code):
+    with pytest.raises(MessageError) as info:
+        build_message(rendered, **dict(HEADERS, recipients=[Address(name, "a", "example.com")]))
+    assert code in {i.code for i in info.value.issues}
+
+
+def test_from_lines_stay_within_76_characters():
+    line = "From " + "x" * 66 + " more"  # 76 characters: QP wraps it, =46rom lengthens it
+    assert len(line) == 76
+    e = render_email(ViewSpec(root=Stack([Text("Intro\n\n" + line),
+                                          Text("From " + "é" * 60)])))
+    raw = build_message(e, **HEADERS).as_bytes()
+    lines = raw.split(b"\r\n")
+    assert max(map(len, lines)) <= 76
+    assert not [ln for ln in lines if ln.startswith(b"From ")]
+    text = _content(email.message_from_bytes(raw, policy=policy.default).get_body(("plain",)))
+    assert line in text.splitlines() and "From " + "é" * 60 in text
+
+
+@pytest.mark.parametrize("unit, delta", [
+    ("% points", "▲ +2.0 % points"), ("%-pts", "▲ +2.0 %-pts"), ("%-point", "▲ +2.0 %-point"),
+    ("%-yks.", "▲ +2.0 %-yks."), ("%-pisteet", "▲ +2.0 %-pisteet"),
+    ("%-ile", "▲ +2.0 %-ile"), ("percentile", "▲ +2.0 percentile"), ("%/yr", "▲ +2.0 pp/yr"),
+])
+def test_points_and_percentiles_keep_their_unit(unit, delta):
+    from ieeVisualizer.view import Comparison
+
+    line = kpi_lines(Kpi("x", 12.0, unit=unit, decimals=1, comparison=Comparison(10.0, "prev")))
+    assert line[1].startswith(delta + " vs prev")
+
+
+@pytest.mark.parametrize("kpi", [
+    Kpi("Share", 0.5, unit="%"),  # a single value is an ordinary share
+    Kpi("Gap", 0.4, unit="pp", comparison=None),
+    Kpi("Gap", 0.4, unit="%-points", comparison=Kpi("", 0).comparison),
+])
+def test_fraction_warning_needs_a_percentage_value_and_comparison(kpi):
+    from ieeVisualizer.view import Comparison
+
+    assert not render_email(ViewSpec(root=Stack([kpi]))).warnings
+    pts = Kpi("Gap", 0.4, unit="%-points", comparison=Comparison(0.3, "prev"))
+    assert not render_email(ViewSpec(root=Stack([pts]))).warnings

@@ -50,6 +50,7 @@ from typing import Union
 
 from ..render import LegibilityError, check_legible, get_profile
 from ..spec import SpecError, ValidationIssue
+from ._headers import Folded, address_header, text_tokens
 from .email import EmailRender, seal
 
 #: The HTML's references to its images (``render_email`` writes ``src="cid:..."``).
@@ -65,8 +66,10 @@ _ADDR = re.compile(rf"{_ATOM}(\.{_ATOM})*@[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?
 _MSG_ID = re.compile(rf"{_ATOM}(\.{_ATOM})*@{_ATOM}(\.{_ATOM})*")
 #: RFC 2047 encoded-word syntax: the stdlib decodes it inside header values.
 _ENCODED_WORD = re.compile(r"=\?.*\?=", re.S)
-#: A body line the mbox format would read as a message separator.
-_FROM_LINE = re.compile(r"^From ", re.M)
+#: Hangul fillers: letters that draw nothing (a "name" of them shows blank).
+_FILLERS = "\u115f\u1160\u3164\uffa0"
+#: RFC 5321 length limits: local part, domain, one domain label.
+MAX_LOCAL, MAX_DOMAIN, MAX_LABEL = 64, 253, 63
 #: ``Display Name <addr>`` or a bare ``addr``.
 _NAMED = re.compile(r"\s*(?:(?P<name>[^<>]*?)\s*<(?P<a>[^<>]*)>|(?P<bare>[^<>\s]+))\s*")
 #: RFC 2045 limits encoded lines to 76 characters; the stdlib policy wraps
@@ -94,18 +97,24 @@ class EmailGateError(LegibilityError):
 
 def build_message(email: EmailRender, *, subject: str, sender: AddressLike,
                   recipients: Iterable[AddressLike], text_fallback: str | None = None,
-                  allow_ungated: bool = False, date: str | None = None,
-                  message_id: str | None = None) -> EmailMessage:
+                  allow_ungated: bool = False, allow_custom_text: bool = False,
+                  date: str | None = None, message_id: str | None = None) -> EmailMessage:
     """The message for ``email`` (see the module docstring).
 
     ``text_fallback`` replaces the generated plain-text part
-    (``email.text``) and needs ``allow_ungated=True``. ``date`` (an RFC 5322
+    (``email.text``) and needs ``allow_custom_text=True`` (the gate, seal and
+    profile checks still apply). ``date`` (an RFC 5322
     date with a time zone) and ``message_id`` (``<id@domain>``) default to
     now in GMT and a fresh id in the sender's domain. Raises
     :class:`EmailGateError` for a render the gate refuses unless
     ``allow_ungated=True``, :class:`MessageError` for anything else wrong."""
+    if text_fallback is not None and not allow_custom_text:
+        raise MessageError([ValidationIssue("/text_fallback", "custom_text_not_allowed", (
+            "text_fallback replaces the plain text generated from the view, so nothing "
+            "checks that it says what the email shows; pass allow_custom_text=True to "
+            "send it anyway."))])
     if not allow_ungated:
-        problems = _ungated(email, text_fallback)
+        problems = _ungated(email)
         if problems:
             raise MessageError(problems)
         try:
@@ -166,9 +175,11 @@ def build_message(email: EmailRender, *, subject: str, sender: AddressLike,
         raise MessageError(issues)
 
     msg = EmailMessage(policy=POLICY)
-    msg["Subject"] = subject
-    msg["From"] = from_
-    msg["To"] = to
+    # encoded and folded here (``_headers``): the stdlib's folding drops the
+    # spaces between encoded words on some Pythons (3.9)
+    msg["Subject"] = Folded("Subject", text_tokens(subject))
+    msg["From"] = address_header("From", [_pair(from_)], (from_,))
+    msg["To"] = address_header("To", [_pair(a) for a in to], tuple(to))
     msg["Date"] = date or formatdate(usegmt=True)
     msg["Message-ID"] = message_id or make_msgid(domain=from_.domain)
     msg.set_content(_crlf(text), charset="utf-8", cte="quoted-printable")
@@ -182,8 +193,40 @@ def build_message(email: EmailRender, *, subject: str, sender: AddressLike,
         html_part.set_param("type", "text/html")  # RFC 2387: the root part's type
     for part in msg.walk():  # "From " starting a line is mangled by mbox tools: =46rom
         if part.get_content_maintype() == "text":
-            part.set_payload(_FROM_LINE.sub("=46rom ", part.get_payload()))
+            part.set_payload(_from_lines(part.get_payload()))
     return msg
+
+
+def _pair(a: Address) -> tuple[str, str]:
+    return a.display_name, f"{a.username}@{a.domain}"
+
+
+def _from_lines(payload: str) -> str:
+    """Quoted-printable ``payload`` with every line that starts with "From "
+    written "=46rom ", re-wrapped (soft line breaks, never inside an ``=XX``
+    escape) so no line exceeds 76 characters."""
+    out = []
+    for line in payload.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        end = line[len(body):]
+        if not body.startswith("From "):
+            out.append(line)
+            continue
+        body = "=46rom " + body[5:]
+        soft = body.endswith("=")
+        if soft:
+            body = body[:-1]
+        pieces = []
+        while len(body) > 75:  # 75 + the soft-break "=" is 76
+            cut = 75
+            esc = body.rfind("=", cut - 2, cut)  # an escape cut in two?
+            if esc != -1:
+                cut = esc
+            pieces.append(body[:cut] + "=")
+            body = body[cut:]
+        pieces.append(body + ("=" if soft else ""))
+        out.append("\n".join(pieces) + end)
+    return "".join(out)
 
 
 def _phone_safe(profile: str) -> bool:
@@ -193,10 +236,10 @@ def _phone_safe(profile: str) -> bool:
         return False
 
 
-def _ungated(email: EmailRender, text_fallback: object) -> list[ValidationIssue]:
+def _ungated(email: EmailRender) -> list[ValidationIssue]:
     """What makes ``email`` unfit to send through the gate, besides its
-    warnings: not made by ``render_email``, changed since, or its text
-    replaced. (Not laid out for a phone is checked after the gate.)"""
+    warnings: not made by ``render_email``, or changed since. (Not laid out
+    for a phone is checked after the gate.)"""
     if not isinstance(email, EmailRender) or not email.seal:
         return [ValidationIssue("", "not_rendered", (
             "this EmailRender was not made by render_email (it carries no seal), so the "
@@ -212,10 +255,6 @@ def _ungated(email: EmailRender, text_fallback: object) -> list[ValidationIssue]
             out.append(ValidationIssue(f"/{key}", "render_modified", (
                 f"EmailRender.{key} changed after render_email made it; the gate's verdict "
                 "was for what it made. Render again instead of editing the result.")))
-    if text_fallback is not None:
-        out.append(ValidationIssue("/text_fallback", "text_fallback_ungated", (
-            "text_fallback replaces the plain text generated from the view, so the gate "
-            "cannot vouch for it; pass allow_ungated=True to send it anyway.")))
     return out
 
 
@@ -295,15 +334,40 @@ def _address(value: object, path: str, issues: list[ValidationIssue]) -> Address
         return Address()
     n = len(issues)
     _words(name, path, issues)
-    if "@" in name or "<" in name or ">" in name:
+    shown = unicodedata.normalize("NFKC", name)  # as it reads: ＠ is @, ＜ is <
+    if "@" in shown or "<" in shown or ">" in shown:
         issues.append(ValidationIssue(path, "address_in_display_name", (
             f"the display name {name[:60]!r} looks like an address; a reader would take it "
             "for the sender or recipient. Use a plain name.")))
+    elif name and not "".join(c for c in shown if not c.isspace() and c not in _FILLERS):
+        issues.append(ValidationIssue(path, "blank_display_name", (
+            f"the display name {name!r} shows as blank; give a visible name or none.")))
     if len(issues) > n:
         return Address()
-    if not _ADDR.fullmatch(addr):
+    addr = _ascii_domain(addr)
+    local, _, domain = addr.rpartition("@")
+    labels = domain.split(".")
+    if (not _ADDR.fullmatch(addr) or "=?" in addr or len(local) > MAX_LOCAL
+            or len(domain) > MAX_DOMAIN or max(map(len, labels)) > MAX_LABEL):
         issues.append(ValidationIssue(path, "invalid_address", (
-            f"{addr[:60]!r} is not a plain local@domain address (ASCII; one '@'; a dotted "
-            "domain).")))
+            f"{addr[:60]!r} is not a plain local@domain address (ASCII local part of at "
+            f"most {MAX_LOCAL} characters, no '=?'; one '@'; a dotted domain of at most "
+            f"{MAX_DOMAIN} characters, labels of at most {MAX_LABEL}).")))
         return Address()
-    return Address(display_name=name, addr_spec=addr)
+    try:
+        return Address(display_name=name, username=local, domain=domain)
+    except Exception as exc:  # noqa: BLE001 - the stdlib's own parse defects
+        issues.append(ValidationIssue(path, "invalid_address", f"{addr[:60]!r}: {exc}"))
+        return Address()
+
+
+def _ascii_domain(addr: str) -> str:
+    """``addr`` with an internationalised domain written in IDNA (punycode);
+    unchanged when it is ASCII or cannot be encoded (then it is refused)."""
+    local, at, domain = addr.rpartition("@")
+    if not at or domain.isascii():
+        return addr
+    try:
+        return f"{local}@{domain.encode('idna').decode('ascii')}"
+    except UnicodeError:
+        return addr

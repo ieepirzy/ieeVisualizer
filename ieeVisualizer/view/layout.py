@@ -11,6 +11,7 @@ wrapping is the same in SVG and PNG.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field, replace
 from decimal import Decimal, localcontext
 from functools import lru_cache
@@ -238,40 +239,68 @@ def _delta_text(delta: Decimal, decimals: int | None, fmt=None) -> str:
     return fmt(delta, decimals)
 
 
-#: Units that make a KPI a percentage (besides any unit starting with "%" or
-#: "％"): the difference of two of them is in percentage points ("pp"), never
-#: "%", which would read as a relative change. Relative changes are not offered.
-PERCENT_UNITS = ("pct", "percent", "per cent", "%-points", "pp")
+#: Words that make a unit a percentage: the difference of two of them is in
+#: percentage points ("pp"), never "%", which would read as a relative change.
+PERCENT_WORDS = ("pct", "percent", "per cent")
+#: Units that already are points (a difference of percentages): kept as written.
+_POINTS = re.compile(r"(pp|p\.p\.|percentage points?|prosenttiyksikk\w*|[%％]\s*-?\s*"
+                     r"(points?|pts?\.?|yks\.?|yksikk\w*|pistett\w*|pisteet?))(\s.*)?",
+                     re.I)
 
 
 def delta_unit(unit: str | None) -> str | None:
-    """The unit of the difference of two values in ``unit``: percentage
-    points for a percentage, keeping what follows the sign (``"% YoY"`` ->
-    ``"pp YoY"``); ``unit`` itself otherwise."""
+    """The unit of the difference of two values in ``unit``. The rule:
+
+    * a percentage - ``%`` or ``％`` alone, or followed by a space and a
+      qualifier (``% YoY``, ``% of revenue``), or by ``/`` (a rate,
+      ``%/yr``), or one of ``pct``, ``percent``, ``per cent`` - gives
+      percentage points with the qualifier kept: ``pp``, ``pp YoY``,
+      ``pp/yr``;
+    * a unit that already is points (``pp``, ``%-points``, ``% points``,
+      ``%-pts``, ``%-yks.``, ``%-pisteet``, ...) is kept as written;
+    * anything else, including a percentile (``%-ile``, ``percentile``), is
+      kept as written.
+
+    Relative (percent) changes are never computed."""
     if not isinstance(unit, str):
         return unit
     u = unit.strip()
-    if u[:1] in ("%", "％") and not u.startswith("%-points"):
-        rest = u[1:].strip()
-        return f"pp {rest}" if rest else "pp"
-    return "pp" if u.lower() in PERCENT_UNITS else unit
+    if _POINTS.fullmatch(u):
+        return unit
+    if u.lower() in PERCENT_WORDS:
+        return "pp"
+    if u[:1] in ("%", "％"):
+        rest = u[1:]
+        if not rest:
+            return "pp"
+        if rest[0].isspace():
+            return f"pp {rest.strip()}"
+        if rest[0] == "/":
+            return "pp" + rest
+    return unit
+
+
+def is_percent(unit: str | None) -> bool:
+    """Is ``unit`` a percentage (not points, not a percentile)? (:func:`delta_unit`)"""
+    return delta_unit(unit) != unit
 
 
 def percent_fraction_warning(n: Kpi, path: str):
-    """A non-gating ``kpi_percent_looks_like_fraction`` warning when a KPI in
-    a percentage unit has every value in [0, 1] (0.942 meant as 94.2 %?), or
-    ``None``."""
-    vals = [v for v in (n.value, n.comparison.value if n.comparison else None)
-            if v is not None]
-    if not vals or delta_unit(n.unit) == n.unit or not all(0 <= v <= 1 for v in vals) \
+    """A non-gating ``kpi_percent_looks_like_fraction`` warning, or ``None``.
+    The rule: the unit is a percentage (:func:`is_percent`; not points), the
+    KPI has both a value and a comparison value, both lie in [0, 1], and they
+    are not both 0 - 0.942 vs 0.927 "%" was probably meant as 94.2 % vs
+    92.7 %. A single value is never flagged (0.5 % is an ordinary share)."""
+    vals = [n.value, n.comparison.value if n.comparison else None]
+    if None in vals or not is_percent(n.unit) or not all(0 <= v <= 1 for v in vals) \
             or all(v == 0 for v in vals):
         return None
     from ..render import RenderWarning
 
     return RenderWarning("kpi_percent_looks_like_fraction", (
-        f"KPI {n.label!r} is in {n.unit!r} but its values all lie between 0 and 1 "
-        f"({', '.join(format_number(v) for v in vals)}): if they are fractions, multiply by "
-        "100."), path)
+        f"KPI {n.label!r} is in {n.unit!r} but its value and comparison both lie between 0 "
+        f"and 1 ({', '.join(format_number(v) for v in vals)}): if they are fractions, "
+        "multiply by 100."), path)
 
 
 def kpi_lines(n: Kpi, fmt=None) -> tuple[str, str | None]:
