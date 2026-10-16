@@ -158,7 +158,7 @@
    },
    "template.funnel@1.0.0": {
     "png": "sha256:c3d59b51fc809ab72ccf1036209da3dfcfdcc02ac8300b59c1f49f9ba1ca0a2a",
-    "spec_hash": "sha256:bf538723b03461f3c2f4e059d930ece28be908245f89208445d8905cea51bbed",
+    "spec_hash": "sha256:8c83ed6aef98d88c93c4d834331ee3edfd34b00f6da9004366fd6c47b352ae94",
     "svg": "sha256:eb4b5860eb3d9861203c93e44e3dc3d214f73b3fddbf3bd905dec2779d563e78"
    },
    "template.timeseries@1.0.0": {
@@ -330,7 +330,7 @@
    },
    "template.funnel@1.0.0": {
     "png": "sha256:be7ccd33eb188517ad7b38aceff4908d545129663333ae3ae4a92342def09730",
-    "spec_hash": "sha256:bf538723b03461f3c2f4e059d930ece28be908245f89208445d8905cea51bbed",
+    "spec_hash": "sha256:8c83ed6aef98d88c93c4d834331ee3edfd34b00f6da9004366fd6c47b352ae94",
     "svg": "sha256:d0c146dc42e2d3c8aff1f0bba4d2243d19ee8636619ee542e1d7beb992a4fa79"
    },
    "template.timeseries@1.0.0": {
