@@ -1,6 +1,7 @@
 """Manim adapter. Capability tests always run; render tests need ``manim``
 (skipped when it does not import, e.g. in CI)."""
 
+import dataclasses
 import io
 
 import numpy as np
@@ -84,7 +85,7 @@ def test_gif_output_uses_the_shared_pillow_encoder():
 @needs_manim
 def test_vector_field_arrows_share_one_length_scale_across_frames():
     # k = 0: pure rotation |v| = r; k = 1.5: |v| = r * sqrt(1 + k^2), ~1.8x longer
-    res = ManimAdapter().render(vector_field_anim(values=[0.0, 1.5]), REQ)
+    res = ManimAdapter().render(vector_field_anim(values=[0.0, 1.5], params={"scale": None}), REQ)
     frames = _video_frames(res.content)
     assert len(frames) == 2
     assert _ink(frames[-1]) > 1.3 * _ink(frames[0])
@@ -174,7 +175,7 @@ def test_an_adapter_with_its_own_look_is_never_selected_automatically():
     only = AnimationRegistry()
     only.register(ManimAdapter())
     with pytest.raises(CapabilityError) as e:
-        render_animation(weekly_anim(), mp4, registry=only)
+        render_animation(weekly_anim(), dataclasses.replace(mp4, adapter="manim"), registry=only)
     assert "frame_column" in str(e.value)
 
 
@@ -245,8 +246,9 @@ def test_curves_are_cut_at_the_axis_range_not_clamped(monkeypatch):
     ManimAdapter().render(anim, REQ)
     ys = [np.array([y for _, y in piece]) for piece in seen]
     assert ys and max(abs(y).max() for y in ys) <= 0.5 + 1e-9
-    # a clamped curve has many points on the edge; a cut one only its ends
-    assert max(int(np.isclose(abs(y), 0.5).sum()) for y in ys) <= 2
+    # a clamped curve runs along the edge (34 points); a cut one touches it at
+    # its ends (and where a sample lands exactly on it)
+    assert max(int(np.isclose(abs(y[1:-1]), 0.5).sum()) for y in ys) <= 1
 
 
 @needs_manim
@@ -417,3 +419,175 @@ def test_a_matplotlib_render_does_not_import_manim():
             "print('manim' in sys.modules)")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "False"
+
+
+# ------------------------------------------------ every field: drawn or unmet
+
+
+def _base():
+    from ieeVisualizer.animation import AnimationSpec, ParameterSweep
+
+    fig = FigureSpec(layers=[FunctionMark(expression="a*sin(x)", variables=["x"],
+                                          domain={"x": [0.0, 6.0]}, samples=40,
+                                          parameters={"a": 1.0})])
+    return AnimationSpec(timeline=ParameterSweep(parameter="a", values=[1.0, 2.0]), figure=fig,
+                         fps=4)
+
+
+def _dark():
+    from ieeVisualizer import themes
+
+    return next(n for n in (d["name"] for d in themes.list_themes())
+                if themes.get(n).background and int(themes.get(n).background[1:3], 16) < 64)
+
+
+#: Fields that do not change any picture (identity, bookkeeping) or that
+#: define the timeline itself; everything else must be drawn or unmet.
+NOT_VISUAL = {"animation": {"timeline", "figure", "id", "metadata", "schema_version"},
+              "figure": {"layers", "datasets", "id", "metadata", "schema_version"},
+              "legend": {"show"},  # one layer: no legend in either renderer
+              "function": {"type", "data", "encoding", "variables", "name", "parameters"}}
+
+
+def _variants():
+    """``(kind, field, edit)``: each field of each spec class set to a value
+    other than its default; asserted to cover every field."""
+    from ieeVisualizer.spec import Axis, Legend, TextAnnotation
+
+    def fig(**kw):
+        return lambda a: dataclasses.replace(a, figure=dataclasses.replace(a.figure, **kw))
+
+    def layer(**kw):
+        return lambda a: dataclasses.replace(a, figure=dataclasses.replace(
+            a.figure, layers=[dataclasses.replace(a.figure.layers[0], **kw)]))
+
+    out = {
+        "animation": {"fps": lambda a: dataclasses.replace(a, fps=5),
+                      "hold_start": lambda a: dataclasses.replace(a, hold_start=1),
+                      "hold_end": lambda a: dataclasses.replace(a, hold_end=1),
+                      "axis_limits": lambda a: dataclasses.replace(a, axis_limits="auto"),
+                      "label_frames": lambda a: dataclasses.replace(a, label_frames=False),
+                      "poster": lambda a: dataclasses.replace(a, poster="first"),
+                      "loop": lambda a: dataclasses.replace(a, loop=False),
+                      "title": lambda a: dataclasses.replace(a, title="T")},
+        "figure": {"title": fig(title="T"), "axes": fig(axes={"x": Axis(label="L")}),
+                   "coordinate_system": fig(coordinate_system="polar"),
+                   "legend": fig(legend=Legend(position="upper-left")),
+                   "annotations": fig(annotations=[TextAnnotation(text="n", x=1, y=0)]),
+                   "caption": fig(caption="C"), "theme": fig(theme=_dark())},
+        "axis": {"label": fig(axes={"y": Axis(label="L")}), "unit": fig(axes={"y": Axis(
+            unit="m")}), "scale": fig(axes={"y": Axis(scale="log")}),
+                 "limits": fig(axes={"y": Axis(limits=[-4.0, 4.0])})},
+        "legend": {"position": fig(legend=Legend(position="upper-left")),
+                   "title": fig(legend=Legend(title="L"))},
+        "function": {"role": layer(role="reference"), "style": layer(style={"color": "red"}),
+                     "expression": layer(expression="a*cos(x)"),
+                     "domain": layer(domain={"x": [0.0, 3.0]}), "samples": layer(samples=20)},
+    }
+    return out
+
+
+def _vf_variants():
+    from ieeVisualizer import templates
+
+    values = {"u": "-y + k*x + 0.5", "v": "x + k*y + 0.5", "constants": {"k": 0.25},
+              "x_range": [-3.0, 3.0], "y_range": [-3.0, 3.0], "grid": 4, "x_column": "a",
+              "y_column": "b", "u_column": "c", "v_column": "d", "x_unit": "m",
+              "y_unit": "m", "vector_unit": "m/s", "title": "T", "caption": "C",
+              "x_label": "east", "y_label": "north", "normalize": True, "scale": 2.0,
+              "role": "observed"}
+    names = [q.name for q in templates.get("vector_field_2d", "1.0.0").parameters]
+    assert set(names) == set(values), "add the new template parameter to this table"
+    return values
+
+
+def _picture(res):
+    import hashlib
+
+    return (hashlib.sha256(res.content).hexdigest(), hashlib.sha256(res.poster_png).hexdigest(),
+            res.frame_count, sorted(w.code for w in res.warnings))
+
+
+@needs_manim
+def test_every_field_set_is_drawn_or_reported_unmet():
+    """Support is an allowlist: a field Manim does not draw is unmet, never
+    silently ignored (a swept scale, normalize, captions, units and
+    label_frames used to be dropped)."""
+    from ieeVisualizer.animation import AnimationSpec, ParameterSweep, TemplateTarget
+    from ieeVisualizer.spec import Axis, Legend
+    from ieeVisualizer.spec import FigureSpec as FS
+
+    adapter = ManimAdapter()
+    classes = {"animation": AnimationSpec, "figure": FS, "axis": Axis, "legend": Legend,
+               "function": FunctionMark}
+    variants = _variants()
+    for kind, cls in classes.items():
+        fields = {f.name for f in dataclasses.fields(cls)}
+        assert fields == set(variants[kind]) | NOT_VISUAL.get(kind, set()), (kind, fields)
+    silent = []
+    base = _picture(adapter.render(_base(), GIF))
+    for kind, edits in variants.items():
+        for name, edit in edits.items():
+            anim = edit(_base())
+            if not adapter.unmet(anim, GIF) and _picture(adapter.render(anim, GIF)) == base:
+                silent.append(f"{kind}.{name}")
+    vf = vector_field_anim(params={"scale": None})
+    vbase = _picture(adapter.render(vf, GIF))
+    for name, value in _vf_variants().items():
+        if name == "constants":  # the swept map: its key is replaced in every state
+            continue
+        anim = vector_field_anim(params={"scale": None, name: value})
+        if not adapter.unmet(anim, GIF) and _picture(adapter.render(anim, GIF)) == vbase:
+            silent.append(f"vector_field_2d.{name}")
+    swept = AnimationSpec(fps=4, timeline=ParameterSweep(parameter="grid", values=[3.0, 9.0],
+                          target=TemplateTarget(name="vector_field_2d", version="1.0.0",
+                                                params={"u": "-y", "v": "x"})))
+    assert any("does not change what manim draws" in u for u in adapter.unmet(swept, GIF))
+    assert silent == []
+
+
+@needs_manim
+def test_a_swept_scale_changes_the_arrows():
+    from ieeVisualizer.animation import AnimationSpec, ParameterSweep, TemplateTarget
+
+    anim = AnimationSpec(fps=4, timeline=ParameterSweep(parameter="scale", values=[0.2, 3.0],
+                         target=TemplateTarget(name="vector_field_2d", version="1.0.0",
+                                               params={"u": "-y", "v": "x", "grid": 5})))
+    frames = _video_frames(ManimAdapter().render(anim, REQ).content)
+    assert _ink(frames[1]) > 1.5 * _ink(frames[0])
+
+
+@needs_manim
+def test_curve_pieces_are_counted_by_what_is_drawn():
+    """Every sample outside y [-1, 1] but every segment crossing it: counted
+    0 pieces, drawn N - 1 (100,000 samples: 311 s past a 2 s deadline)."""
+    from ieeVisualizer.spec import Axis
+
+    anim = _fm("a*1000*cos(pi*x)", (0.0, 1999.0), {"y": Axis(limits=[-1.0, 1.0])}, 2000)
+    with pytest.raises(AnimationError) as e:
+        ManimAdapter().render(anim, GIF)
+    assert e.value.issues[0].code == "curve_too_fragmented"
+
+
+@needs_manim
+@pytest.mark.parametrize("value,ok", [("tab:red", True), ("C1", True), ("#ff000080", True),
+                                      ([1, 0, 0], False), ("notacolor", False)])
+def test_colours_are_read_like_matplotlib(value, ok):
+    from ieeVisualizer.animation import ParameterSweep
+
+    anim = _base()
+    anim = dataclasses.replace(anim, timeline=ParameterSweep(parameter="a", values=[1.0, 2.0]))
+    anim.figure.layers[0].style = {"color": value, "linewidth": "thick"}
+    res = ManimAdapter().render(anim, GIF)
+    got = [w.path for w in res.warnings if w.code == "invalid_style_value"]
+    assert got == (["/figure/layers/0/style/linewidth"] if ok else
+                   ["/figure/layers/0/style/color", "/figure/layers/0/style/linewidth"])
+
+
+def test_an_unimportable_manim_is_reported_unmet(monkeypatch):
+    from ieeVisualizer.animation import manim_adapter as MA
+
+    monkeypatch.setattr(MA, "manim_available", lambda: True)
+    monkeypatch.setattr(MA, "import_problem", lambda: "ImportError: libpango missing")
+    assert any("not importable: ImportError: libpango" in u
+               for u in ManimAdapter().unmet(_base(), GIF))

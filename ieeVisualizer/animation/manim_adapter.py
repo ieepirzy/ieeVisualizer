@@ -4,45 +4,44 @@ A narrow, honest subset of AnimationSpec, rendered with Manim Community's
 Cairo renderer:
 
 * a ``parameter_sweep`` of a ``function`` mark: every layer of the figure is a
-  symbolic one-variable function in ``cartesian2d`` (no data layers, no
-  annotations); the curves morph on Manim ``Axes`` while a ``ValueTracker``
-  moves through the sweep values;
+  symbolic one-variable function in ``cartesian2d``; the curves morph on
+  Manim ``Axes`` while a ``ValueTracker`` moves through the sweep values;
 * a ``parameter_sweep`` of the ``vector_field_2d`` template in expression mode
-  (sweeping ``constants.<name>`` or another number parameter), drawn as an
-  ``ArrowVectorField`` whose arrow length is proportional to magnitude with
-  ONE scale for the whole animation (largest magnitude over all frames = 0.9
-  grid cells), so changes in strength stay visible.
+  (sweeping ``constants.<name>`` or ``scale``), drawn as an ``ArrowVectorField``
+  with the template's ``scale`` (length = scale x magnitude) or, without one,
+  ONE scale for the whole clip (largest magnitude = 0.9 grid cells);
+  ``normalize`` draws every arrow the same length.
 
-Everything else (frame columns, data layers, annotations, legends, 3D, polar,
-other templates) is reported as unmet through :meth:`ManimAdapter.unmet` and
-the capabilities, never approximated. Text uses ``Text`` (Pango), never
-``MathTex``, so no LaTeX installation is needed. Frames are NOT pixel-equal
-to the Matplotlib frames: this is a different renderer with its own look.
+Support is an allowlist (:data:`DRAWN`): every field of the spec, and every
+template parameter, set to a value other than its default and not drawn here
+is reported unmet by :meth:`ManimAdapter.unmet`, as is a swept parameter that
+does not change what Manim draws. Drawn besides the curves and arrows: title,
+caption, axis labels with units, requested axis limits (exactly), the frame
+label (``label_frames``), the theme's background, text and series colours,
+and ``color``/``linewidth`` styles read by the Matplotlib style parser (the
+same values accepted and the same ``invalid_style_value`` fallback). Text
+uses ``Text`` (Pango), never ``MathTex``: no LaTeX. Known visual differences
+from Matplotlib: Manim's axes cross at the origin inside the box, only the
+end values are tick-labelled (they can touch in a small frame), and arrows
+are centred on their grid points (Matplotlib puts the tail there).
 
-Never chosen automatically: its frames look different from the Matplotlib
-frames (and from a still of the same state), so it is used only when the
-request names it (``AnimationRequest(adapter="manim")``); a missing ffmpeg
-never silently switches an MP4 to this renderer. The resource guards
-(:func:`~ieeVisualizer.animation.base.enforce_limits`) are checked before
-Manim starts, and the render runs under the caller's deadline: it is checked
-in every frame's redraw and while the clip is decoded, so an expired render
-stops at the next frame and its temporary directory is removed.
+Never chosen automatically (``auto_select=False``): it is used only when the
+request names it. Resource guards run before Manim starts; a curve cut into
+more than :data:`MAX_CURVE_PIECES` pieces is refused (counted by the same
+function that draws them). The render runs under the caller's deadline (in
+the killable worker by default; inline, checked before every frame and while
+the clip is decoded). Manim's configuration is process-global, so inline
+renders are serialized behind :data:`RENDER_LOCK`, acquired within the
+deadline.
 
-Manim's configuration is process-global, so renders are serialized behind
-:data:`RENDER_LOCK` (concurrent renders returned another render's size or
-lost their file). Curves are cut where they leave the axis range (never
-clamped onto its edge); a log axis scale is reported as unmet (Manim's
-``Axes`` here are linear); the background and text colours come from the
-render's theme (an unknown theme is drawn with the default one, with a
-warning).
-
-Importing this module does not import manim; :func:`manim_available` tries
-once and caches the answer. Expressions go through the same checked parser as
-the Matplotlib adapter (``render.mpl.function.parse``).
+Importing this module does not import manim: :func:`manim_available` only
+looks for it, and :func:`import_problem` tries the import (once) when the
+adapter is asked for.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import tempfile
 import threading
@@ -62,7 +61,6 @@ from .base import (
     enforce_limits,
     output_timing,
     size_warnings,
-    timeline_kind,
 )
 from .frames import sweep_values, template_params
 from .limits import frame_mapping, frame_total, poster_index, sweep_state_count
@@ -80,13 +78,25 @@ MAX_CURVE_PIECES = 1000
 @lru_cache(maxsize=1)
 def manim_available() -> bool:
     """Whether manim is installed, without importing it (an import costs
-    about 0.5 s and configures logging; it happens only in a Manim render)."""
+    about 0.5 s and configures logging), for registering the adapter. Whether
+    it also imports is :func:`import_problem`, checked only when the adapter
+    is asked for (in the render worker by default)."""
     from importlib.util import find_spec
 
     try:
         return find_spec("manim") is not None
     except (ImportError, ValueError):
         return False
+
+
+@lru_cache(maxsize=1)
+def import_problem() -> str | None:
+    """``None`` if ``import manim`` works, else why not (tried once)."""
+    try:
+        import manim  # noqa: F401
+    except Exception as e:  # noqa: BLE001 - any import failure: not usable
+        return f"{type(e).__name__}: {e}"
+    return None
 
 
 CAPABILITIES = AnimationCapabilities(
@@ -102,6 +112,80 @@ CAPABILITIES = AnimationCapabilities(
     auto_select=False,
     cost_model="manim",
 )
+
+
+#: What this adapter draws: every other field of the spec (or parameter of
+#: the template) set to a value other than its default is reported unmet by
+#: :meth:`ManimAdapter.unmet`. An allowlist: a field added to the spec later
+#: is unmet here until it is drawn.
+DRAWN = {
+    "animation": {"timeline", "figure", "fps", "hold_start", "hold_end", "axis_limits",
+                  "label_frames", "poster", "loop", "id", "title", "metadata",
+                  "schema_version"},
+    "figure": {"title", "layers", "datasets", "axes", "coordinate_system", "legend",
+               "annotations", "caption", "theme", "id", "metadata", "schema_version"},
+    "axis": {"label", "unit", "limits", "scale"},
+    "legend": {"show"},
+    "function": {"type", "data", "encoding", "name", "style", "expression", "variables",
+                 "domain", "samples", "parameters", "role"},
+    "style": {"color", "linewidth"},
+    "vector_field_2d": {"u", "v", "constants", "x_range", "y_range", "grid", "x_unit",
+                        "y_unit", "title", "caption", "x_label", "y_label", "normalize",
+                        "scale"},
+}
+#: Template parameters a sweep may vary here (``constants.<name>`` or these).
+SWEPT = {"vector_field_2d": {"constants", "scale"}}
+
+
+def _not_drawn(obj, kind: str, path: str) -> list[str]:
+    """Fields of dataclass ``obj`` outside ``DRAWN[kind]`` not at their default."""
+    out = []
+    for f in dataclasses.fields(obj):
+        default = f.default if f.default is not dataclasses.MISSING else (
+            f.default_factory() if f.default_factory is not dataclasses.MISSING else None)
+        if f.name not in DRAWN[kind] and getattr(obj, f.name) != default:
+            out.append(f"{path}/{f.name} (not drawn by manim)")
+    return out
+
+
+def unmet_fields(anim: AnimationSpec) -> list[str]:
+    """Everything set in ``anim`` that this adapter does not draw."""
+    out = _not_drawn(anim, "animation", "")
+    tl = anim.timeline
+    fig = anim.figure
+    if fig is not None:
+        out += _not_drawn(fig, "figure", "/figure") + _not_drawn(fig.legend, "legend",
+                                                                  "/figure/legend")
+        for k, a in fig.axes.items():
+            out += _not_drawn(a, "axis", f"/figure/axes/{k}")
+            if a.scale not in (None, "linear"):
+                out.append(f"axis {k} scale {a.scale!r} (linear axes only)")
+        for i, m in enumerate(fig.layers):
+            p = f"/figure/layers/{i}"
+            if not isinstance(m, FunctionMark) or m.expression is None \
+                    or len(m.variables) != 1:
+                out.append(f"layer {i}: only symbolic one-variable function marks")
+                continue
+            out += _not_drawn(m, "function", p)
+            if m.role != "observed":
+                out.append(f"{p}/role {m.role!r} (not drawn by manim)")
+            out += [f"{p}/style/{k} (not drawn by manim)" for k in m.style
+                    if k not in DRAWN["style"]]
+    if isinstance(tl, ParameterSweep) and isinstance(tl.target, TemplateTarget):
+        t = tl.target
+        try:
+            from .. import templates
+
+            params = {q.name: q.default for q in templates.get(t.name, t.version).parameters}
+        except Exception:  # noqa: BLE001 - an unknown template is a validation error
+            params = {}
+        drawn = DRAWN.get(t.name, set())
+        out += [f"/timeline/target/params/{k} (not drawn by manim)"
+                for k, v in (t.params or {}).items()
+                if k not in drawn and v != params.get(k)]
+        if tl.parameter.partition(".")[0] not in SWEPT.get(t.name, set()):
+            out.append(f"sweeping {tl.parameter!r} (it does not change what manim draws)")
+    return out
 
 
 class ManimAdapter:
@@ -124,24 +208,18 @@ class ManimAdapter:
 
     def unmet(self, anim: AnimationSpec, request: AnimationRequest) -> list[str]:
         out = base_unmet(anim, request, CAPABILITIES)
-        if not manim_available():
-            out.append("manim is not importable (pip install 'ieeVisualizer[manim]')")
+        problem = import_problem() if manim_available() else "not installed"
+        if problem is not None:
+            out.append(f"manim is not importable: {problem} (pip install "
+                       "'ieeVisualizer[manim]')")
         tl = anim.timeline
-        if timeline_kind(anim) == "parameter_sweep:mark" and anim.figure is not None:
-            for i, m in enumerate(anim.figure.layers):
-                if not isinstance(m, FunctionMark) or m.expression is None \
-                        or len(m.variables) != 1:
-                    out.append(f"layer {i}: only symbolic one-variable function marks")
-            if anim.figure.annotations:
-                out.append("annotations")
-            for k, a in anim.figure.axes.items():
-                if a.scale not in (None, "linear"):
-                    out.append(f"axis {k} scale {a.scale!r} (linear axes only)")
-        elif isinstance(tl, ParameterSweep) and isinstance(tl.target, TemplateTarget):
+        if anim.figure is not None and anim.figure.annotations:
+            out.append("annotations")
+        if isinstance(tl, ParameterSweep) and isinstance(tl.target, TemplateTarget):
             p = tl.target.params
             if tl.target.data is not None or not (p.get("u") and p.get("v")):
                 out.append("vector_field_2d in expression mode only (u and v, no data)")
-        return out
+        return out + unmet_fields(anim)
 
     def render(self, anim: AnimationSpec, request: AnimationRequest | None = None, *,
                resolver=None, deadline=None) -> AnimationResult:
@@ -169,11 +247,18 @@ class ManimAdapter:
         frames = frame_mapping(anim, len(values))
         poster = poster_index(anim, n_frames)
         warnings: list[RenderWarning] = []
-        if isinstance(tl.target, TemplateTarget):
-            build, title = _vector_field_scene(anim, tl, values)
-        else:
-            build, title = _function_scene(anim, tl, values, warnings)
         theme = _theme(request.theme or (anim.figure.theme if anim.figure else None), warnings)
+        try:
+            if isinstance(tl.target, TemplateTarget):
+                build, title, caption = _vector_field_scene(anim, tl, values, theme)
+            else:
+                build, title, caption = _function_scene(anim, tl, values, warnings, theme)
+        except AnimationError:
+            raise
+        except (ValueError, OverflowError, ZeroDivisionError, FloatingPointError) as e:
+            raise AnimationError([issue("", "frame_not_drawable",
+                                        f"manim cannot draw this: {type(e).__name__}: {e}")]
+                                 ) from None
         if anim.axis_limits == "auto":
             warnings.append(RenderWarning("axis_limits_fixed", "manim keeps one coordinate "
                                           "system for the whole clip; axis_limits 'auto' is "
@@ -185,8 +270,8 @@ class ManimAdapter:
             deadline.phase = "draw: waiting for another manim render"
             raise deadline.exceeded()
         try:
-            content, decoded, poster_png = _run(build, title, anim, request, len(values), poster,
-                                                theme, deadline)
+            content, decoded, poster_png = _run(build, (title, caption), anim, request,
+                                                len(values), poster, theme, deadline)
         finally:
             RENDER_LOCK.release()
         if decoded != n_frames:
@@ -263,15 +348,34 @@ def _clip(run, xr, yr) -> list[list[tuple[float, float]]]:
     return parts
 
 
-def _theme(name, warnings) -> tuple[str, str]:
-    """``(background, foreground)`` of the registered theme ``name``."""
+def _theme(name, warnings) -> tuple[str, str, list[str]]:
+    """``(background, foreground, series colours)`` of the registered theme
+    ``name`` (series colours: its palette, else Matplotlib's default cycle,
+    as a Matplotlib render of the same spec uses)."""
+    from matplotlib import colors
+
     from ..themes import resolve_for_render
 
     theme, problem = resolve_for_render(name)
     if problem is not None:
         warnings.append(RenderWarning("unknown_theme", f"{problem} The default theme was used.",
                                       ""))
-    return theme.background or "#FFFFFF", theme.foreground or "#000000"
+    palette = list(theme.palette or [f"C{i}" for i in range(10)])
+    return (theme.background or "#FFFFFF", theme.foreground or "#000000",
+            [colors.to_hex(c) for c in palette])
+
+
+def _style(m, k: int, palette: list[str], path: str, warnings) -> tuple[str, float]:
+    """``(hex colour, stroke width)`` of a layer, read by the Matplotlib
+    renderer's own style parser: the same values are accepted, and an
+    invalid one warns (``invalid_style_value``) and falls back the same way."""
+    from matplotlib import colors
+
+    from ..render.mpl.style import parse_style
+
+    style = parse_style(m.style, DRAWN["style"], f"{path}/style", "a function mark", warnings)
+    return (colors.to_hex(style.get("color", palette[k % len(palette)])),
+            float(style.get("linewidth", 2.0)) * 2)
 
 
 def _nice_range(lo: float, hi: float, keep: tuple[bool, bool] = (False, False)) -> list[float]:
@@ -292,7 +396,21 @@ def _nice_range(lo: float, hi: float, keep: tuple[bool, bool] = (False, False)) 
             hi if keep[1] else math.ceil(hi / step) * step, step]
 
 
-def _function_scene(anim: AnimationSpec, tl: ParameterSweep, values, warnings):
+def _corners(pieces) -> np.ndarray:
+    """Bezier points (4 per segment) of polylines given as Nx3 point arrays,
+    joined into one array (a gap between pieces starts a subpath)."""
+    out = []
+    for c in pieces:
+        c = np.asarray(c, dtype=float)
+        if len(c) < 2:
+            continue
+        a, b = c[:-1], c[1:]
+        out.append(np.stack([a, a + (b - a) / 3, a + 2 * (b - a) / 3, b], axis=1)
+                   .reshape(-1, 3))
+    return np.concatenate(out) if out else np.zeros((0, 3))
+
+
+def _function_scene(anim: AnimationSpec, tl: ParameterSweep, values, warnings, theme):
     fig = anim.figure
     layers = []
     for i, m in enumerate(fig.layers):
@@ -305,13 +423,6 @@ def _function_scene(anim: AnimationSpec, tl: ParameterSweep, values, warnings):
                        f"/figure/layers/{i}")
         xs = np.linspace(*m.domain[var], m.samples)
         layers.append((m, swept, fn, xs))
-        if m.style and set(m.style) - {"color", "linewidth"}:
-            warnings.append(RenderWarning("style_key_ignored", "manim draws only 'color' and "
-                                          "'linewidth' styles.", f"/figure/layers/{i}/style"))
-        if m.role != "observed":
-            warnings.append(RenderWarning("role_not_drawn", f"role {m.role!r} is not "
-                                          "distinguished by the manim adapter.",
-                                          f"/figure/layers/{i}/role"))
     if fig.legend.show and len(fig.layers) > 1:
         warnings.append(RenderWarning("legend_not_drawn", "the manim adapter draws no legend.",
                                       "/legend"))
@@ -342,16 +453,16 @@ def _function_scene(anim: AnimationSpec, tl: ParameterSweep, values, warnings):
     yr = _nice_range(y_lo, y_hi, tuple(bool(limits_y) and v is not None
                                        for v in (limits_y or [None, None])))
     labels = (_axis_label(fig, "x", layers[0][0].variables[0]), _axis_label(fig, "y", "y"))
-    for p in values:  # pieces of curve inside the axes, before manim starts
-        pieces = 0
-        for layer in layers:
-            y, x = ys(layer, p), layer[3]
-            inside = np.isfinite(y) & (y >= yr[0]) & (y <= yr[1]) & (x >= xr[0]) & (x <= xr[1])
-            pieces += int(inside[0]) + int(np.count_nonzero(inside[1:] & ~inside[:-1]))
-        if pieces > MAX_CURVE_PIECES:
+    def pieces(layer, p):  # what one frame draws: the same function counts and draws
+        return [piece for run in _finite_runs(layer[3], ys(layer, p))
+                for piece in _clip(run, xr, yr)]
+
+    for p in values:  # before manim starts
+        n = sum(len(pieces(layer, p)) for layer in layers)
+        if n > MAX_CURVE_PIECES:
             raise AnimationError([issue("/figure/layers", "curve_too_fragmented",
                                         f"at {tl.parameter} = {p:g} the curves leave and re-enter "
-                                        f"the axes {pieces} times; manim draws each piece in "
+                                        f"the axes {n} times; manim draws each piece in "
                                         f"Python per frame and accepts at most "
                                         f"{MAX_CURVE_PIECES}. Use fewer samples or wider "
                                         "limits.")])
@@ -366,31 +477,31 @@ def _function_scene(anim: AnimationSpec, tl: ParameterSweep, values, warnings):
         def value():
             return float(np.interp(tracker.get_value(), idx, values))
 
-        palette = [M.BLUE, M.ORANGE, M.GREEN, M.RED, M.PURPLE]
         for k, layer in enumerate(layers):
-            m = layer[0]
-            color = m.style.get("color") or palette[k % len(palette)]
-            width = float(m.style.get("linewidth", 2.0)) * 2
+            color, width = styles[k]
 
             def curve(layer=layer, color=color, width=width):
-                # ONE mobject per curve; each piece inside the axes is a subpath
+                # ONE mobject per curve; each piece inside the axes is a
+                # subpath; the bezier points are built in one array
                 path = M.VMobject(stroke_color=color, stroke_width=width)
-                for run in _finite_runs(layer[3], ys(layer, value())):
-                    for inside in _clip(run, xr, yr):  # cut where it leaves the axes
-                        pts = [ax.c2p(x, y) for x, y in inside]
-                        path.start_new_path(pts[0])
-                        path.add_points_as_corners(pts[1:])
+                pts = _corners([np.asarray(ax.coords_to_point(*np.array(piece).T)).T
+                                for piece in pieces(layer, value())])
+                if len(pts):
+                    path.set_points(pts)
                 return path
 
             scene.add(M.always_redraw(curve))
-        scene.add(M.always_redraw(lambda: M.Text(
-            f"{tl.parameter} = {value():.3g}", font_size=24).to_corner(M.UR)))
+        if anim.label_frames:
+            scene.add(M.always_redraw(lambda: M.Text(
+                f"{tl.parameter} = {value():.3g}", font_size=24).to_corner(M.UR)))
         return tracker
 
-    return construct, fig.title or anim.title
+    styles = [_style(m, k, theme[2], f"/figure/layers/{k}", warnings)
+              for k, (m, *_) in enumerate(layers)]
+    return construct, fig.title or anim.title, fig.caption
 
 
-def _vector_field_scene(anim: AnimationSpec, tl: ParameterSweep, values):
+def _vector_field_scene(anim: AnimationSpec, tl: ParameterSweep, values, theme):
     from .. import templates
 
     t: TemplateTarget = tl.target
@@ -418,6 +529,8 @@ def _vector_field_scene(anim: AnimationSpec, tl: ParameterSweep, values):
     cell = min((x1 - x0) / max(grid[0] - 1, 1), (y1 - y0) / max(grid[1] - 1, 1)) * s
     xc, yc = (x0 + x1) / 2, (y0 + y1) / 2
     spec_title = p0.get("title")
+    labels = tuple(f"{p0.get(a + '_label') or a} ({p0[a + '_unit']})" if p0.get(a + "_unit")
+                   else p0.get(a + "_label") or a for a in ("x", "y"))
 
     def construct(scene, M):
         ax = M.Axes(x_range=[x0, x1, xr[2]], y_range=[y0, y1, yr[2]], x_length=(x1 - x0) * s,
@@ -425,7 +538,7 @@ def _vector_field_scene(anim: AnimationSpec, tl: ParameterSweep, values):
         ax.shift(0.3 * M.DOWN)
         origin = ax.c2p(xc, yc)
         scene.add(ax, *_tick_labels(M, ax, [x0, x1], [y0, y1]),
-                  *_axis_titles(M, ax, (p0.get("x_label") or "x", p0.get("y_label") or "y")))
+                  *_axis_titles(M, ax, labels))
         tracker = M.ValueTracker(0.0)
         idx = np.arange(len(values), dtype=float)
 
@@ -439,7 +552,13 @@ def _vector_field_scene(anim: AnimationSpec, tl: ParameterSweep, values):
                 u, v = float(fu(x, y, k)), float(fv(x, y, k))
             if not (math.isfinite(u) and math.isfinite(v)):
                 return np.zeros(3)  # no arrow: a zero vector draws nothing visible
-            return np.array([u, v, 0.0]) * (0.9 * cell / max_mag)
+            vec, norm = np.array([u, v, 0.0]), math.hypot(u, v)
+            if p0.get("normalize"):  # every arrow the same length, as in Matplotlib
+                return vec / norm * 0.9 * cell if norm else vec
+            scale = k if swept == "scale" else p0.get("scale")
+            # with a scale, length = scale x magnitude in data units (the
+            # template's meaning); without, one scale for the whole clip
+            return vec * (scale * s if scale is not None else 0.9 * cell / max_mag)
 
         dx = (x1 - x0) * s / max(grid[0] - 1, 1)
         dy = (y1 - y0) * s / max(grid[1] - 1, 1)
@@ -447,7 +566,7 @@ def _vector_field_scene(anim: AnimationSpec, tl: ParameterSweep, values):
         def field():
             k = value()
             return M.ArrowVectorField(
-                lambda pt: field_at(pt, k), color=M.BLUE,
+                lambda pt: field_at(pt, k), color=theme[2][0],
                 # ArrowVectorField adds one step to the end (inclusive range);
                 # ending half a step early gives exactly the template's grid.
                 x_range=[origin[0] - (xc - x0) * s, origin[0] + (x1 - xc) * s - dx / 2, dx],
@@ -455,11 +574,12 @@ def _vector_field_scene(anim: AnimationSpec, tl: ParameterSweep, values):
                 length_func=lambda norm: norm)
 
         scene.add(M.always_redraw(field))
-        scene.add(M.always_redraw(lambda: M.Text(
-            f"{tl.parameter} = {value():.3g}", font_size=24).to_corner(M.UR)))
+        if anim.label_frames:
+            scene.add(M.always_redraw(lambda: M.Text(
+                f"{tl.parameter} = {value():.3g}", font_size=24).to_corner(M.UR)))
         return tracker
 
-    return construct, spec_title or anim.title
+    return construct, spec_title or anim.title, p0.get("caption")
 
 
 def _axis_label(fig, key: str, default: str) -> str:
@@ -488,7 +608,7 @@ def _axis_titles(M, ax, labels):
 
 
 def _run(construct, title, anim: AnimationSpec, request: AnimationRequest, n_values: int,
-         poster: int, theme: tuple[str, str], deadline):
+         poster: int, theme: tuple[str, str, list[str]], deadline):
     """``(content, frames decoded, poster PNG)``. Manim writes an MP4; it is
     decoded one frame at a time (never all held): for GIF each frame goes
     straight into the Pillow encoder, for MP4 frames are only counted. The
@@ -504,10 +624,14 @@ def _run(construct, title, anim: AnimationSpec, request: AnimationRequest, n_val
     w, h = request.frame_request().size_px
     n_anim = n_values - 1  # the tracker moves between n_values states
 
+    title, caption = title
+
     class _Scene(M.Scene):
         def construct(self):
             if title:
                 self.add(M.Text(title, font_size=28).to_edge(M.UP))
+            if caption:
+                self.add(M.Text(caption, font_size=18).to_edge(M.DOWN, buff=0.15))
             tracker = construct(self, M)
             # checked before every frame is drawn: an expired render stops
             self.add_updater(lambda dt: deadline.check("draw"))

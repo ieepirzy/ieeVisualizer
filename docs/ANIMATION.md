@@ -223,33 +223,38 @@ calibrate the cost estimate; run them with `python -m pytest -m slow`.
 ## Manim adapter (optional, `pip install -e ".[manim]"`)
 
 Verified here with manim 0.22.0 (Cairo renderer, Python 3.13; CI does not
-install it, its render tests are skipped there). Registered only if `import
-manim` succeeds and **never selected automatically** (`auto_select=False`):
-its frames do not look like the Matplotlib frames or a still, so it is used
-only when named (`AnimationRequest(adapter="manim")`). Supported, nothing else:
+install it, its render tests are skipped there). Registered when manim is
+installed (found without importing it; the import is tried, once, only when
+the adapter is asked for, and failing it is unmet `manim is not importable:
+<reason>`) and **never selected automatically**: its frames do not look like
+the Matplotlib frames, so it is used only when named
+(`AnimationRequest(adapter="manim")`). Supported, nothing else:
 
-* a `parameter_sweep` of a symbolic one-variable `function` mark in
-  `cartesian2d` (every layer such a mark, no annotations, linear axes): the
-  curves morph on Manim `Axes`. Only the target layer's parameter is swept;
-  another layer's parameter of the same name keeps its value. A curve is
-  cut where it leaves the axis range (never clamped onto the edge); a log
-  axis is unmet, not drawn linear;
-* a `parameter_sweep` of `vector_field_2d` in expression mode: an
-  `ArrowVectorField` on the template's grid with ONE length scale for the
-  whole clip (largest magnitude = 0.9 grid cells).
+* a `parameter_sweep` of symbolic one-variable `function` marks in
+  `cartesian2d` with linear axes. Only the target layer's parameter is swept;
+  a curve is cut where it leaves the axis range, never clamped; more than
+  1,000 pieces per frame is `curve_too_fragmented`;
+* a `parameter_sweep` of `vector_field_2d` in expression mode, sweeping
+  `constants.<name>` or `scale`: arrows with the template's `scale`, or ONE
+  length scale for the whole clip, or (`normalize`) one length.
 
-Everything else is reported by `ManimAdapter().unmet(...)`, never
-approximated. Labels use `Text` (no LaTeX). The background and text colours
-come from the render's theme (`unknown_theme` warning otherwise). Its cost
-model is per output frame (`manim_work_us`); the render runs under the
-deadline, checked before every frame Manim draws and while the clip is
-decoded. Manim's config is process-global, so renders are serialized
-behind `RENDER_LOCK` (concurrent renders used to get another render's size,
-lose files or print progress bars). One `play()` covers every output frame;
-the clip is written as MP4 by Manim and decoded one frame at a time (GIF
-through the same Pillow encoder; odd sizes rendered one pixel larger and
-cropped back); the poster is the decoded poster frame, so an export plans and
-builds nothing again for it.
+**Support is an allowlist** (`manim_adapter.DRAWN`): any spec field or
+template parameter set away from its default that Manim does not draw, and
+any swept parameter that would not change the picture, is reported by
+`ManimAdapter().unmet(...)` and refused; `test_anim_manim.py` sets every
+field of every spec class and template parameter and requires each to be
+drawn or unmet. Drawn: title, caption, axis labels with units, the requested
+limits exactly, the frame label (`label_frames`), the theme's background,
+text and series colours, `color`/`linewidth` read by the Matplotlib style
+parser. Known visual differences: axes cross at the origin, only end values
+are tick-labelled, arrows are centred on their grid points.
+
+The render runs in the deadline-killed worker by default; Manim's config is
+process-global, so inline renders are serialized behind `RENDER_LOCK`,
+acquired within the deadline. One `play()` covers every output frame; the
+clip is written as MP4 by Manim and decoded one frame at a time (GIF through
+the same Pillow encoder; odd sizes rendered one pixel larger and cropped
+back); the poster is the decoded poster frame.
 
 ## Decisions and gaps
 

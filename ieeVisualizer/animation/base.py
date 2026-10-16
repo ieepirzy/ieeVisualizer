@@ -284,9 +284,11 @@ class AnimationRegistry:
         cands = [self.get(request.adapter)] if request.adapter else list(self._adapters.values())
         unmet: dict[str, list[str]] = {}
         for a in cands:
-            missing = a.unmet(anim, request)
             if not request.adapter and not getattr(a.capabilities, "auto_select", True):
-                missing = [*missing, f"automatic selection (request it with adapter={a.name!r})"]
+                # not asked about further: checking may be costly (manim's import)
+                unmet[a.name] = [f"automatic selection (request it with adapter={a.name!r})"]
+                continue
+            missing = a.unmet(anim, request)
             if not missing:
                 return a
             unmet[a.name] = missing
