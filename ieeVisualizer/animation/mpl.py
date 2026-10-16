@@ -157,7 +157,13 @@ class MatplotlibAnimationAdapter:
         req = request.frame_request()
 
         def measure(spec: FigureSpec, keys) -> None:
-            built = self._static.build_figure(spec, req)
+            try:
+                built = self._static.build_figure(spec, req)
+            except RecursionError:  # text the layout engine cannot nest that deep
+                raise AnimationError([issue("", "frame_not_drawable",
+                                            "the figure could not be laid out to fix its axis "
+                                            "limits: its text or data nests too deeply.")]
+                                     ) from None
             for key in keys:
                 lo, hi = getattr(built.axes, f"get_{key}lim")()
                 r = ranges.setdefault(key, [lo, hi])

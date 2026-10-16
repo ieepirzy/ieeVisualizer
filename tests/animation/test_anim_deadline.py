@@ -68,12 +68,18 @@ def test_unused_datasets_are_dropped_before_any_state_is_built():
         n = 100_000
         big = DataSnapshot.from_columns({"u": [float(i) for i in range(n)],
                                          "w": [float(i % 7) for i in range(n)]})
-        t = time.perf_counter()
-        render_animation(_sweep(FigureSpec(datasets={"unused": big}, layers=[_fn()]), 20),
-                         SMALL)
-        print(json.dumps({"s": time.perf_counter() - t}))
-    """, timeout=60)
-    assert out["s"] < 15
+        def timed(fig):
+            t = time.perf_counter()
+            render_animation(_sweep(fig, 20), SMALL)
+            return time.perf_counter() - t
+        timed(FigureSpec(layers=[_fn()]))  # warm-up
+        base = timed(FigureSpec(layers=[_fn()]))
+        print(json.dumps({"s": timed(FigureSpec(datasets={"unused": big}, layers=[_fn()])),
+                          "base": base}))
+    """, timeout=120)
+    # relative to the same render without the dataset, measured in the same
+    # run (a loaded machine slows both): copied per state it was ~50x
+    assert out["s"] < 3 * out["base"] + 1.0, out
     big = DataSnapshot.from_columns({"u": [0.0] * 500_001, "w": [0.0] * 500_001})
     issues = validate_animation(_sweep(FigureSpec(datasets={"big": big}, layers=[_fn()])))
     assert [(i.path, i.code) for i in issues] == [("/figure/datasets", "data_too_large")]
@@ -259,3 +265,42 @@ def test_sweep_range_overflow_is_refused_at_the_timeline():
         render_animation(anim, SMALL)
 
 
+
+
+DEEP = "$" + "\\sqrt{" * 280 + "x" + "}" * 280 + "$"
+
+
+@pytest.mark.parametrize("where", ["name", "unit", "value"])
+def test_text_drawn_from_data_is_checked_like_any_other_text(where):
+    """A column name is a default axis label, a unit is part of it, a string
+    value is a tick or legend entry: each went to the parser unchecked
+    (a raw RecursionError from the limit pass)."""
+    from ieeVisualizer.spec import DatasetRef
+
+    col = DEEP if where == "name" else "y"
+    ds = DataSnapshot.from_columns(
+        {"t": [0, 0, 1, 1], "x": [0.0, 1.0, 0.0, 1.0], col: [1.0, 2.0, 2.0, 3.0],
+         "c": [DEEP if where == "value" else "a"] * 4},
+        units={col: DEEP} if where == "unit" else None)
+    layer = LineMark(data="d", encoding={"x": "x", "y": col, "color": "c"})
+    anim = AnimationSpec(timeline=FrameColumn(dataset="d", column="t"), fps=2,
+                         figure=FigureSpec(datasets={"d": ds}, layers=[layer]))
+    assert "text_too_complex" in codes(validate_animation(anim))
+    anim.figure.datasets["d"] = DatasetRef(kind="table", id="d")
+    with pytest.raises(SpecValidationError) as e:
+        render_animation(anim, SMALL, resolver=lambda ref: ds)
+    assert "text_too_complex" in codes(e.value.issues)
+
+
+def test_a_recursion_error_in_the_limit_pass_is_a_structured_error(monkeypatch):
+    from ieeVisualizer.animation import AnimationError
+    from ieeVisualizer.render.mpl import MatplotlibAdapter
+
+    def deep(*a, **k):
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(MatplotlibAdapter, "build_figure", deep)
+    with pytest.raises(AnimationError) as e:
+        render_animation(sine_anim(), SMALL)
+    assert codes(e.value.issues) == ["frame_not_drawable"]
+    assert "axis limits" in e.value.issues[0].message  # the limit pass, before any draw
