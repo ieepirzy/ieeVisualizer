@@ -20,7 +20,6 @@ from ieeVisualizer.animation import (
     AnimationRegistry,
     AnimationRequest,
     ParameterSweep,
-    export_animation,
     plan,
     render_animation,
     validate_animation,
@@ -181,16 +180,6 @@ def test_poster_of_a_referenced_frame_dataset_is_range_checked_after_resolution(
     assert "0..3" in e.value.issues[0].message
     with pytest.raises(SpecValidationError):
         plan(anim, lambda ref: weekly_data(None))
-
-
-def test_export_with_a_bad_poster_raises_a_structured_error_and_writes_nothing():
-    from ieeVisualizer.artifacts import MemoryWriter
-
-    w = MemoryWriter()
-    with pytest.raises(SpecValidationError) as e:
-        export_animation(_ref_anim(poster=99), "gif", w, request=SMALL,
-                         resolver=lambda ref: weekly_data(None))
-    assert codes(e.value.issues) == ["invalid_poster"] and w.files == {}
 
 
 @pytest.mark.parametrize("anim", [sine_anim(poster=-1), _ref_anim(poster=-1),

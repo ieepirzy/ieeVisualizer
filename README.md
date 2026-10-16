@@ -130,10 +130,9 @@ print(artifact.artifact_id, artifact.variant("png").sha256)  # out/<artifact_id>
 
 An `AnimationSpec` is a FigureSpec plus a timeline: a parameter sweep (a
 function-mark or template parameter) or a frame column (e.g. one frame per
-week). It renders to GIF (and MP4 when ffmpeg is installed) with every frame
-drawn by the static renderer, and exports with a poster PNG and a manifest.
-Every render and export runs under an enforced wall-clock deadline (60 s by
-default). See [docs/ANIMATION.md](docs/ANIMATION.md).
+week). It renders to GIF with every frame drawn by the static renderer,
+under an enforced wall-clock deadline (60 s by default, in a worker process
+killed at the deadline). See [docs/ANIMATION.md](docs/ANIMATION.md).
 
 ## Development priorities
 

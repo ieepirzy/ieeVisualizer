@@ -3,9 +3,8 @@
 
 ``AnimationSpec`` (renderer-neutral, JSON) = base figure + timeline (a
 parameter sweep or a frame column). ``render_animation`` picks an adapter by
-capability (the Matplotlib adapter: GIF always, MP4 when ffmpeg exists).
-``export_animation`` stores the video, a poster PNG, the canonical spec and a
-manifest. Both run under an enforced wall-clock :class:`Deadline` (60 s by
+capability (the Matplotlib adapter: GIF).
+It runs under an enforced wall-clock :class:`Deadline` (60 s by
 default). Importing this package does not import matplotlib.
 See ``docs/ANIMATION.md``.
 """
@@ -22,7 +21,6 @@ from .base import (
     render_animation,
 )
 from .deadline import DEFAULT_DEADLINE_S, Deadline, DeadlineExceeded
-from .export import AnimationArtifact, export_animation
 from .frames import FramePlan, FrameState, plan
 from .spec import (
     ANIMATION_SCHEMA_VERSION,
@@ -52,7 +50,6 @@ __all__ = [
     "MAX_FPS",
     "MAX_FRAMES",
     "AnimationAdapter",
-    "AnimationArtifact",
     "AnimationCapabilities",
     "AnimationError",
     "AnimationRegistry",
@@ -69,7 +66,6 @@ __all__ = [
     "TemplateTarget",
     "animation_hash",
     "default_animation_registry",
-    "export_animation",
     "from_dict",
     "from_json",
     "plan",

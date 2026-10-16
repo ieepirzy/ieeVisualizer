@@ -1,4 +1,4 @@
-"""Matplotlib animation adapter: AnimationSpec -> GIF (Pillow) or MP4 (ffmpeg).
+"""Matplotlib animation adapter: AnimationSpec -> GIF (Pillow).
 
 Every distinct state is rendered as a PNG by the static
 :class:`~ieeVisualizer.render.MatplotlibAdapter` and decoded, so frame *k* is,
@@ -40,7 +40,7 @@ from .base import (
     size_warnings,
 )
 from .deadline import Deadline
-from .encode import encode_mp4, find_ffmpeg, gif_frames, write_gif
+from .encode import gif_frames, write_gif
 from .frames import FramePlan, plan
 from .spec import AnimationSpec, FrameColumn
 from .validate import validate_animation
@@ -53,10 +53,7 @@ _PER_FRAME_Y = frozenset({"histogram"})
 
 
 class MatplotlibAnimationAdapter:
-    """``ffmpeg_path`` overrides discovery (a missing path disables MP4)."""
-
-    def __init__(self, ffmpeg_path: str | None = None) -> None:
-        self._ffmpeg_arg = ffmpeg_path
+    def __init__(self) -> None:
         self._static = MatplotlibAdapter()
 
     @property
@@ -68,21 +65,14 @@ class MatplotlibAnimationAdapter:
         return ADAPTER_VERSION
 
     @property
-    def ffmpeg(self) -> str | None:
-        return find_ffmpeg(self._ffmpeg_arg)
-
-    @property
     def capabilities(self) -> AnimationCapabilities:
-        exe = self.ffmpeg
         figure = dataclasses.replace(FIGURE_CAPABILITIES, animation=True,
                                      output_formats=frozenset({"png"}))
         return AnimationCapabilities(
             figure=figure,
             timelines=frozenset({"parameter_sweep:mark", "parameter_sweep:template",
                                  "frame_column"}),
-            output_formats=frozenset({"gif", "mp4"} if exe else {"gif"}),
-            notes=() if exe else ("mp4: no ffmpeg executable found (install ffmpeg or set "
-                                  "IEEVISUALIZER_FFMPEG)",),
+            output_formats=frozenset({"gif"}),
         )
 
     def unmet(self, anim: AnimationSpec, request: AnimationRequest) -> list[str]:
@@ -229,27 +219,19 @@ class MatplotlibAnimationAdapter:
         from ONE plan and ONE drawing of every state: the frames are streamed
         to every encoder at once, under one deadline."""
         deadline = Deadline.of(deadline)
-        if "mp4" in formats and self.ffmpeg is None:
+        if set(formats) - self.capabilities.output_formats:
             raise AnimationError([issue("", "format_unavailable",
-                                        "MP4 needs an ffmpeg executable and none was found; "
-                                        "install ffmpeg (or set IEEVISUALIZER_FFMPEG), or "
-                                        "request format='gif'.")])
+                                        f"the {self.name} adapter writes "
+                                        f"{', '.join(sorted(self.capabilities.output_formats))}"
+                                        f", not {', '.join(sorted(set(formats)))}.")])
         with expression_cache():
             fp, warnings = self.plan(anim, request, resolver=resolver, deadline=deadline)
             deadline.check("draw")
             theme = anim.figure.theme if anim.figure is not None else None
             drawn = _Drawn(self._static, fp, request, theme, deadline)
-            gif_images: list = []
-            contents = {}
-            if "mp4" in formats:
-                stream = _tap(drawn.frames(), gif_images) if "gif" in formats \
-                    else drawn.frames()
-                contents["mp4"] = encode_mp4(stream, fp.fps, self.ffmpeg, deadline)
-            else:
-                gif_images = gif_frames(drawn.frames(), deadline)
-            if "gif" in formats:
-                deadline.check("encode")
-                contents["gif"] = write_gif(gif_images, fp.fps, anim.loop, deadline)
+            gif_images = gif_frames(drawn.frames(), deadline)
+            deadline.check("encode")
+            contents = {"gif": write_gif(gif_images, fp.fps, anim.loop, deadline)}
         warnings.extend(drawn.warnings(len(fp.states)))
         out = {}
         for fmt in formats:
@@ -314,17 +296,6 @@ class _Drawn:
             where = "every state" if len(idx) == n_states else f"states {idx}"
             out.append(RenderWarning(code, f"{msg} ({where})", "/figure" + path if path else ""))
         return out
-
-
-def _tap(frames, sink: list):
-    """Yield ``frames`` unchanged while quantizing each distinct one into
-    ``sink`` (the GIF's palette images, for a GIF made alongside an MP4)."""
-    last = image = None
-    for f in frames:
-        if f is not last:
-            last, image = f, gif_frames([f])[0]
-        sink.append(image)
-        yield f
 
 
 def _parse_expressions(fp: FramePlan, deadline: Deadline) -> None:
