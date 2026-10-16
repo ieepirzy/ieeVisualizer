@@ -1,10 +1,10 @@
 """Legacy bridge: turn what ``Visualizer.visualize``/``visualize_vf`` sample
 into a :class:`~ieeVisualizer.spec.FigureSpec`.
 
-The legacy calls draw straight into Matplotlib axes (they accept ``ax=``,
-``style=``, ``streamplot=`` and colour 3D arrows by magnitude), so they keep
-drawing directly; see ``Visualizer.to_spec`` for why they are not rerouted
-through the adapter. This module builds the *declarative* equivalent from the
+``visualize()``/``visualize_vf()`` build their spec here too and draw it
+into their own axes with ``MatplotlibAdapter.draw_into`` (only streamlines
+and the equal aspect of 2D fields, which spec 1.0 cannot express, are drawn
+directly on top). This module builds the *declarative* equivalent from the
 same samples (``Visualizer._sample_function`` / ``_sample_field``): the
 sampled values are stored as an inline :class:`DataSnapshot` whose provenance
 records how they were produced, so the figure can be rendered, exported with
@@ -18,11 +18,9 @@ Spec shape produced:
 * ``kind="function"``, ``dim=3``: columns ``x``, ``y``, ``f`` on the full grid
   in ``cartesian3d``; one sampled ``function`` mark (drawn as a surface).
 * ``kind="vector_field"``: columns ``x``, ``y`` [``z``], ``u``, ``v`` [``w``]
-  and ``magnitude``; one ``quiver`` mark. In 2D arrows are coloured by
-  ``magnitude`` (with a colourbar, as ``visualize_vf`` does); in 3D they are
-  scaled so the longest arrow spans one grid cell (the same rule as
-  ``visualize_vf``) but drawn in one colour, because the spec's 3D quiver has
-  no colour channel.
+  and ``magnitude``; one ``quiver`` mark with arrows coloured by
+  ``magnitude`` (and a colourbar). In 3D the arrows are also scaled so the
+  longest one spans one grid cell (the same rule as ``visualize_vf``).
 
 Column names are fixed (the user's symbol names go into the axis labels), so
 a symbol called ``u`` or ``magnitude`` cannot collide with a column.
@@ -180,7 +178,11 @@ def _values(arr) -> list:
     flat = np.ma.asarray(arr).ravel()
     data = np.asarray(np.ma.getdata(flat), dtype=float)
     mask = np.ma.getmaskarray(flat)
-    return [None if m else float(v) for v, m in zip(data.tolist(), mask.tolist())]
+    if not mask.any():
+        return data.tolist()
+    out = data.astype(object)  # elements stay Python floats
+    out[mask] = None
+    return out.tolist()
 
 
 def _provenance(viz, kind, fn, s, symbols_given, rng, seed_note) -> Provenance:
@@ -224,8 +226,8 @@ _SEED_NOTE = ("Random sample positions came from a generator without a per-call 
 
 def function_spec(viz, fn, *, dim, linspace=None, domain=(-5, 5), n=None, symbols=None,
                   rng=None, title=None, units=None, role="reference",
-                  colormap=None) -> FigureSpec:
-    s = viz._sample_function(fn, dim, linspace, domain, n, symbols, rng)
+                  colormap=None, sampled=None) -> FigureSpec:
+    s = sampled or viz._sample_function(fn, dim, linspace, domain, n, symbols, rng)
     axes_keys = ("x", "y") if s.dim == 2 else ("x", "y", "z")
     units = _check_units(units, axes_keys)
     labels = s.labels
@@ -265,10 +267,10 @@ def function_spec(viz, fn, *, dim, linspace=None, domain=(-5, 5), n=None, symbol
 
 def field_spec(viz, fn, *, dim, linspace=None, domain=(-5, 5), n=None, symbols=None,
                rng=None, title=None, units=None, role="reference",
-               colormap=None) -> FigureSpec:
+               colormap=None, sampled=None) -> FigureSpec:
     from .core import field_magnitude
 
-    s = viz._sample_field(fn, dim, linspace, domain, n, symbols, rng)
+    s = sampled or viz._sample_field(fn, dim, linspace, domain, n, symbols, rng)
     pos = ("x", "y", "z")[: s.dim]
     comp = ("u", "v", "w")[: s.dim]
     units = _check_units(units, (*pos, "vector"))
@@ -285,12 +287,10 @@ def field_spec(viz, fn, *, dim, linspace=None, domain=(-5, 5), n=None, symbols=N
                                description="|F|, Euclidean norm of the field components "
                                            "(derived from the sampled components)")
     encoding = {k: k for k in (*pos, *comp)}
-    style = {}
+    encoding["color"] = "magnitude"
+    style = {"colormap": colormap or viz.colormap}
     scale = None
-    if s.dim == 2:
-        encoding["color"] = "magnitude"
-        style["colormap"] = colormap or viz.colormap
-    else:
+    if s.dim == 3:
         # visualize_vf: the longest arrow spans one grid cell.
         mags = np.ma.compressed(magnitude)
         mmax = float(mags.max())

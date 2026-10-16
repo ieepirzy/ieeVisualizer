@@ -17,7 +17,7 @@ from __future__ import annotations
 import contextlib
 import io
 import warnings as _warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ...spec import MARK_TYPES, FigureSpec
@@ -90,18 +90,28 @@ def _metadata(fmt: str) -> dict[str, str | None]:
 
 
 @contextlib.contextmanager
-def render_context(theme: Any):
+def render_context(theme: Any, min_pt: float = 0.0):
     """matplotlib defaults + theme + determinism settings, restored on exit.
-    ``theme`` is a :class:`~ieeVisualizer.themes.Theme` or an rcParams dict."""
+    ``theme`` is a :class:`~ieeVisualizer.themes.Theme` or an rcParams dict;
+    ``min_pt`` raises every rcParams font size below it (profile renders)."""
     import matplotlib
     import matplotlib.style
 
+    from .legibility import font_floor_rc
     from .style import theme_rc
 
     rc = dict(theme) if isinstance(theme, dict) else theme_rc(theme)
     rc.update({"svg.hashsalt": SVG_HASHSALT, "svg.fonttype": "path"})
     with matplotlib.style.context("default"), matplotlib.rc_context(rc):
-        yield
+        with matplotlib.rc_context(font_floor_rc(min_pt) if min_pt else {}):
+            yield
+
+
+def _min_pt(request: RenderRequest) -> float:
+    profile = request.render_profile
+    if profile is None:
+        return 0.0
+    return profile.min_text_pt(_figsize(request)[0], request.display_width)
 
 
 def _figsize(request: RenderRequest) -> tuple[float, float]:
@@ -154,12 +164,74 @@ class MatplotlibAdapter:
         self._check_capabilities(prepared.spec, request)
         warnings = list(prepared.warnings)
         theme = self._theme(prepared.spec, request, warnings)
-        with render_context(theme), _warnings.catch_warnings(record=True) as caught:
+        with render_context(theme, _min_pt(request)), \
+                _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
             built = self._draw(prepared, request, warnings, theme)
-            built.figure.draw_without_rendering()
+            if request.profile is None:
+                built.figure.draw_without_rendering()
+            else:  # the draw the audit measures, as a PNG save would make it
+                from .legibility import recording_canvas
+
+                recording_canvas(built.figure).draw()
+            _audit(built, request)
         _backend_warnings(caught, built.warnings)
+        _collapsed(built.warnings, request)
         built.warnings[:] = _dedupe(built.warnings)  # same list: draw-time warnings land here
+        return built
+
+    def draw_into(
+        self,
+        spec: FigureSpec,
+        ax: Any,
+        *,
+        resolver: Resolver | None = None,
+        role_styling: bool = True,
+    ) -> BuiltFigure:
+        """Validate, resolve and draw ``spec`` into the caller's existing
+        Matplotlib ``ax`` (and its figure), for callers that own the figure:
+        the legacy ``Visualizer.visualize``/``visualize_vf``, which must honour
+        ``ax=`` and ``style=`` and return a pyplot-managed figure.
+
+        Unlike :meth:`build_figure` and :meth:`render` this does **not** enter
+        :func:`render_context`: the caller's current rcParams (its style) stay
+        in force, so the output is not byte-reproducible and there is no
+        request size, dpi or export. The spec's theme still supplies role
+        styling, colour maps and number locale. ``ax`` must match the spec's
+        coordinate system (a 3D axes for ``cartesian3d``). Python warnings
+        raised while drawing are returned as ``backend_warning`` entries, as
+        in :meth:`build_figure`. The adapter's ``max_points`` limit, which
+        guards the export path, is not applied.
+
+        ``role_styling=False`` draws ``reference`` layers with the caller's
+        styling instead of the role's (no reference colour, transparency or
+        line width; a line without a style colour takes the axes' own
+        property cycle, as ``ax.plot`` would). The role stays in the spec.
+        Only line, function and quiver layers support it."""
+        request = RenderRequest()
+        if not role_styling:
+            other = sorted({m.type for m in spec.layers} - {"line", "function", "quiver"})
+            if other:
+                raise ValueError(f"role_styling=False supports line, function and quiver "
+                                 f"layers, not {', '.join(other)}")
+        prepared = prepare(spec, resolver)
+        # max_points guards the reproducible export path (file size, render
+        # time); a caller drawing into its own axes asked for every point.
+        self._check_capabilities(prepared.spec, request,
+                                 replace(self.capabilities, max_points=None))
+        want = {"cartesian3d": "3d", "polar": "polar"}.get(prepared.spec.coordinate_system,
+                                                           "rectilinear")
+        if getattr(ax, "name", None) != want:
+            raise ValueError(f"a {prepared.spec.coordinate_system} spec needs a {want!r} axes, "
+                             f"got {getattr(ax, 'name', None)!r}")
+        warnings = list(prepared.warnings)
+        theme = self._theme(prepared.spec, request, warnings)
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            built = self._draw(prepared, request, warnings, theme, ax=ax,
+                               role_styling=role_styling)
+        _backend_warnings(caught, built.warnings)
+        built.warnings[:] = _dedupe(built.warnings)
         return built
 
     def render(
@@ -174,12 +246,19 @@ class MatplotlibAdapter:
         warnings = list(prepared.warnings)
         theme = self._theme(prepared.spec, request, warnings)
         buf = io.BytesIO()
-        with render_context(theme), _warnings.catch_warnings(record=True) as caught:
+        with render_context(theme, _min_pt(request)), \
+                _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
             built = self._draw(prepared, request, warnings, theme)
+            if request.profile is not None:
+                from .legibility import recording_canvas
+
+                recording_canvas(built.figure)
             built.figure.savefig(buf, format=request.format, dpi=request.dpi,
                                  metadata=_metadata(request.format))
+            _audit(built, request)
         _backend_warnings(caught, built.warnings)
+        _collapsed(built.warnings, request)
         return RenderResult(
             content=buf.getvalue(),
             format=request.format,
@@ -193,11 +272,12 @@ class MatplotlibAdapter:
 
     # --------------------------------------------------------------- internals
 
-    def _check_capabilities(self, spec: FigureSpec, request: RenderRequest) -> None:
+    def _check_capabilities(self, spec: FigureSpec, request: RenderRequest,
+                            capabilities: Capabilities | None = None) -> None:
         from ..registry import requirements_for
 
         reqs = requirements_for(spec, request)
-        missing = reqs.unmet(self.capabilities)
+        missing = reqs.unmet(capabilities or self.capabilities)
         if missing:
             raise CapabilityError(
                 [issue("", "unsupported_by_adapter",
@@ -215,7 +295,9 @@ class MatplotlibAdapter:
 
     @staticmethod
     def _draw(prepared: PreparedSpec, request: RenderRequest,
-              warnings: list[RenderWarning], theme: Any = None) -> BuiltFigure:
+              warnings: list[RenderWarning], theme: Any = None, *,
+              ax: Any = None, role_styling: bool = True) -> BuiltFigure:
+        """Draw into a new figure sized by ``request``, or into ``ax``."""
         from matplotlib.figure import Figure
 
         from .data import infer_axes
@@ -224,12 +306,18 @@ class MatplotlibAdapter:
 
         spec = prepared.spec
         axes_info = infer_axes(spec, warnings)
-        figsize = _figsize(request)
-        fig = Figure(figsize=figsize, dpi=request.dpi, layout="constrained")
-        projection = {"cartesian3d": "3d", "polar": "polar"}.get(spec.coordinate_system)
-        ax = fig.add_subplot(projection=projection)
+        caller_axes = ax is not None
+        if ax is None:
+            figsize = _figsize(request)
+            fig = Figure(figsize=figsize, dpi=request.dpi, layout="constrained")
+            projection = {"cartesian3d": "3d", "polar": "polar"}.get(spec.coordinate_system)
+            ax = fig.add_subplot(projection=projection)
+        else:
+            fig = ax.figure
+            figsize = tuple(fig.get_size_inches())
         ctx = DrawContext(spec=spec, fig=fig, ax=ax, axes=axes_info, warnings=warnings,
-                          theme=theme)
+                          theme=theme, role_styling=role_styling, caller_axes=caller_axes,
+                          profile=request.render_profile, min_pt=_min_pt(request))
         for i, mark in enumerate(spec.layers):
             ctx.layer_artists[i] = DRAW[mark.type](ctx, i, mark)
         report_bar_overlaps(ctx)
@@ -241,7 +329,18 @@ class MatplotlibAdapter:
             cap["color"] = theme.muted
         if theme is not None and theme.typography.caption:
             cap["fontsize"] = theme.typography.caption
+        if ctx.min_pt:
+            from .decorate import CAPTION_FONTSIZE
+
+            cap["fontsize"] = ctx.fs(cap.get("fontsize", CAPTION_FONTSIZE))
         caption = apply_caption(fig, spec.caption, figsize[1], figsize[0], **cap)
+        if ctx.min_pt:
+            from .legibility import fit_ticks, fit_title, wrap_annotations, wrap_labels
+
+            wrap_labels(ctx)
+            fit_ticks(ctx)  # before the legend: upright labels change the axes' decorations
+            fit_title(ctx)
+            wrap_annotations(ctx, ann)
         # Value labels are fitted by the layout engine on every draw, so they
         # are already inside the (widened) axes when the legend pass below
         # lays the figure out to measure it: an "auto" legend that would
@@ -251,6 +350,27 @@ class MatplotlibAdapter:
         return BuiltFigure(figure=fig, axes=ax, warnings=warnings,
                            layer_artists=ctx.layer_artists, annotation_artists=ann,
                            caption=caption)
+
+
+def _audit(built: BuiltFigure, request: RenderRequest) -> None:
+    """Profile renders: append the legibility audit of the figure as drawn."""
+    from .legibility import annotations_outside, audit, figure_glyphs
+
+    built.warnings.extend(annotations_outside(built))
+    built.warnings.extend(figure_glyphs(built.figure))  # inside the render's rc context
+    profile = request.render_profile
+    if profile is not None:
+        built.warnings.extend(audit(built.figure, profile, request.display_width, built.axes))
+
+
+def _collapsed(warnings: list[RenderWarning], request: RenderRequest) -> None:
+    """Profile renders: matplotlib giving up on the layout is a gating
+    ``layout_collapsed`` warning, not only a backend message."""
+    if request.profile is not None and any(
+            w.code == "backend_warning" and "layout not applied" in w.message for w in warnings):
+        warnings.append(RenderWarning(
+            "layout_collapsed", "the figure's text left no room for the plot at this size, so "
+            "matplotlib could not lay it out; shorten the text or use a larger figure.", ""))
 
 
 def _label_locale(spec: FigureSpec, theme: Any, warnings: list[RenderWarning]) -> None:

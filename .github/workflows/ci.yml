@@ -11,8 +11,21 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.9", "3.12"]
+        matplotlib: [""]
+        include:
+          # the declared floor (pyproject: matplotlib>=3.6)
+          - python-version: "3.10"
+            matplotlib: "3.6.3"
     env:
       MPLBACKEND: Agg
+      # tests/view/test_email_browser.py lays the email HTML out in headless
+      # Chromium; here it must run, so a missing browser fails instead of skipping.
+      IEEV_REQUIRE_BROWSER: "1"
+      # tests/render/test_mobile_profiles.py compares renders without a profile
+      # with hashes recorded from main per matplotlib version; fail, not skip,
+      # when this matplotlib has none (re-record: tests/render/data/record_main_hashes.py).
+      # (not at the floor: main's bytes were recorded for the default versions)
+      IEEV_REQUIRE_MAIN_HASHES: ${{ matrix.matplotlib == '' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,6 +37,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
+          if [ -n "${{ matrix.matplotlib }}" ]; then
+            python -m pip install "matplotlib==${{ matrix.matplotlib }}" "numpy<2"
+          fi
+      - name: Install Chromium for the email layout tests
+        run: |
+          # playwright 1.61+ needs Python >= 3.10; 1.60.0 is the last for 3.9
+          python -m pip install "playwright==1.60.0; python_version < '3.10'" \
+                                "playwright==1.64.0; python_version >= '3.10'"
+          python -m playwright install --with-deps chromium
       - name: Ruff
         run: ruff check .
       - name: Pytest

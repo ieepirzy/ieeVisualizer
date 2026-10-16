@@ -11,7 +11,8 @@ wrapping is the same in SVG and PNG.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, localcontext
 from functools import lru_cache
 
@@ -59,20 +60,40 @@ EDGE_STYLE = {  # colour, dashed
 }
 
 
+#: On a narrow profile, grids and horizontal stacks drop columns until each
+#: slot is at least this wide (CSS px): KPI tiles and figures stack.
+NARROW_MIN_SLOT = 150.0
+
+
 @dataclass
 class Ctx:
     view: ViewSpec
     embeds: list[Embed] = field(default_factory=list)
+    #: Smallest text size (CSS px) a profile allows (0: no profile) and the
+    #: narrowest slot before columns stack (None: never).
+    min_text: float = 0.0
+    min_slot: float | None = None
+    warnings: list = field(default_factory=list)
+    #: Narrow profiles draw figures at least this tall (height / width): at
+    #: phone width a short figure has no room left for its axes.
+    min_aspect: float = 0.0
 
 
-def layout_view(view: ViewSpec, width: float = 960.0) -> tuple[list[Item], float, list[Embed]]:
-    """``(items, height, embeds)`` for ``view`` drawn ``width`` px wide."""
+def layout_view(view: ViewSpec, width: float = 960.0, profile=None,
+                warnings: list | None = None) -> tuple[list[Item], float, list[Embed]]:
+    """``(items, height, embeds)`` for ``view`` drawn ``width`` px wide.
+    With a :class:`~ieeVisualizer.render.RenderProfile`, text keeps its
+    minimum size and narrow profiles stack columns; layout warnings are
+    appended to ``warnings``."""
     from .validate import too_narrow_at  # (validate imports layout lazily too)
 
-    narrow = too_narrow_at(view, width)
+    min_slot = NARROW_MIN_SLOT if profile is not None and profile.narrow else None
+    narrow = too_narrow_at(view, width, min_slot)
     if narrow is not None:  # never draw negative widths; render_view checks first
         raise RenderError([narrow])
-    ctx = Ctx(view)
+    ctx = Ctx(view, min_text=profile.min_text_px if profile is not None else 0.0,
+              min_slot=min_slot, warnings=warnings if warnings is not None else [],
+              min_aspect=profile.aspect if min_slot is not None else 0.0)
     items: list[Item] = [Rect(0, 0, width, 0, fill="#ffffff")]
     y = PAD
     if view.title:
@@ -109,21 +130,28 @@ def _container(n, path: str, x: float, y: float, w: float, ctx: Ctx):
         sub, h = _rows([[k] for k in kids], 1, inner_x, inner_y, inner_w, ctx)
         total = inner_y - y + h + 16
         return [Rect(x, y, w, total, fill="#ffffff", stroke=LINE, rx=10)] + items + sub, total
-    cols = slot_columns(n)
+    cols = slot_columns(n, w, ctx.min_slot)
     rows = [kids[i:i + cols] for i in range(0, len(kids), cols)]
     return _rows(rows, cols, x, y, w, ctx)
 
 
-def slot_columns(n: Stack | Grid) -> int:
+def slot_columns(n: Stack | Grid, w: float | None = None, min_slot: float | None = None
+                 ) -> int:
     """Columns a grid / stack splits its width into. A grid never has more
     columns than children (``columns=200`` with 4 children is 4 columns, not
     196 empty ones squeezing the 4), so its children are as wide as they can
     be; :func:`.validate.too_narrow_at` refuses layouts whose slots would
-    still be narrower than ``MIN_SLOT_WIDTH``."""
+    still be narrower than ``MIN_SLOT_WIDTH``. With ``min_slot`` (narrow
+    profiles) columns are dropped until each slot of ``w`` px is that wide."""
     if isinstance(n, Grid):  # a non-integer `columns` is reported by validation
         cols = n.columns if isinstance(n.columns, int) and not isinstance(n.columns, bool) else 1
-        return max(1, min(cols, len(n.children)))
-    return max(1, len(n.children)) if n.direction == "horizontal" else 1
+        cols = max(1, min(cols, len(n.children)))
+    else:
+        cols = max(1, len(n.children)) if n.direction == "horizontal" else 1
+    while min_slot is not None and w is not None and cols > 1 \
+            and (w - GAP * (cols - 1)) / cols < min_slot:
+        cols -= 1
+    return cols
 
 
 def _rows(rows, cols: int, x: float, y: float, w: float, ctx: Ctx):
@@ -143,7 +171,8 @@ def _rows(rows, cols: int, x: float, y: float, w: float, ctx: Ctx):
 def _figure(n: FigureComponent, path: str, x, y, w, ctx: Ctx):
     spec = n.spec if n.spec is not None else ctx.view.figures[n.figure]
     pointer = ptr_join(path, "spec") if n.spec is not None else ptr_join("/figures", n.figure)
-    e = Embed(x, y, w, round(w * n.aspect, 2), spec, pointer, index=len(ctx.embeds))
+    e = Embed(x, y, w, round(w * max(n.aspect, ctx.min_aspect), 2), spec, pointer,
+              index=len(ctx.embeds))
     ctx.embeds.append(e)
     return [e], e.h
 
@@ -210,15 +239,82 @@ def _delta_text(delta: Decimal, decimals: int | None, fmt=None) -> str:
     return fmt(delta, decimals)
 
 
+#: Words that make a unit a percentage: the difference of two of them is in
+#: percentage points ("pp"), never "%", which would read as a relative change.
+PERCENT_WORDS = ("pct", "percent", "per cent")
+#: Units that already are points (a difference of percentages): kept as written.
+_POINTS = re.compile(r"(pp|p\.p\.|percentage points?|prosenttiyksikk\w*|[%％]\s*-?\s*"
+                     r"(points?|pts?\.?|yks\.?|yksikk\w*|pistett\w*|pisteet?))(\s.*)?",
+                     re.I)
+
+
+def delta_unit(unit: str | None) -> str | None:
+    """The unit of the difference of two values in ``unit``. The rule:
+
+    * a percentage - ``%`` or ``％`` alone, or followed by a space and a
+      qualifier (``% YoY``, ``% of revenue``), or by ``/`` (a rate,
+      ``%/yr``), or one of ``pct``, ``percent``, ``per cent`` - gives
+      percentage points with the qualifier kept: ``pp``, ``pp YoY``,
+      ``pp/yr``;
+    * a unit that already is points (``pp``, ``%-points``, ``% points``,
+      ``%-pts``, ``%-yks.``, ``%-pisteet``, ...) is kept as written;
+    * anything else, including a percentile (``%-ile``, ``percentile``), is
+      kept as written.
+
+    Relative (percent) changes are never computed."""
+    if not isinstance(unit, str):
+        return unit
+    u = unit.strip()
+    if _POINTS.fullmatch(u):
+        return unit
+    if u.lower() in PERCENT_WORDS:
+        return "pp"
+    if u[:1] in ("%", "％"):
+        rest = u[1:]
+        if not rest:
+            return "pp"
+        if rest[0].isspace():
+            return f"pp {rest.strip()}"
+        if rest[0] == "/":
+            return "pp" + rest
+    return unit
+
+
+def is_percent(unit: str | None) -> bool:
+    """Is ``unit`` a percentage (not points, not a percentile)? (:func:`delta_unit`)"""
+    return delta_unit(unit) != unit
+
+
+def percent_fraction_warning(n: Kpi, path: str):
+    """A non-gating ``kpi_percent_looks_like_fraction`` warning, or ``None``.
+    The rule: the unit is a percentage (:func:`is_percent`; not points), the
+    KPI has both a value and a comparison value, both lie in [0, 1], and they
+    are not both 0 - 0.942 vs 0.927 "%" was probably meant as 94.2 % vs
+    92.7 %. A single value is never flagged (0.5 % is an ordinary share)."""
+    vals = [n.value, n.comparison.value if n.comparison else None]
+    if None in vals or not is_percent(n.unit) or not all(0 <= v <= 1 for v in vals) \
+            or all(v == 0 for v in vals):
+        return None
+    from ..render import RenderWarning
+
+    return RenderWarning("kpi_percent_looks_like_fraction", (
+        f"KPI {n.label!r} is in {n.unit!r} but its value and comparison both lie between 0 "
+        f"and 1 ({', '.join(format_number(v) for v in vals)}): if they are fractions, "
+        "multiply by 100."), path)
+
+
 def kpi_lines(n: Kpi, fmt=None) -> tuple[str, str | None]:
     """(value text, comparison text). Shared with the HTML renderer. The
     arrow follows the sign of the exact delta, and a non-zero delta is never
     written as zero: one below the last decimal reads "▲ <+0.1", only an
     exact tie reads "= 0.0". A ``%`` unit makes 100 a bound too (99.97 at
     one decimal is ">99.9%"). ``fmt`` replaces :func:`.text.format_number`
-    (the tile uses it for compact notation when a number does not fit)."""
+    (the tile uses it for compact notation when a number does not fit). The
+    delta of a percentage (:func:`delta_unit`) is in percentage points:
+    94.2 % vs 92.7 % is "▲ +1.5 pp", not "+1.5%"."""
     fmt = fmt or format_number
     pct = n.unit == "%"
+    d_unit = delta_unit(n.unit)
 
     def num(v):
         return with_unit(fmt(v, n.decimals, percent=pct), n.unit)
@@ -242,7 +338,7 @@ def kpi_lines(n: Kpi, fmt=None) -> tuple[str, str | None]:
                 arrow, sign, text = "▲", "<+", text[1:]
             else:
                 arrow, sign = "▲", "+"
-            cmp = f"{arrow} {sign}{with_unit(text, n.unit)} vs {c.label} ({num(c.value)})"
+            cmp = f"{arrow} {sign}{with_unit(text, d_unit)} vs {c.label} ({num(c.value)})"
     return value, cmp
 
 
@@ -279,7 +375,8 @@ def _numbers_fit(text: str, nums: list[str], size: float, w: float, bold: bool) 
 
 
 def _fit_number_text(variants, which: int, sizes: tuple[float, ...], w: float, bold: bool,
-                     shrink_first: bool) -> tuple[list[str], float]:
+                     shrink_first: bool, small: tuple[float, ...] = KPI_SMALL_SIZES
+                     ) -> tuple[list[str], float]:
     """Lines and size for ``variants[k][0][which]``: the first variant whose
     numbers fit whole, at the largest size it does; ``shrink_first``: first a
     single line at a size in ``sizes``, before any wrapping."""
@@ -291,13 +388,25 @@ def _fit_number_text(variants, which: int, sizes: tuple[float, ...], w: float, b
         sizes = sizes[-1:]  # as written, wrapped at the smallest size first
     for lines, nums in variants:
         text = lines[which]
-        for size in sizes + KPI_SMALL_SIZES:
+        for size in sizes + small:
             if _numbers_fit(text, nums, size, w, bold):
                 return wrap_text(text, size, w, bold=bold), size
     # not even one significant digit fits whole: draw it unbroken (lines only
     # break at ASCII spaces) and let it overflow, rather than split a number
-    size = KPI_SMALL_SIZES[-1]
+    size = (small or sizes)[-1]
     return wrap_text(variants[-1][0][which], size, math.inf, bold=bold), size
+
+
+def _compacted(ctx: Ctx, exact: str, lines: list[str], n: Kpi, path: str) -> None:
+    """Profile renders: a KPI number rounded to fewer digits to fit its tile
+    is a ``kpi_value_compacted`` warning (the send gate refuses it)."""
+    if ctx.min_text and "".join(lines).replace(" ", "") != exact.replace(" ", ""):
+        from ..render import RenderWarning
+
+        ctx.warnings.append(RenderWarning(
+            "kpi_value_compacted", f"KPI {n.label!r} is shown as '{' '.join(lines)}' instead "
+            f"of '{exact}': the exact number does not fit its tile at the minimum text size.",
+            path))
 
 
 def _kpi(n: Kpi, path, x, y, w, ctx):
@@ -311,18 +420,25 @@ def _kpi(n: Kpi, path, x, y, w, ctx):
         items.append(Label(ix, cy + 13, line, 13, MUTED))
         cy += 18
     variants = _kpi_variants(n)
+    w_frac = percent_fraction_warning(n, path)
+    if w_frac is not None:
+        ctx.warnings.append(w_frac)
     if n.value is None:
         items.append(Label(ix, cy + 30, NO_DATA, 22, MUTED, italic=True))
         cy += 42
     else:
-        lines, size = _fit_number_text(variants, 0, KPI_VALUE_SIZES, iw, True, True)
+        small = tuple(s for s in KPI_SMALL_SIZES if s >= ctx.min_text)
+        lines, size = _fit_number_text(variants, 0, KPI_VALUE_SIZES, iw, True, True, small)
+        _compacted(ctx, variants[0][0][0], lines, n, path)
         lh = size * 1.25
         for i, line in enumerate(lines):
             items.append(Label(ix, cy + 32 + i * lh, line, size, bold=True))
         cy += 42 + (len(lines) - 1) * lh
     cmp = variants[0][0][1]
     if cmp:
-        lines, size = _fit_number_text(variants, 1, (12,), iw, False, False)
+        small = tuple(s for s in KPI_SMALL_SIZES if s >= ctx.min_text)
+        lines, size = _fit_number_text(variants, 1, (12,), iw, False, False, small)
+        _compacted(ctx, cmp, lines, n, path)
         for line in lines:
             items.append(Label(ix, cy + 13, line, size, INK))
             cy += size + 5
@@ -402,6 +518,7 @@ def _table(n: Table, path, x, y, w, ctx: Ctx):
     widths = [wi * k for wi in want]
     w = sum(widths)  # a table is as wide as its content needs, at most the slot
     rh = 26.0
+    cut = 0
     for ri, cells in enumerate([heads] + rows):
         if ri == 0:
             items.append(Rect(x, cy, w, rh, fill="#eaeef2"))
@@ -411,12 +528,21 @@ def _table(n: Table, path, x, y, w, ctx: Ctx):
         for ci, s in enumerate(cells):
             right = numeric[ci]
             color = MUTED if s == NULL_CELL else INK
+            shown = _fit(s, 13, widths[ci] - 20, ri == 0)
+            cut += shown != s
             items.append(Label(cx + widths[ci] - 10 if right else cx + 10, cy + 17,
-                               _fit(s, 13, widths[ci] - 20, ri == 0), 13, color, bold=ri == 0,
+                               shown, 13, color, bold=ri == 0,
                                anchor="end" if right else "start"))
             cx += widths[ci]
         cy += rh
     items.append(Path([(x, cy), (x + w, cy)], LINE, 1))
+    if cut and ctx.min_text:
+        from ..render import RenderWarning
+
+        ctx.warnings.append(RenderWarning(
+            "table_cells_truncated",
+            f"{cut} cell(s) of the table do not fit its {len(heads)} columns at this width and "
+            "end in '…'; the HTML and email outputs show them whole.", path))
     if len(rows) < total:
         items.append(Label(x, cy + 16, f"Showing {len(rows)} of {total} rows", 12, MUTED))
         cy += 22
@@ -503,14 +629,44 @@ def flow_items(f: Flow) -> tuple[list[Item], float, float, list[str]]:
     return items, geo.width, geo.height, geo.order
 
 
+#: Smallest text a flow draws (edge and lane labels), in its own px.
+FLOW_MIN_FONT = 12.0
+
+
+def fit_flow(f: Flow, w: float, min_text: float = 0.0, path: str = "",
+             warnings: list | None = None):
+    """``(flow, items, width, height, order, scale)`` of ``f`` scaled to fit
+    ``w`` px. When scaling would take its text below ``min_text`` px, a
+    left-to-right layered flow is laid out top to bottom instead (the layout
+    is only a hint); if that is still too small, a ``flow_text_too_small``
+    warning is appended."""
+    sub, gw, gh, order = flow_items(f)
+    s = min(1.0, w / gw) if gw else 1.0
+    if min_text and FLOW_MIN_FONT * s < min_text and f.layout.algorithm == "layered" \
+            and f.layout.direction == "LR":
+        tb = replace(f, layout=replace(f.layout, direction="TB"))
+        sub2, gw2, gh2, order2 = flow_items(tb)
+        s2 = min(1.0, w / gw2) if gw2 else 1.0
+        if s2 > s:
+            f, sub, gw, gh, order, s = tb, sub2, gw2, gh2, order2, s2
+    if min_text and FLOW_MIN_FONT * s < min_text - 1e-9 and warnings is not None:
+        from ..render import RenderWarning
+
+        warnings.append(RenderWarning(
+            "flow_text_too_small",
+            f"the flow is scaled to {s:.0%} to fit {w:.0f} px, so its smallest labels are "
+            f"{FLOW_MIN_FONT * s:.1f} px (minimum {min_text:g}); use fewer nodes per layer or "
+            "a wider profile.", path))
+    return f, sub, gw, gh, order, s
+
+
 def _flow_component(f: Flow, path, x, y, w, ctx):
     items: list[Item] = []
     cy = y
     if f.title:
         sub, cy = _title(f.title, x, cy, w)
         items.extend(sub)
-    sub, gw, gh, order = flow_items(f)
-    s = min(1.0, w / gw) if gw else 1.0
+    f, sub, gw, gh, order, s = fit_flow(f, w, ctx.min_text, path, ctx.warnings)
     desc = "\n".join(([f.description] if f.description else [])
                      + _flow.flow_outline(f, order))
     items.append(Group(sub, attrs={"data-flow": path, "aria-label": f.title or "Flow diagram"},

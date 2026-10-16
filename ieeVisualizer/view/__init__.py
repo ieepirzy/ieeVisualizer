@@ -6,8 +6,10 @@ Importing this package does not import matplotlib (rendering does). See
 ``docs/VIEWS.md``.
 """
 
+from .email import EmailRender, render_email
 from .export import VIEW_MANIFEST_SCHEMA_VERSION, ViewArtifact, export_view
 from .flow import Box, FlowGeometry, back_edges, flow_outline, layout_flow, reading_order
+from .message import EmailGateError, MessageError, build_message, write_eml
 from .model import (
     DIRECTIONS,
     EDGE_KINDS,
@@ -55,6 +57,8 @@ __all__ = [
     "Box",
     "Card",
     "Comparison",
+    "EmailGateError",
+    "EmailRender",
     "FigureComponent",
     "Flow",
     "FlowEdge",
@@ -63,6 +67,7 @@ __all__ = [
     "FlowNode",
     "Grid",
     "Kpi",
+    "MessageError",
     "Note",
     "Stack",
     "Table",
@@ -71,8 +76,10 @@ __all__ = [
     "ViewSpec",
     "apply_view_patch",
     "back_edges",
+    "build_message",
     "export_view",
     "flow_outline",
+    "render_email",
     "layout_flow",
     "reading_order",
     "render_view",
@@ -82,4 +89,5 @@ __all__ = [
     "view_hash",
     "view_to_dict",
     "view_to_json",
+    "write_eml",
 ]
