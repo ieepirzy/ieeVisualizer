@@ -257,12 +257,16 @@ def _num(v: Any) -> bool:
 
 
 def legend_label(name: str | None, fallback: str | None, role: str) -> str | None:
-    """Legend label; forecasts always say so."""
+    """Legend label; forecasts always say so. A label that already ends in a
+    parenthesis takes it inside (``x range (low to high, forecast)``), never
+    a second pair."""
     label = name if name is not None else fallback
     if role == "forecast":
         if label is None:
             return "forecast"
         if "forecast" not in label.lower():
+            if label.endswith(")") and "(" in label:
+                return label[:-1] + ", forecast)"
             return label + FORECAST_SUFFIX
     return label
 

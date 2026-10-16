@@ -79,7 +79,19 @@ A KPI delta is computed exactly in `Decimal` on the numbers as written
 (`0.3` vs `0.1` gives `+0.2`, not `+0.19999999999999998`), so it can
 neither gain digits nor overflow: `1e308` vs `-1e308` is `▲ +2e+308`, never
 `inf`. The arrow follows the sign of the exact delta: only an exact tie is
-`= 0.0`; a delta below the last decimal is `▲ <+0.1` / `▼ >−0.1`. Every line
+`= 0.0`; a delta below the last decimal is `▲ <+0.1` / `▼ >−0.1`. The
+delta of a percentage is in **percentage points**: 94.2 % vs 92.7 % is
+`▲ +1.5 pp`, never `+1.5%`, which would read as a relative change (that is
++1.6 %). The rule (`layout.delta_unit`): `%` or `％` alone, followed by a
+space and a qualifier (`% YoY` gives `▲ +2.0 pp YoY`), or by `/` (a rate:
+`%/yr` gives `pp/yr`), and `pct`, `percent`, `per cent`, are percentages;
+units that already are points (`pp`, `%-points`, `% points`, `%-pts`,
+`%-yks.`, `%-pisteet`, ...) and anything else, percentiles (`%-ile`)
+included, keep their unit. Relative (percent) changes are not offered. The
+non-gating warning `kpi_percent_looks_like_fraction` is given when the unit
+is a percentage (not points), the KPI has both a value and a comparison
+value, both lie in [0, 1] and not both are 0 (0.942 vs 0.927 "%" meant as
+94.2 % vs 92.7 %?); a single value is never flagged. Every line
 of a KPI tile stays inside the tile, and no number is split: the value
 shrinks from 30 to 14 px and then wraps between words (at ASCII spaces
 only); a number that still does not fit shrinks down to 8 px and then is
@@ -284,6 +296,12 @@ slightly; the HTML output reflows natively and is unaffected.
 
 Output is deterministic: the same view, width, scale and library versions
 give byte-identical SVG, HTML and PNG.
+
+**Profiles.** `render_view(view, fmt, profile="email-phone")` takes width
+and scale from the profile, keeps text at its minimum, stacks columns on a
+narrow profile and reports what still does not fit; `render_email(view)`
+writes email-safe HTML with the figures as attached PNGs
+([MOBILE_AND_EMAIL.md](MOBILE_AND_EMAIL.md)).
 
 ## Export
 

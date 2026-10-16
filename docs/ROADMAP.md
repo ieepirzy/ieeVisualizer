@@ -127,9 +127,11 @@ docs/RENDERING.md.
 "vector_field")` builds the spec from the same samples the legacy calls
 draw (snapshot provenance: input expression / callable name, domain, `n`,
 sampling mode, seed) and `Visualizer.export()` writes PNG/SVG + manifest.
-`visualize()`/`visualize_vf()` still draw directly (they must honour `ax=`,
-`style=`, streamlines and 3D magnitude colours, which the spec cannot
-express); tests assert both routes draw the same data instead. The adapter
+`visualize()`/`visualize_vf()` now build that spec and draw it through the
+adapter into their own axes (`MatplotlibAdapter.draw_into`, honouring `ax=`
+and `style=`); the 3D quiver gained a colour channel for magnitude, and only
+streamlines and the 2D equal aspect, which spec 1.0 cannot express, are
+still drawn directly. The adapter
 gained a surface for sampled 3D functions, a default 2D quiver scale that
 keeps arrows inside the plot (on complete grids over linear axes), and a
 visible "no data" note on log axes.

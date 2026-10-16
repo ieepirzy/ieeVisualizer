@@ -207,9 +207,7 @@ def _mpl_item(ax, fig, it: Item, t: tuple[float, float, float], scale: float, he
     elif isinstance(it, Label):
         ax.text(X(it.x), Y(it.y), it.text, fontsize=it.size * s * PT, color=it.color,
                 ha={"start": "left", "middle": "center", "end": "right"}[it.anchor],
-                va="baseline", family="DejaVu Sans Mono" if it.mono else "DejaVu Sans",
-                weight="bold" if it.bold else "normal",
-                style="italic" if it.italic else "normal", parse_math=False, zorder=z[0])
+                va="baseline", fontproperties=label_font(it), parse_math=False, zorder=z[0])
     elif isinstance(it, Path):
         pts = [(X(x), Y(y)) for x, y in it.points]
         lw = it.sw * s * PT
@@ -253,3 +251,13 @@ def to_png(items: list[Item], width: float, height: float, scale: float,
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=96 * scale, metadata={"Software": None})
     return buf.getvalue()
+
+
+def label_font(it: Label) -> Any:
+    """The FontProperties a PNG draws ``it`` with (also what its glyphs are
+    checked against)."""
+    from matplotlib.font_manager import FontProperties
+
+    return FontProperties(family="DejaVu Sans Mono" if it.mono else "DejaVu Sans",
+                          weight="bold" if it.bold else "normal",
+                          style="italic" if it.italic else "normal")
