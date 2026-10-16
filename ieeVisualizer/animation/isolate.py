@@ -107,12 +107,18 @@ def isolation_problem() -> str | None:
 
 def isolation_mode(value: str | None) -> tuple[str, list[RenderWarning]]:
     """``(mode, warnings)``: ``value``, else the environment, else
-    ``"process"`` where it can run (``"inline"`` with a warning elsewhere)."""
+    ``"process"`` where it can run. Inline, for any reason, comes with a
+    ``deadline_best_effort`` warning saying why."""
     explicit = value or os.environ.get("IEEVISUALIZER_ANIMATION_ISOLATION")
     mode = explicit or "process"
     if mode not in ISOLATIONS:
         raise ValueError(f"isolation must be one of {', '.join(ISOLATIONS)}, got {mode!r}.")
-    problem = isolation_problem() if mode == "process" else None
+    if mode == "inline":
+        how = "isolation='inline'" if value else "$IEEVISUALIZER_ANIMATION_ISOLATION=inline"
+        return mode, [RenderWarning(
+            "deadline_best_effort", f"{how}: the render ran inline, so the deadline is "
+            "checked between steps (best effort) and one long step can overrun it.", "")]
+    problem = isolation_problem()
     if problem is None:
         return mode, []
     if explicit:
@@ -133,8 +139,18 @@ def worker_slots() -> threading.BoundedSemaphore:
     interpreter with Matplotlib, about 100 MB, and a CPU)."""
     with _SLOTS_LOCK:
         if not _SLOTS:
-            n = os.environ.get("IEEVISUALIZER_ANIMATION_WORKERS") or os.cpu_count() or 2
-            _SLOTS.append(threading.BoundedSemaphore(max(1, int(n))))
+            raw = os.environ.get("IEEVISUALIZER_ANIMATION_WORKERS")
+            n = os.cpu_count() or 2
+            if raw:
+                try:
+                    n = int(raw)
+                except ValueError:
+                    n = 0
+                if n < 1:
+                    raise AnimationError([issue("", "invalid_setting",
+                                                "$IEEVISUALIZER_ANIMATION_WORKERS must be a "
+                                                f"positive integer, got {raw[:40]!r}.")])
+            _SLOTS.append(threading.BoundedSemaphore(n))
         return _SLOTS[0]
 
 
@@ -498,10 +514,10 @@ def _main(out: int) -> None:
                                               counts=dict(d.progress)))
     try:
         if task == "render":
-            from .base import render_animation as run
+            from .base import render_inline as run
         else:
             from .export import build as run
-        msg = _message("ok", run(**payload, deadline=deadline, isolation="inline"))
+        msg = _message("ok", run(**payload, deadline=deadline))
     except BaseException as e:  # noqa: BLE001 - every failure goes back to the caller
         msg = _message("error", error=_error_dict(e))
     send(msg)
@@ -509,23 +525,25 @@ def _main(out: int) -> None:
 
 def resolved_payload(figure, resolver, deadline: Deadline | None = None) -> dict[str, Any]:
     """Resolve, in the caller, every reference the figure's layers draw (the
-    resolver may not be picklable), check the data caps on the result before
-    anything is serialised, and return ``{key: snapshot}`` for
-    :func:`table_resolver` in the worker."""
+    resolver may not be picklable), check the cell cap on everything sent
+    (the inline datasets and the resolved data, from column lengths only:
+    O(columns)) before anything is serialised, and return ``{key: snapshot}``
+    for :func:`table_resolver` in the worker. Everything else, the full
+    data checks included, is validated once, in the worker."""
     from ..render.prepare import bound_refs
     from ..spec import SpecValidationError
     from .base import ref_key
     from .frames import drawn_only
-    from .validate import data_issues
+    from .validate import cell_issues
 
-    if figure is None or resolver is None:
+    if figure is None:
         return {}
-    drawn = drawn_only(figure)
-    refs = bound_refs(drawn)
+    refs = bound_refs(drawn_only(figure)) if resolver is not None else {}
     resolved = {k: resolver(r) for k, r in refs.items()}
     if deadline is not None:
         deadline.check("resolve")
-    errors = data_issues(dataclasses.replace(drawn, datasets={**drawn.datasets, **resolved}))
+    datasets = figure.datasets if isinstance(figure.datasets, dict) else {}
+    errors = cell_issues([*datasets.values(), *resolved.values()])
     if errors:
         raise SpecValidationError(errors)
     return {ref_key(r): resolved[k] for k, r in refs.items()}

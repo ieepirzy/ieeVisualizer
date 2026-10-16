@@ -191,12 +191,13 @@ def test_frames_are_streamed_so_memory_is_bounded():
         from ieeVisualizer.animation import AnimationRequest, render_animation
         from ieeVisualizer.spec import FigureSpec
         req = AnimationRequest(width=800, height=800, units="px", dpi=100)
-        render_animation(_sweep(FigureSpec(layers=[_fn()]), 2), req)
+        # a memory test, not a time test: a loaded runner must not hit the deadline
+        render_animation(_sweep(FigureSpec(layers=[_fn()]), 2), req, deadline=600)
         base = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        render_animation(_sweep(FigureSpec(layers=[_fn()]), 60), req)
+        render_animation(_sweep(FigureSpec(layers=[_fn()]), 60), req, deadline=600)
         peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         print(json.dumps({"mb": (peak - base) / 1024}))
-    """, timeout=120, mem_mb=3000)
+    """, timeout=600, mem_mb=3000)
     assert out["mb"] < 160, out
 
 

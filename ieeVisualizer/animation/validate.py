@@ -85,6 +85,7 @@ def validate_animation(anim: AnimationSpec, *, deadline=None) -> list[Validation
         return _validate(anim, None)
     from .spec import animation_hash
 
+    deadline.check("validate")  # hashing serialises all inline data: a phase of its own
     try:  # by content, not identity: a spec mutated since is validated again
         key = ("validate", animation_hash(anim))
     except Exception:  # noqa: BLE001 - not serializable: validated every time
@@ -225,6 +226,24 @@ def _cells(datasets) -> int:
                if isinstance(ds, DataSnapshot))
 
 
+def cell_issues(datasets, path: str = "/figure") -> list[ValidationIssue]:
+    """Only the cell cap, from column lengths (O(columns), never O(cells)):
+    what the caller checks before handing data to a worker."""
+    cells = _cells(datasets)
+    if cells <= MAX_ANIMATION_CELLS:
+        return []
+    return [ValidationIssue(path + "/datasets", "data_too_large",
+                            f"the datasets hold {cells} cells; an animation accepts at most "
+                            f"{MAX_ANIMATION_CELLS} (validating them is one step the deadline "
+                            "cannot interrupt). Drop unused columns and datasets or aggregate "
+                            "upstream.")]
+
+
+def _short(name, n: int = 60) -> str:
+    """A column name as it appears in an issue path (a huge one shortened)."""
+    return name if not isinstance(name, str) or len(name) <= n else name[:n] + "..."
+
+
 def data_issues(fig, path: str = "/figure") -> list[ValidationIssue]:
     """The data caps, for inline or resolved data: at most
     :data:`MAX_ANIMATION_CELLS` cells, at most :data:`MAX_HEATMAP_CELLS`
@@ -233,16 +252,12 @@ def data_issues(fig, path: str = "/figure") -> list[ValidationIssue]:
     as a default axis label, a tick or a legend entry)."""
     out = _Issues()
     datasets = fig.datasets if isinstance(fig.datasets, dict) else {}
-    cells = _cells(datasets.values())
-    if cells > MAX_ANIMATION_CELLS:
-        out.add(path + "/datasets", "data_too_large",
-                f"the datasets hold {cells} cells; an animation accepts at most "
-                f"{MAX_ANIMATION_CELLS} (validating them is one step the deadline cannot "
-                "interrupt). Drop unused columns and datasets or aggregate upstream.")
-        return list(out)
+    errors = cell_issues(datasets.values(), path)
+    if errors:
+        return errors
     for k, ds in datasets.items():  # names are default labels; values are tick and legend text
         for name, col in (ds.columns.items() if isinstance(ds, DataSnapshot) else ()):
-            p = path + ptr("datasets", k, "columns", name)
+            p = path + ptr("datasets", k, "columns", _short(name))
             texts = [name, col.unit, *({v for v in col.values if isinstance(v, str)}
                                        if col.dtype in ("str", None) else ())]
             for t in texts:
