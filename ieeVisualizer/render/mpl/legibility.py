@@ -208,6 +208,9 @@ def fit_ticks(ctx: Any) -> None:
                     ctx.ax.tick_params(axis="x", labelrotation=90)
                     rotated = True
                     continue
+                if key == "y":
+                    with _measuring(ctx.fig):
+                        ctx.plot_growth["category_labels"] = _label_growth(labels)
                 fix = ("use horizontal bars, show fewer categories or a wider profile"
                        if key == "x" else "show fewer categories or make the figure taller")
                 ctx.warn("too_many_categories_for_profile",
@@ -218,6 +221,14 @@ def fit_ticks(ctx: Any) -> None:
                 break
             if not _fewer_ticks(ctx, key, info, axis, len(labels)):
                 break
+
+
+def _label_growth(labels: list[Any]) -> float:
+    """How many times taller a y axis must be so its labels stop touching."""
+    boxes = sorted((lab.get_window_extent() for lab in labels), key=lambda b: b.y0)
+    steps = [b.y0 - a.y0 for a, b in zip(boxes, boxes[1:])]
+    need = max(b.height for b in boxes) * (1 + TICK_GAP_EM) + 2
+    return need / max(min(steps, default=need), 1e-9) * 1.04
 
 
 def _fewer_ticks(ctx: Any, key: str, info: Any, axis: Any, shown: int) -> bool:
@@ -529,3 +540,62 @@ def figure_glyphs(fig: Any) -> list[RenderWarning]:
         if m:
             found.append((s, m))
     return glyph_warning(found)
+
+
+# --------------------------------------------------------------------------
+# profile-aware figure height
+# --------------------------------------------------------------------------
+
+#: A profile render grows its figure at most to this height / width.
+MAX_GROWN_ASPECT = 4.0
+#: Rebuilds a profile render may take while growing its figure.
+GROW_ROUNDS = 3
+_GROWTH_CAUSES = {"value_labels": "bar value labels", "category_labels": "category labels",
+                  "legend": "the legend", "plot": "the plot"}
+
+
+def needed_height(built: Any, ctx: Any) -> tuple[float, list[str]]:
+    """The figure height (inches) a profile render needs so that what the
+    last layout could not fit at the minimum text size does fit: rows of
+    horizontal bars tall enough for their value labels, y category labels
+    that do not touch, a legend inside the image and a plot not squeezed
+    below :data:`MIN_PLOT_SHARE` of it. Width never changes. Returns the
+    height and the causes (empty: the current height is enough)."""
+    from .legend_layout import _measuring
+
+    fig, ax = built.figure, built.axes
+    dpi = fig.dpi
+    with _measuring(fig):
+        H = fig.bbox.height
+        plot = ax.get_window_extent()
+        extra, causes = 0.0, []
+        factor = max(ctx.plot_growth.values(), default=1.0)
+        if factor > 1.0:
+            extra = plot.height * (factor - 1.0)
+            causes += [k for k, v in ctx.plot_growth.items() if v > 1.0]
+        legend = ax.get_legend()
+        if legend is not None and legend.get_visible():
+            lb = legend.get_window_extent()
+            over = max(0.0, -lb.y0) + max(0.0, lb.y1 - H)
+            if over > OVERLAP_TOLERANCE_PX:
+                extra = max(extra, over + 0.1 * dpi)
+                causes.append("legend")
+        if not ctx.three_d and plot.height < MIN_PLOT_SHARE * H * 1.2:
+            # the text around the plot keeps its size: grow until the plot
+            # has 35 % of the height
+            want = (H - plot.height) / 0.65 - H
+            if want > extra:
+                extra = want
+                causes.append("plot")
+    if extra <= OVERLAP_TOLERANCE_PX:
+        return H / dpi, []
+    return (H + extra) / dpi, causes
+
+
+def growth_warning(requested_px: int, grown_px: int, causes: list[str]) -> RenderWarning:
+    """Not gating: the image is taller than the request asked for."""
+    what = ", ".join(dict.fromkeys(_GROWTH_CAUSES.get(c, c) for c in causes))
+    return RenderWarning(
+        "figure_grown", f"the figure is {grown_px} px tall instead of the requested "
+        f"{requested_px} px so that {what} fit at the profile's minimum text size; its width "
+        "is unchanged.", "")

@@ -319,3 +319,28 @@ def fill_kwargs(style: dict[str, Any], role: str, roles: Roles = DEFAULT_ROLES) 
         kw.setdefault("alpha", roles.reference_fill_alpha)
         kw.setdefault("color", roles.reference_color)
     return kw
+
+
+#: Fonts with CJK glyphs, tried after the theme's own families when installed
+#: (a character the theme's font lacks is then drawn instead of a box; the
+#: glyph check looks characters up in the same list, so whatever no installed
+#: font has is still ``glyph_missing``).
+CJK_FALLBACKS = ("Noto Sans CJK JP", "Noto Sans CJK SC", "Noto Sans CJK TC",
+                 "Noto Sans CJK KR", "Source Han Sans", "WenQuanYi Zen Hei",
+                 "WenQuanYi Micro Hei", "Droid Sans Fallback")
+
+
+def fallback_families() -> tuple[str, ...]:
+    """The installed :data:`CJK_FALLBACKS`, in that order (the first one
+    found; a second CJK font adds nothing)."""
+    from matplotlib import font_manager as fm
+
+    have = {f.name for f in fm.fontManager.ttflist}
+    return tuple(f for f in CJK_FALLBACKS if f in have)[:1]
+
+
+def with_fallbacks(family: Any) -> list[str]:
+    """``family`` (a name or list, e.g. rcParams' ``font.family``) followed by
+    the installed CJK fallback."""
+    fams = [family] if isinstance(family, str) else list(family)
+    return fams + [f for f in fallback_families() if f not in fams]

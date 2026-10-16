@@ -29,9 +29,19 @@ from ieeVisualizer.view.examples import reporting_pipeline, weekly_briefing
 from ieeVisualizer.view.model import FlowEdge
 
 
+def _hub_flow() -> ViewSpec:
+    """Six boxes side by side in one layer: too wide for a phone even with
+    the narrowest boxes."""
+    nodes = [FlowNode("hub", "Source")] + [FlowNode(f"t{i}", f"Destination {i}")
+                                           for i in range(6)]
+    edges = [FlowEdge("hub", f"t{i}") for i in range(6)]
+    return ViewSpec(root=Stack([Flow(nodes=nodes, edges=edges,
+                                     layout=FlowLayout("layered", "TB"))]))
+
+
 def test_a_flow_too_small_to_read_is_reported_once_and_fails_the_gate():
-    for result in (render_email(reporting_pipeline()),
-                   render_view(reporting_pipeline(), "png", profile="email-phone")):
+    for result in (render_email(_hub_flow()),
+                   render_view(_hub_flow(), "png", profile="email-phone")):
         codes = [w.code for w in result.warnings]
         assert codes.count("flow_text_too_small") == 1
         assert "legibility_text_too_small" not in codes  # the same problem, said once
@@ -39,9 +49,9 @@ def test_a_flow_too_small_to_read_is_reported_once_and_fails_the_gate():
             check_legible(result)
 
 
-def test_a_cut_table_in_the_phone_png_fails_the_gate():
-    with pytest.raises(LegibilityError, match="table_cells_truncated"):
-        check_legible(render_view(weekly_briefing(), "png", profile="email-phone"))
+def test_a_table_too_wide_for_the_phone_png_is_cards_and_passes_the_gate():
+    result = render_view(weekly_briefing(), "png", profile="email-phone")
+    check_legible(result)  # no cell cut (tests/view/test_view_mobile.py checks the cards)
 
 
 def test_the_briefing_email_passes_the_gate():

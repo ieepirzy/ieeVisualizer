@@ -75,6 +75,7 @@ class BuiltNetwork:
     abbreviated_labels: list[int] = field(default_factory=list)
     legends: list = field(default_factory=list)
     matrix: Any = None
+    sections: list = field(default_factory=list)
 
 
 def _check(spec: NetworkSpec) -> list[RenderWarning]:
@@ -200,26 +201,43 @@ def build_network(spec: NetworkSpec, request: RenderRequest | None = None) -> Bu
     warnings = _check(spec)
     theme_rc = resolve_theme(request.theme or spec.theme, "/theme", warnings)
     lay = compute_layout(spec)
-    with render_context(theme_rc), _warnings.catch_warnings():
+    from ..render.mpl.adapter import _min_pt
+
+    with render_context(theme_rc, _min_pt(request)), _warnings.catch_warnings():
         _warnings.simplefilter("ignore")
-        built = _draw(spec, lay, request, warnings)
+        built = _fitted(spec, lay, request, warnings)
     return built
 
 
-def _new_figure(request: RenderRequest):
+def _new_figure(request: RenderRequest, height_in: float | None = None):
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
 
     from ..render.mpl.adapter import _figsize
 
-    fig = Figure(figsize=_figsize(request), dpi=request.dpi)
+    w, h = _figsize(request)
+    fig = Figure(figsize=(w, h if height_in is None else height_in), dpi=request.dpi)
     FigureCanvasAgg(fig)
     return fig
 
 
+def _fitted(spec: NetworkSpec, lay: LayoutResult, request: RenderRequest,
+            warnings: list[RenderWarning]) -> BuiltNetwork:
+    """Draw ``spec``; a profile render whose labels or legend do not fit at
+    the minimum text size is drawn again taller (:mod:`.fit`)."""
+    if request.profile is None or spec.layout.algorithm == "matrix":
+        return _draw(spec, lay, request, list(warnings))
+    from .fit import fit_network
+
+    return fit_network(spec, request, lambda frame: _draw(spec, lay, request, list(warnings),
+                                                          frame))
+
+
 def _draw(spec: NetworkSpec, lay: LayoutResult, request: RenderRequest,
-          warnings: list[RenderWarning]) -> BuiltNetwork:
-    fig = _new_figure(request)
+          warnings: list[RenderWarning], frame: Any = None) -> BuiltNetwork:
+    """``frame`` (profile renders, :class:`.fit.Frame`): font sizes, figure
+    height and where the graph, legends, title and caption go."""
+    fig = _new_figure(request, None if frame is None else frame.height_in)
     if spec.layout.algorithm == "matrix":
         from .matrix import draw_matrix
 
@@ -227,14 +245,15 @@ def _draw(spec: NetworkSpec, lay: LayoutResult, request: RenderRequest,
     from matplotlib.collections import LineCollection, PolyCollection
     from matplotlib.lines import Line2D
 
-    ax = fig.add_axes([0.02, 0.07, 0.68, 0.84])
+    ax = fig.add_axes([0.02, 0.07, 0.68, 0.84] if frame is None else frame.axes_rect)
     ax.set_axis_off()
     equal = spec.layout.algorithm in ("force", "circular")
     xy = _frame(lay.xy, equal)
     ax.set_xlim(-0.08, 1.08)
     ax.set_ylim(-0.1, 1.08)
     if equal:
-        ax.set_aspect("equal", adjustable="box", anchor="W")
+        ax.set_aspect("equal", adjustable="box",
+                      anchor="C" if frame is not None and frame.narrow else "W")
     built = BuiltNetwork(fig, ax, lay, warnings, node_xy=xy)
     styles = _group_styles(spec, warnings)
 
@@ -351,20 +370,26 @@ def _draw(spec: NetworkSpec, lay: LayoutResult, request: RenderRequest,
                                         kd) for kd in kinds], 0.5))
     top = 0.93
     renderer = fig.canvas.get_renderer()
-    for title, rows, spacing in sections:
+    small = 7.5 if frame is None else frame.small
+    for k, (title, rows, spacing) in enumerate(sections):
+        anchor = (0.72, top) if frame is None else frame.legend_at(k, sections)
         leg = fig.legend([h for h, _ in rows], [t for _, t in rows], loc="upper left",
-                         bbox_to_anchor=(0.72, top), frameon=False, fontsize=7.5,
+                         bbox_to_anchor=anchor, frameon=False, fontsize=small,
                          handlelength=2.6, borderaxespad=0.0, labelspacing=spacing,
-                         title=title, title_fontproperties={"weight": "bold", "size": 7.5},
+                         title=title, title_fontproperties={"weight": "bold", "size": small},
                          alignment="left")
         built.legends.append(leg)
         top = fig.transFigure.inverted().transform(
             leg.get_window_extent(renderer))[0, 1] - 0.025
     if spec.title:
-        ax.set_title(spec.title, fontsize=11, loc="left")
-    if spec.caption:
+        ax.set_title(spec.title if frame is None else frame.title,
+                     fontsize=11 if frame is None else frame.large, loc="left")
+    if spec.caption and frame is None:
         fig.text(0.02, 0.012, spec.caption, fontsize=7.5, color="0.3", wrap=True)
-    _place_labels(spec, built, radius_pt)
+    elif spec.caption:
+        fig.text(0.02, 0.012, frame.caption, fontsize=small, color="0.3", va="bottom")
+    built.sections = sections
+    _place_labels(spec, built, radius_pt, frame)
     return built
 
 
@@ -392,7 +417,8 @@ def _multi_bows(spec: NetworkSpec, idx: dict[str, int]) -> dict[int, float]:
     return out
 
 
-def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]) -> None:
+def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float],
+                  frame: Any = None) -> None:
     """Greedy collision avoidance in display space. Nodes in priority order
     (degree, then size, then declaration order) try their full label, then
     abbreviations of 12 and 6 characters; a label that would still overlap a
@@ -414,10 +440,17 @@ def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]
     prio = sorted(range(len(spec.nodes)),
                   key=lambda i: (-deg[i], -(spec.nodes[i].size or 0.0), i))
     placed: list[Any] = []
+    if frame is not None:  # profile renders: labels keep clear of the legend and title
+        placed += [leg.get_window_extent(renderer) for leg in built.legends]
+        if ax.title.get_text():
+            placed.append(ax.title.get_window_extent(renderer))
     fontsize = 7.5 if len(spec.nodes) <= 60 else 6.5
+    if frame is not None:
+        fontsize = max(fontsize, frame.small)
     for i in prio:
         full = spec.nodes[i].display_label
-        cands = [full] + [full[:c].rstrip() + "…" for c in (12, 6) if len(full) > c + 1]
+        cands = [full] + ([] if frame is None else frame.wrapped(full, fontsize)) \
+            + [full[:c].rstrip() + "…" for c in (12, 6) if len(full) > c + 1]
         below = ((0.0, -(radius_pt[i] + 2)), "center", "top", False)
         spots = [below]
         if spec.layout.algorithm == "layered" and spec.layout.direction == "TB":
@@ -430,6 +463,8 @@ def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]
             spots = [((dx / norm * (radius_pt[i] + 3), dy / norm * (radius_pt[i] + 3)),
                       "left" if dx > 0.05 else "right" if dx < -0.05 else "center",
                       "bottom" if dy > 0.05 else "top" if dy < -0.05 else "center", False)]
+        if frame is not None:  # profile renders: more places before giving up on a label
+            spots = spots + [sp for sp in frame.spots(radius_pt[i]) if sp not in spots]
         for text, (off, ha, va, inside) in ((c, sp) for c in cands for sp in spots):
             t = ax.annotate(text, xy=tuple(built.node_xy[i]), xytext=off,
                             textcoords="offset points", ha=ha, va=va,
@@ -439,7 +474,8 @@ def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]
             bb = t.get_window_extent(renderer)
             clash = any(bb.overlaps(o) for o in placed) or any(
                 bb.overlaps(o) for j, o in enumerate(obstacles) if j != i) or (
-                inside and bb.x1 > ax.bbox.x1)
+                inside and bb.x1 > ax.bbox.x1) or (
+                frame is not None and not frame.inside(bb, fig))
             if not clash:
                 placed.append(bb)
                 built.labels[i] = t
@@ -456,7 +492,8 @@ def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]
             built.warnings.append(RenderWarning(
                 code, f"{len(which)} node label(s) were {verb} because they would overlap "
                 f"other labels or nodes ({names}{', ...' if len(which) > 8 else ''}); the "
-                "text outline lists every label in full.", "/nodes"))
+                "text outline lists every label in full." + (
+                    "" if frame is None else frame.too_big_advice()), "/nodes"))
 
 
 def render_network(spec: NetworkSpec, request: RenderRequest | None = None) -> RenderResult:
@@ -480,7 +517,7 @@ def render_network(spec: NetworkSpec, request: RenderRequest | None = None) -> R
 
     with render_context(theme_rc, _min_pt(request)), _warnings.catch_warnings():
         _warnings.simplefilter("ignore")
-        built = _draw(spec, lay, request, warnings)
+        built = _fitted(spec, lay, request, warnings)
         if request.profile is not None:  # rc fonts raised to the minimum; audit the result
             from ..render.mpl.legibility import audit, recording_canvas
 

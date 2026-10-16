@@ -139,6 +139,11 @@ fresh processes with different `PYTHONHASHSEED`s.
   `labels_abbreviated` / `labels_skipped` warnings naming the nodes (the
   matrix's row/column labels, cut at 18 characters, give
   `labels_abbreviated` too); the outline always has every label in full.
+  With a render profile (`RenderRequest(profile=...)`) text is at least the
+  profile's minimum, a label is wrapped at spaces before it is shortened, the
+  figure grows to fit and a phone puts the legend below the graph
+  ([MOBILE_AND_EMAIL.md](MOBILE_AND_EMAIL.md)); the send gate refuses any
+  label still shortened or left out.
 
 ## Text alternative
 

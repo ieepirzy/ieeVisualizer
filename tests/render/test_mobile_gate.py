@@ -8,7 +8,13 @@ import pytest
 from test_mobile_profiles import example, gate_refuses, measure, problems
 
 from ieeVisualizer import templates
-from ieeVisualizer.render import RenderRequest, get_profile, list_profiles, render
+from ieeVisualizer.render import (
+    RenderRequest,
+    check_legible,
+    get_profile,
+    list_profiles,
+    render,
+)
 from ieeVisualizer.render.mpl.adapter import build_figure
 from ieeVisualizer.spec import (
     Axis,
@@ -31,22 +37,70 @@ TEMPLATES = [e["name"] for e in templates.list_templates()]
 
 @pytest.mark.parametrize("profile", [p.name for p in list_profiles()])
 @pytest.mark.parametrize("name", TEMPLATES)
-def test_a_profile_never_shows_less_than_desktop_unless_refused(monkeypatch, name, profile):
-    """Every word a plain desktop render draws outside the tick labels
-    (titles, labels, legend, value labels, notes, annotations) is drawn
-    outside the tick labels of every profile render too, or that render
-    fails the gate."""
+def test_every_template_is_legible_at_every_profile_and_shows_every_word(monkeypatch, name,
+                                                                         profile):
+    """Every template's example passes the send gate at every profile, and
+    every word a plain desktop render draws outside the tick labels (titles,
+    labels, legend, value labels, notes, annotations, node labels) is drawn
+    outside the tick labels of the profile render too: nothing is left out,
+    shortened or hidden to make it fit."""
     spec = example(name)
     _, desk, _ = measure(monkeypatch, spec, RenderRequest(format="png", width=1920, height=1152,
                                                           units="px", dpi=192), css=960)
     result, texts, _ = measure(monkeypatch, spec, get_profile(profile).figure_request("png"))
-    missing = words(desk) - words(texts)
-    if missing:
-        assert gate_refuses(result), sorted(missing)
+    check_legible(result)
+    assert words(desk) - words(texts) == set()
+
+
+def view_words(monkeypatch, make) -> tuple:
+    """``(result, words)``: ``make()``'s result and the words of every text
+    drawn while it ran (view labels and its figures), tick labels left out."""
+    from matplotlib.figure import Figure
+    from matplotlib.text import Text
+
+    drawn, saved = [], []
+    draw, save = Text.draw, Figure.savefig
+
+    def spy(self, renderer):
+        drawn.append(self)
+        return draw(self, renderer)
+
+    def save_spy(self, *a, **kw):
+        saved.append(self)
+        return save(self, *a, **kw)
+
+    monkeypatch.setattr(Text, "draw", spy)
+    monkeypatch.setattr(Figure, "savefig", save_spy)
+    result = make()
+    monkeypatch.undo()
+    ticks = {id(lab) for fig in saved for ax in fig.axes for axis in (ax.xaxis, ax.yaxis)
+             for tick in axis.get_major_ticks() + axis.get_minor_ticks()
+             for lab in (tick.label1, tick.label2)}
+    return result, {w for t in drawn if id(t) not in ticks and t.get_visible()
+                    for w in t.get_text().split()}
+
+
+@pytest.mark.parametrize("profile", [p.name for p in list_profiles()])
+@pytest.mark.parametrize("view", ["weekly_briefing", "reporting_pipeline"])
+def test_gallery_views_are_legible_at_every_profile_and_show_every_word(monkeypatch, view,
+                                                                        profile):
+    from ieeVisualizer.view import examples, render_email, render_view
+
+    build = getattr(examples, view)
+    _, desk = view_words(monkeypatch, lambda: render_view(build(), "png"))
+    result, seen = view_words(monkeypatch, lambda: render_view(build(), "png", profile=profile))
+    check_legible(result)
+    assert desk - seen == set()
+    if get_profile(profile).narrow:
+        check_legible(render_email(build(), profile))
 
 
 def test_value_labels_left_out_on_a_phone_fail_the_gate():
-    result = render(example("bar_comparison"), PHONE.figure_request("png"))
+    """Vertical bars too narrow for their labels: a taller figure does not
+    widen them, so the labels are left out and the gate refuses."""
+    spec = _bars(24)
+    spec.layers[0].style["value_labels"] = True
+    result = render(spec, PHONE.figure_request("png"))
     assert "value_labels_omitted" in {w.code for w in result.warnings}
     assert gate_refuses(result)
 
@@ -69,7 +123,8 @@ def test_a_profile_never_thins_category_labels(monkeypatch):
 
 
 def test_y_category_advice_does_not_suggest_horizontal_bars():
-    result = render(_bars(60, "y"), PHONE.figure_request("png"))
+    # too many even for a figure grown to its height limit
+    result = render(_bars(150, "y"), PHONE.figure_request("png"))
     (w,) = [w for w in result.warnings if w.code == "too_many_categories_for_profile"]
     assert "horizontal" not in w.message and "taller" in w.message
 
@@ -84,8 +139,23 @@ def _series(n: int, name: str = "Series number {} with a long descriptive name")
                 for i in range(n)])
 
 
-def test_a_legend_that_does_not_fit_is_reported():
-    result = render(_series(12), PHONE.figure_request("png"))
+def test_a_legend_of_long_names_wraps_below_the_plot_and_the_figure_grows(monkeypatch):
+    """12 long series names: wrapped (every word kept) into a legend below
+    the plot, the figure grown so it fits; the gate passes."""
+    spec = _series(12)
+    result, texts, size = measure(monkeypatch, spec, PHONE.figure_request("png"))
+    codes = {w.code for w in result.warnings}
+    assert "figure_grown" in codes and size[0] == PHONE.pixel_width and size[1] > 960
+    assert problems(texts, size, 12.0) == {"small": [], "clipped": [], "overlaps": []}
+    want = {w for i in range(12) for w in f"Series number {i} with a long descriptive name".split()}
+    assert want <= words(texts)
+    check_legible(result)
+    built = build_figure(spec, PHONE.figure_request("png"))
+    assert built.axes.get_legend().get_window_extent().y1 <= built.axes.get_window_extent().y0
+
+
+def test_a_legend_too_long_even_for_a_grown_figure_is_reported():
+    result = render(_series(150), PHONE.figure_request("png"))
     assert "legend_not_visible" in {w.code for w in result.warnings}
     assert gate_refuses(result)
 
@@ -140,3 +210,27 @@ def test_date_offset_and_axis_label_in_a_narrow_slot_are_legible_or_refused(monk
     result, texts, size = measure(monkeypatch, example("timeseries"), request)
     if any(problems(texts, size, 12.0).values()):
         assert gate_refuses(result)
+
+
+def test_funnel_rates_sit_under_their_own_rows_value_label_on_a_phone():
+    """The rate column would cover the first value label on a phone: each
+    rate moves under its own stage's value label, inside that stage's row,
+    whole (wrapped at most), and the figure grows to hold them."""
+    spec = example("funnel")
+    built = build_figure(spec, PHONE.figure_request("png"))
+    ctx = built.context
+    rates = [a for a in built.annotation_artists if "of previous" in a.get_text()]
+    assert len(rates) == 3
+    labels = {lab.centre: lab for lab in ctx.value_labels}
+    step = abs(built.axes.transData.transform((0, 1))[1]
+               - built.axes.transData.transform((0, 0))[1])
+    for a in rates:
+        row = float(built.axes.yaxis.convert_units(a.xy[1]))
+        lab = labels[row]
+        box, lbox = a.get_window_extent(), lab.text.get_window_extent()
+        centre = built.axes.transData.transform((0, row))[1]
+        assert box.y1 <= lbox.y0 + 1 and abs(box.x0 - lbox.x0) < 2  # under its own label
+        assert centre - step / 2 <= box.y0  # still inside its row
+        assert not any(box.overlaps(o.text.get_window_extent()) for o in ctx.value_labels)
+        assert " ".join(a.get_text().split()).endswith("of previous")
+    assert "figure_grown" in {w.code for w in built.warnings}

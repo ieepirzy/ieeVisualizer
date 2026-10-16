@@ -119,7 +119,7 @@ def example(name):
 # realistic figures at phone and tablet width
 # --------------------------------------------------------------------------
 
-LEGIBLE = ["timeseries", "bar_comparison", "vector_field_2d"]
+LEGIBLE = ["timeseries", "bar_comparison", "vector_field_2d", "funnel"]
 
 
 @pytest.mark.parametrize("profile", [PHONE, TABLET])
@@ -137,10 +137,7 @@ def test_template_examples_are_legible(monkeypatch, name, profile):
     # 3.10+), so every line is at least 0.9 x the 12 px minimum x 3 device px
     assert min(t["line_device_px"] for t in texts) >= 0.9 * prof.min_text_px * PHONE_DPR
     assert not [w for w in result.warnings if w.code.startswith("legibility_")]
-    # the one known gap (follow-up: profile-aware figure height): the phone has
-    # no room for bar value labels, so they are left out and the gate refuses it
-    expected = {"value_labels_omitted"} if (name, profile) == ("bar_comparison", PHONE) else set()
-    assert {w.code for w in result.warnings if w.code in GATING_CODES} == expected
+    assert {w.code for w in result.warnings if w.code in GATING_CODES} == set()
 
 
 def test_without_a_profile_the_same_image_is_too_small_on_a_phone(monkeypatch):
@@ -175,13 +172,19 @@ def test_phone_renders_are_legible_or_refused(monkeypatch, name):
         assert gate_refuses(result), found
 
 
-def test_network_text_below_minimum_is_reported(monkeypatch):
-    """Network renders get the audit but not yet the adaptations (follow-up):
-    their 7.5 pt labels are reported, and measured, as too small."""
-    request = get_profile(PHONE).figure_request("png")
-    result, texts, size = measure(monkeypatch, example("org_chart"), request)
-    assert problems(texts, size, 12.0)["small"]
-    assert "legibility_text_too_small" in {w.code for w in result.warnings}
+@pytest.mark.parametrize("profile", [PHONE, TABLET, "desktop"])
+@pytest.mark.parametrize("name", ["org_chart", "network", "dependency_map"])
+def test_network_text_is_at_least_the_minimum_and_measured(monkeypatch, name, profile):
+    """Network renders raise their own sizes (labels, legend, title, caption)
+    to the minimum; measured independently, no text is small, clipped or
+    overlapping, and every node label is drawn in full."""
+    prof = get_profile(profile)
+    result, texts, size = measure(monkeypatch, example(name), prof.figure_request("png"))
+    assert problems(texts, size, prof.min_text_px) == {"small": [], "clipped": [],
+                                                       "overlaps": []}
+    drawn = {w for t in texts for w in t["text"].split()}
+    for node in example(name).nodes:
+        assert set(node.display_label.split()) <= drawn
 
 
 def test_too_many_categories_say_so_and_keep_every_label(monkeypatch):

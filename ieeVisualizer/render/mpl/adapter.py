@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import contextlib
 import io
+import logging
+import math
 import warnings as _warnings
 from dataclasses import dataclass, field
 from typing import Any
@@ -66,6 +68,7 @@ class BuiltFigure:
     layer_artists: dict[int, list[Any]] = field(default_factory=dict)
     annotation_artists: list[Any] = field(default_factory=list)
     caption: Any = None
+    context: Any = None
 
 
 def _versions() -> tuple[str, str]:
@@ -103,8 +106,30 @@ def render_context(theme: Any, min_pt: float = 0.0):
     rc = dict(theme) if isinstance(theme, dict) else theme_rc(theme)
     rc.update({"svg.hashsalt": SVG_HASHSALT, "svg.fonttype": "path"})
     with matplotlib.style.context("default"), matplotlib.rc_context(rc):
-        with matplotlib.rc_context(font_floor_rc(min_pt) if min_pt else {}):
+        from .style import with_fallbacks
+
+        floor = font_floor_rc(min_pt) if min_pt else {}
+        floor["font.family"] = with_fallbacks(matplotlib.rcParams["font.family"])
+        with matplotlib.rc_context(floor), _quiet_font_weights():
             yield
+
+
+class _NoWeightLog(logging.Filter):
+    """Drops matplotlib's "Failed to find font weight" record: a CJK
+    fallback often has only one weight, which is the one it is drawn in."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "Failed to find font weight" not in record.getMessage()
+
+
+@contextlib.contextmanager
+def _quiet_font_weights():
+    log, quiet = logging.getLogger("matplotlib.font_manager"), _NoWeightLog()
+    log.addFilter(quiet)  # only that logger, only while rendering
+    try:
+        yield
+    finally:
+        log.removeFilter(quiet)
 
 
 def _min_pt(request: RenderRequest) -> float:
@@ -167,7 +192,7 @@ class MatplotlibAdapter:
         with render_context(theme, _min_pt(request)), \
                 _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
-            built = self._draw(prepared, request, warnings, theme)
+            built = self._fitted(prepared, request, warnings, theme, caught)
             if request.profile is None:
                 built.figure.draw_without_rendering()
             else:  # the draw the audit measures, as a PNG save would make it
@@ -195,7 +220,7 @@ class MatplotlibAdapter:
         with render_context(theme, _min_pt(request)), \
                 _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
-            built = self._draw(prepared, request, warnings, theme)
+            built = self._fitted(prepared, request, warnings, theme, caught)
             if request.profile is not None:
                 from .legibility import recording_canvas
 
@@ -238,9 +263,41 @@ class MatplotlibAdapter:
             return resolve_theme(request.theme, "", warnings)
         return resolve_theme(spec.theme, "/theme", warnings)
 
+    def _fitted(self, prepared: PreparedSpec, request: RenderRequest,
+                warnings: list[RenderWarning], theme: Any, caught: list) -> BuiltFigure:
+        """Draw the figure; a profile render that cannot fit its content at
+        the minimum text size is drawn again taller (never wider), up to
+        :data:`.legibility.MAX_GROWN_ASPECT`, with a ``figure_grown`` note.
+        Only the kept draw's Python warnings reach ``caught``."""
+        if request.profile is None:
+            return self._draw(prepared, request, warnings, theme)
+        from .legibility import GROW_ROUNDS, MAX_GROWN_ASPECT, growth_warning, needed_height
+
+        w_in, h_in = _figsize(request)
+        causes: list[str] = []
+        for attempt in range(GROW_ROUNDS + 1):
+            with _warnings.catch_warnings(record=True) as mine:
+                _warnings.simplefilter("always")
+                built = self._draw(prepared, request, list(warnings), theme,
+                                   None if attempt == 0 else h_in)
+                if attempt == GROW_ROUNDS:
+                    break
+                need, why = needed_height(built, built.context)
+            need = min(need, MAX_GROWN_ASPECT * w_in)
+            if not why or need <= h_in + 1.0 / request.dpi:
+                break
+            causes += why
+            h_in = (math.ceil(need * request.dpi) + 1e-6) / request.dpi
+        caught.extend(mine)
+        if causes:
+            built.warnings.append(growth_warning(request.size_px[1],
+                                                 math.floor(h_in * request.dpi), causes))
+        return built
+
     @staticmethod
     def _draw(prepared: PreparedSpec, request: RenderRequest,
-              warnings: list[RenderWarning], theme: Any = None) -> BuiltFigure:
+              warnings: list[RenderWarning], theme: Any = None,
+              height_in: float | None = None) -> BuiltFigure:
         from matplotlib.figure import Figure
 
         from .data import infer_axes
@@ -250,6 +307,8 @@ class MatplotlibAdapter:
         spec = prepared.spec
         axes_info = infer_axes(spec, warnings)
         figsize = _figsize(request)
+        if height_in is not None:
+            figsize = (figsize[0], height_in)
         fig = Figure(figsize=figsize, dpi=request.dpi, layout="constrained")
         projection = {"cartesian3d": "3d", "polar": "polar"}.get(spec.coordinate_system)
         ax = fig.add_subplot(projection=projection)
@@ -282,11 +341,15 @@ class MatplotlibAdapter:
         # are already inside the (widened) axes when the legend pass below
         # lays the figure out to measure it: an "auto" legend that would
         # cover a value label is moved outside like one covering data.
+        if ctx.min_pt:
+            from matplotlib.text import Annotation
+
+            ctx.text_annotations = [a for a in ann if isinstance(a, Annotation)]
         fit_value_labels(ctx)
         apply_legend(ctx)  # last: an "auto" legend is placed against the final layout
         return BuiltFigure(figure=fig, axes=ax, warnings=warnings,
                            layer_artists=ctx.layer_artists, annotation_artists=ann,
-                           caption=caption)
+                           caption=caption, context=ctx)
 
 
 def _audit(built: BuiltFigure, request: RenderRequest) -> None:

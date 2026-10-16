@@ -146,12 +146,64 @@ left-to-right flow that would be scaled below the minimum is laid out top to
 bottom (the layout is only a hint); if still too small,
 `flow_text_too_small`.
 
-**Wide tables.** The view PNG cuts cells that do not fit with "…" as before,
-and with a profile says so (`table_cells_truncated`). The email shows a
+**Taller, never wider.** A profile render whose content does not fit at
+the minimum text size is drawn again taller (up to 4 times its width; the
+width never changes), with a non-gating `figure_grown` note saying how tall
+and why: rows of horizontal bars get room for their value labels, y category
+labels stop touching, a legend below the plot gets its height, a plot
+squeezed below 25 % gets 35 %. Value labels of a profile render are left out
+of constrained layout (the value axis is widened to hold them instead), and
+every draw widens from the spec's limits, so a measuring pass at another
+layout cannot leave the bars squeezed. A legend below the plot on a narrow
+profile wraps long names at spaces until one column fits under the plot,
+then takes as many columns as fit. Views and emails lay a figure out at the
+height its render will take (`FigureRenderer.fitted_height`).
+
+**Text annotations on bar rows** (a funnel's rate column): when one lies
+over a value label or past the plot's right edge, every annotation anchored
+on a horizontal bar's row moves under its own row's value label, wrapped to
+the room left, and the plot grows until each row holds both. Words and rows
+stay; only the position changes.
+
+**Networks** (node-link layouts; the adjacency matrix view is not yet
+adapted): labels, legend and caption at least the minimum, the title 3 pt
+larger. On a phone the graph takes the full width with the legend sections
+below it, side by side where they fit; elsewhere the legend keeps its column
+on the right. A label that collides tries its full text wrapped at spaces
+(2, 3, ... lines) and more places (above, beside, below kept inside the
+image, clear of the legend and title) before the old shortening, and the
+figure grows while labels do not fit (not for top-down layered layouts,
+which are crowded across). A network still too big is refused with
+`labels_skipped` / `labels_abbreviated`, whose message then says the network
+is too big for the profile and what to do (wider profile, fewer nodes, the
+text outline).
+
+**Flows** on a profile: after the top-to-bottom fallback, node boxes narrow
+step by step (labels wrap at spaces onto more lines, never narrower than the
+widest word, box padding 20 instead of 28 px) until the flow is drawn at the
+minimum, or `flow_text_too_small` if not. Views on narrow profiles pad 12 px
+instead of 24 px, like the email's own gutters.
+
+**Wide tables.** A view PNG with a profile never cuts a cell: a table whose
+columns do not fit is drawn as one card per row (each cell under its column
+name; text values wrapped, numbers, dates and booleans whole - one wider
+than its card is `value_too_wide_for_screen`), with the same "One card per
+row" note as the email. Without a profile the PNG cuts cells with "…" as
+before. The email shows a
 table that does not fit the phone width as one card per row with every cell
 whole, and writes "One card per row: the N columns do not fit side by side
 in the N px this table gets on a phone screen" above it (the slot, not the
 screen width). There is no horizontal scrolling.
+
+**Font fallback.** The first installed CJK font of Noto Sans CJK (JP, SC,
+TC, KR), Source Han Sans, WenQuanYi Zen Hei / Micro Hei or Droid Sans
+Fallback is appended to every render's font family list (figures, networks
+and view PNG labels), so a character DejaVu Sans lacks is drawn from it
+instead of as a box. Latin text is drawn by the theme's font as before
+(renders without a profile keep main's bytes). The glyph check resolves the
+same list, so a character no installed font has is still `glyph_missing`.
+Matplotlib's "Failed to find font weight" log record (such fonts often have
+one weight) is filtered on its logger while rendering.
 
 ## The send gate
 
@@ -264,39 +316,34 @@ there instead of skipping.
 
 `examples/mobile_gallery.py` renders every template and gallery view at both
 email profiles and writes, per file, every warning the gate refuses
-(`legibility.json`). Pass the gate at both: timeseries, vector field, the
-briefing email and both views as tablet PNG. Refused, with the reason
-(follow-ups below): the three network templates at **every** profile,
-desktop included (their own 7.5 pt labels), bar comparison on a phone (value labels left out),
-funnel on a phone (rate column over the first value label), the network
-templates (their own 7.5 pt labels), the pipeline flow on a phone (77 %
-scale even top to bottom), the briefing table cut in the phone PNG.
+(`legibility.json`). Every template example (bar comparison, funnel,
+timeseries, vector field, dependency map, network, org chart), both gallery
+views as phone and tablet PNG and both emails pass the gate.
+`tests/render/test_mobile_gate.py` checks, for every template example and
+both gallery views at every profile (desktop included), that the gate passes
+and that every word a desktop render draws outside the tick labels is drawn
+on the profile render too.
 
 ## Follow-ups
 
 These are layout improvements; the gate already refuses each case.
 
-1. Network renderer: font floors for its explicit sizes and label placement;
-   until then the gate refuses all three network templates at every profile.
-2. Funnel template: put the stage-to-stage rate in the stage label or a
-   measured column instead of a fixed data-coordinate position.
-3. Profile-aware figure height: rows x minimum line height for horizontal
-   bars (so value labels fit on phones), and room for a legend of many or
-   long series names instead of `legend_not_visible`.
-4. View PNG: card layout for tables that do not fit (the email already has
-   it); 12 px instead of 24 px view padding on narrow profiles.
-5. Flows: narrower node boxes (wrap labels at the slot width) on phones.
-6. Annotations that cannot wrap at the right edge: move them left of their
+1. Network adjacency-matrix view: font floors and a phone layout.
+2. Vertical bars too narrow for their value labels on a phone are refused
+   (`value_labels_omitted`); a taller figure does not widen them. The
+   `bar_comparison` template's `auto` orientation could also consider the
+   number of bars per category.
+3. Annotations that cannot wrap at the right edge: move them left of their
    anchor instead of reporting them clipped.
-7. Ghost tables (`<!--[if mso]>`) so Outlook for Windows shows tiles side by
+4. Ghost tables (`<!--[if mso]>`) so Outlook for Windows shows tiles side by
    side on desktop; MIME assembly helper; real-client screenshots (Litmus /
    Email on Acid) before relying on the email layout in production.
-8. A text summary visible under each figure (not only `alt`), for clients
+5. A text summary visible under each figure (not only `alt`), for clients
    that block images and do not show `alt`.
-9. Font fallback (DejaVu Sans plus an installed CJK font) so `glyph_missing`
-   becomes rarer; the gate keeps refusing whatever is still missing.
-10. Vector (SVG/PDF) audits draw the figure once more instead of measuring
+6. Vector (SVG/PDF) audits draw the figure once more instead of measuring
    the saved draw; an exact audit needs a hook in those backends.
+7. The view validator's narrow-slot check still assumes 24 px view padding
+   on phones (12 px is used), so it is slightly stricter than the layout.
 
 ## Sources (accessed 2026-10-15)
 
