@@ -135,8 +135,10 @@ def _main() -> None:
     deadline = Deadline(max(seconds, 1e-3))
     deadline.report = lambda d: send(("progress", d.phase, dict(d.progress)))
     try:
-        from .base import render_animation as run
-
+        if task == "render":
+            from .base import render_animation as run
+        else:
+            from .export import build as run
         send(("ok", run(**payload, deadline=deadline, isolation="inline")))
     except BaseException as e:  # noqa: BLE001 - every failure goes back to the caller
         try:
