@@ -7,9 +7,9 @@ every gallery mark and legacy entry, and every template example at every
 version that branch had. Each must still hash the same, and render to the
 same SVG and PNG bytes.
 
-In an environment the baseline did not record, only hashes that were equal
-in every recorded environment are compared (a template that samples with
-numpy hashes numpy's output) and renders are skipped.
+In an environment the baseline did not record, only specs built from literal
+data are compared, and only when every recorded environment agreed (a spec
+computed with numpy hashes numpy's output); renders are skipped.
 """
 
 from __future__ import annotations
@@ -30,9 +30,17 @@ HERE = RECORDED.get(environment())
 KEYS = sorted(set().union(*RECORDED.values()))
 
 
+#: Specs whose data is computed with numpy/sympy (gallery formulas, sampled
+#: expressions): their floats, and so their hash, can differ in another
+#: numpy, so outside a recorded environment only literal-data specs compare.
+COMPUTED = ("gallery.", "template.vector_field_2d@")
+
+
 def _expected_hash(key: str) -> str | None:
     if HERE is not None:
         return HERE[key]["spec_hash"]
+    if key.startswith(COMPUTED):
+        return None
     seen = {env[key]["spec_hash"] for env in RECORDED.values()}
     return seen.pop() if len(seen) == 1 else None
 
@@ -46,7 +54,7 @@ def test_every_baseline_spec_is_still_built():
 def test_spec_hash_is_unchanged(key):
     want = _expected_hash(key)
     if want is None:
-        pytest.skip(f"{key} hashes differently in each recorded environment")
+        pytest.skip(f"{key}: computed data, and {environment()} was not recorded")
     spec = SPECS[key]
     assert spec_hash(spec) == want
     assert to_json(from_json(to_json(spec))) == to_json(spec)
