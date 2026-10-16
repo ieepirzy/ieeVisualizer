@@ -59,21 +59,14 @@ def _symbol_names(fn, symbols, n_inputs, default):
     return list(default[:n_inputs])
 
 
-def _legacy_look(spec):
-    """The spec ``visualize``/``visualize_vf`` draw: ``to_spec``'s, with the
-    legacy calls' full-strength look pinned as style hints. The layer keeps
-    role ``reference`` (a computed formula), which the adapter would draw
-    lighter; these calls have always drawn opaque, and a 2D curve in the
-    style's first cycle colour at its default line width."""
-    from dataclasses import replace
-
-    (mark,) = spec.layers
-    style = {**mark.style, "opacity": 1.0}
-    if mark.type == "function" and spec.coordinate_system == "cartesian2d":
-        cycle = matplotlib.rcParams["axes.prop_cycle"].by_key().get("color", ["C0"])
-        style.update(color=matplotlib.colors.to_hex(cycle[0], keep_alpha=True),
-                     linewidth=float(matplotlib.rcParams["lines.linewidth"]))
-    return replace(spec, layers=[replace(mark, style=style)])
+def _rectilinear_or_3d(ax) -> bool:
+    """Whether ``ax`` can be drawn through the spec: a plain 2D (rectilinear)
+    or a 3D axes. Spec schema 1.0's 2D coordinate systems are ``cartesian2d``
+    and ``polar`` with data in its own convention (radians or degrees by
+    unit), while the legacy calls plot raw (x, y) pairs into whatever 2D axes
+    they are given (polar, or a map projection), so those keep the direct
+    drawing they always had."""
+    return getattr(ax, "name", None) in ("rectilinear", "3d")
 
 
 class Visualizer:
@@ -129,14 +122,16 @@ class Visualizer:
     @staticmethod
     def _draw_spec(spec, ax):
         """Draw ``spec`` into ``ax`` with the Matplotlib adapter under the
-        caller's style (``draw_into``). Render warnings are re-issued as
+        caller's style (``draw_into``). ``role_styling=False``: the layer is
+        recorded as role ``reference`` but drawn as these calls always drew
+        it (opaque; a curve in the axes' own property cycle). Render warnings are re-issued as
         ``RuntimeWarning``, except ``null_values_omitted``: sampling already
         warned about the non-finite points."""
         import warnings
 
         from .render.mpl import MatplotlibAdapter
 
-        built = MatplotlibAdapter().draw_into(spec, ax)
+        built = MatplotlibAdapter().draw_into(spec, ax, role_styling=False)
         for w in built.warnings:
             if w.code != "null_values_omitted":
                 warnings.warn(f"{w.code}: {w.message}", RuntimeWarning, stacklevel=3)
@@ -210,11 +205,17 @@ class Visualizer:
         from ._bridge import function_spec
 
         s = self._sample_function(fn, dim, linspace, domain, n, symbols, rng)
-        self._cmap()  # an unknown colormap is a ValueError before anything is drawn
+        if s.dim == 3:
+            self._cmap()  # unknown colormap: ValueError before drawing (only used in 3D)
         with self._style_context():
             fig, ax = self._axes(ax, three_d=(s.dim == 3))
-            spec = function_spec(self, fn, dim=s.dim, symbols=symbols, rng=rng, sampled=s)
-            self._draw_spec(_legacy_look(spec), ax)
+            if _rectilinear_or_3d(ax):
+                spec = function_spec(self, fn, dim=s.dim, symbols=symbols, rng=rng, sampled=s)
+                self._draw_spec(spec, ax)
+            else:  # see _rectilinear_or_3d
+                ax.plot(s.grid[0], s.comps[0])
+                ax.set_xlabel(s.labels[0])
+                ax.set_ylabel(f"f({s.labels[0]})")
         if show:
             plt.show()
         return fig
@@ -269,11 +270,18 @@ class Visualizer:
         from ._bridge import field_spec
 
         s = self._sample_field(fn, dim, linspace, domain, n, symbols, rng)
-        self._cmap()  # an unknown colormap is a ValueError before anything is drawn
+        cmap = self._cmap()  # unknown colormap: ValueError before anything is drawn
         with self._style_context():
             fig, ax = self._axes(ax, three_d=(dim == 3))
-            spec = field_spec(self, fn, dim=dim, symbols=symbols, rng=rng, sampled=s)
-            self._draw_spec(_legacy_look(spec), ax)
+            if _rectilinear_or_3d(ax):
+                spec = field_spec(self, fn, dim=dim, symbols=symbols, rng=rng, sampled=s)
+                self._draw_spec(spec, ax)
+            else:  # see _rectilinear_or_3d
+                q = ax.quiver(s.grid[0], s.grid[1], s.comps[0], s.comps[1],
+                              field_magnitude(s.comps), cmap=cmap)
+                fig.colorbar(q, ax=ax, label="magnitude")
+                ax.set_xlabel(s.labels[0])
+                ax.set_ylabel(s.labels[1])
             if dim == 2:
                 # Spec schema 1.0 has no streamlines and no aspect ratio, so
                 # these two legacy options are still drawn directly, on top of
@@ -344,10 +352,11 @@ class Visualizer:
 
         ``visualize()``/``visualize_vf()`` draw this same spec (from the same
         single sampling pass) into their own pyplot-managed axes with
-        ``MatplotlibAdapter.draw_into``, under ``style=``, with the legacy
-        full-strength look pinned as style hints (``opacity`` 1; a 2D curve
-        in the style's first cycle colour). Only streamlines and the equal
-        aspect of 2D fields are still drawn directly, on top.
+        ``MatplotlibAdapter.draw_into(spec, ax, role_styling=False)``, under
+        ``style=``, drawn as they always drew (opaque; a curve in the axes'
+        own property cycle). Streamlines, the equal aspect of 2D fields and
+        anything drawn into a non-rectilinear 2D axes (e.g. polar) are still
+        drawn directly.
 
         :return: a ``FigureSpec`` that validates without errors
         """

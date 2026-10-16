@@ -178,7 +178,11 @@ def _values(arr) -> list:
     flat = np.ma.asarray(arr).ravel()
     data = np.asarray(np.ma.getdata(flat), dtype=float)
     mask = np.ma.getmaskarray(flat)
-    return [None if m else float(v) for v, m in zip(data.tolist(), mask.tolist())]
+    if not mask.any():
+        return data.tolist()
+    out = data.astype(object)  # elements stay Python floats
+    out[mask] = None
+    return out.tolist()
 
 
 def _provenance(viz, kind, fn, s, symbols_given, rng, seed_note) -> Provenance:

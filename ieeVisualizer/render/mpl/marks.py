@@ -71,6 +71,11 @@ class DrawContext:
     dodged_horizontal: set = field(default_factory=set)
     #: The resolved :class:`~ieeVisualizer.themes.Theme` (None = adapter defaults).
     theme: Any = None
+    #: False (``draw_into(..., role_styling=False)``): a ``reference`` layer
+    #: gets no role styling and a line takes the axes' own property cycle.
+    role_styling: bool = True
+    #: True when drawing into a caller's existing axes (``draw_into``).
+    caller_axes: bool = False
     _color_i: int = 0
     _series: dict[tuple, _Series] = field(default_factory=dict)
     _color_of: dict[int, int | None] = field(default_factory=dict)
@@ -351,7 +356,15 @@ def _isolated(valid: np.ndarray) -> list[int]:
     return [int(k) for k in np.flatnonzero(valid & ~prev & ~nxt)]
 
 
+def _caller_styled(ctx: DrawContext, m: Mark) -> bool:
+    """A reference layer drawn with the caller's styling (see
+    ``DrawContext.role_styling``)."""
+    return not ctx.role_styling and m.role == "reference"
+
+
 def _approximate_role(ctx: DrawContext, i: int, m: Mark, kw: dict[str, Any]) -> None:
+    if _caller_styled(ctx, m):
+        return
     if m.role in ("forecast", "reference"):
         kw.setdefault("alpha", ctx.roles.forecast_alpha if m.role == "forecast"
                       else ctx.roles.reference_alpha)
@@ -367,7 +380,10 @@ def _colorbar(ctx: DrawContext, mappable: Any, m: Mark, ch: str = "color") -> No
     label = _title(m, ch) or ""
     if col is not None and col.unit:
         label = f"{label} ({col.unit})"
-    cb = ctx.fig.colorbar(mappable, ax=ctx.ax, label=label)
+    # A 3D axes draws its z label outside the axes box on the right, where
+    # the default colourbar pad (0.05) would sit on top of it.
+    kw = {"pad": 0.12, "shrink": 0.7} if ctx.three_d else {}
+    cb = ctx.fig.colorbar(mappable, ax=ctx.ax, label=label, **kw)
     if ctx.locale is not None:
         from .decorate import locale_formatter
 
@@ -389,11 +405,16 @@ def draw_line(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     for group, idx in _groups(ctx, i, m, len(x)):
         sub = [a[idx] for a in chans]
         _require(_mask(*sub), i, m, group)
-        kw = line_kwargs(style, m.role, f"/layers/{i}", ctx.warnings, ctx.roles)
-        if m.role != "reference":
-            kw["color"] = ctx.layer_color(i, m, group, style, kw.get("color"))
-            _wrap_variant(ctx, m, style, kw, "linestyle")
-        kw["label"] = _label(m, group, _title(m, "y"))
+        caller = _caller_styled(ctx, m)
+        kw = line_kwargs(style, "observed" if caller else m.role, f"/layers/{i}",
+                         ctx.warnings, ctx.roles)
+        if not caller:
+            if m.role != "reference":
+                kw["color"] = ctx.layer_color(i, m, group, style, kw.get("color"))
+                _wrap_variant(ctx, m, style, kw, "linestyle")
+            kw["label"] = _label(m, group, _title(m, "y"))
+        # else as ax.plot: colour/linestyle from the style or the axes' own
+        # property cycle, and no legend label
         lone = _isolated(_mask(*sub))
         if lone and "marker" not in kw:
             # A valid point between two gaps has no segment; mark it so it is
@@ -958,10 +979,12 @@ def draw_quiver(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                           length=length, normalize=False, **kw)
         if mappable is not None:
             _colorbar(ctx, mappable, m)
-        # include the arrow tips in the view, not only the tails
-        ctx.ax.auto_scale_xyz(*(np.concatenate([a[p], a[p] + length * a[c]])
-                                for p, c in (("x", "u"), ("y", "v"), ("z", "w"))),
-                              had_data=True)
+        # include the arrow tips in the view, not only the tails (not in a
+        # caller's axes, whose limits are the caller's, as with ax.quiver)
+        if not ctx.caller_axes:
+            ctx.ax.auto_scale_xyz(*(np.concatenate([a[p], a[p] + length * a[c]])
+                                    for p, c in (("x", "u"), ("y", "v"), ("z", "w"))),
+                                  had_data=True)
         return [q]
     # spec: arrow length in data units = scale * |(u, v)|. Without a scale,
     # on a complete grid over linear axes, the longest arrow spans one grid
@@ -969,10 +992,16 @@ def draw_quiver(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     # neighbours nor run out of the plot: the view is widened to include
     # every arrow tip, which matplotlib's own autoscaling (sized at draw
     # time, tails only) does not do. Anywhere else (log axes, scattered
-    # positions) matplotlib's own arrow autoscaling is used unchanged.
-    length = m.scale if m.scale is not None else _cell_scale(ctx, a)
+    # positions) matplotlib's own arrow autoscaling is used unchanged. Drawn
+    # into a caller's axes (draw_into), the axes and their limits are the
+    # caller's: without a scale matplotlib's own arrow autoscaling is used and
+    # the view is not widened, exactly as ax.quiver would draw.
+    length = m.scale
+    if length is None and not ctx.caller_axes:
+        length = _cell_scale(ctx, a)
     if length is not None:
         kw.update(angles="xy", scale_units="xy", scale=1.0 / length)
+    if length is not None and not ctx.caller_axes:
         tips_x, tips_y = a["x"] + length * a["u"], a["y"] + length * a["v"]
         ctx.ax.update_datalim(np.column_stack([np.concatenate([a["x"], tips_x]),
                                                np.concatenate([a["y"], tips_y])]))
@@ -1049,11 +1078,13 @@ def draw_function(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         if k in style:
             ctx.warn("style_key_ignored", f"a 2D function curve does not use {k!r}.",
                      f"{path}/style/{k}")
-    kw = line_kwargs(style, m.role, path, ctx.warnings, ctx.roles)
-    if m.role != "reference":
-        kw["color"] = ctx.layer_color(i, m, None, style, kw.get("color"))
-        _wrap_variant(ctx, m, style, kw, "linestyle")
-    kw["label"] = legend_label(m.name, m.expression, m.role)
+    caller = _caller_styled(ctx, m)
+    kw = line_kwargs(style, "observed" if caller else m.role, path, ctx.warnings, ctx.roles)
+    if not caller:  # else as ax.plot (see draw_line)
+        if m.role != "reference":
+            kw["color"] = ctx.layer_color(i, m, None, style, kw.get("color"))
+            _wrap_variant(ctx, m, style, kw, "linestyle")
+        kw["label"] = legend_label(m.name, m.expression, m.role)
     return ctx.ax.plot(inputs[0], out, **kw)
 
 

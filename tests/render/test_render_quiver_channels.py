@@ -68,3 +68,14 @@ def test_draw_into_uses_the_callers_axes_and_checks_the_projection():
     built = MatplotlibAdapter().draw_into(spec, ax)
     assert built.axes is ax and built.figure is fig
     assert built.layer_artists[0][0] in ax.collections
+
+
+def test_draw_into_caller_styling_is_limited_to_legacy_mark_types():
+    from ieeVisualizer.spec import BarMark
+
+    spec = one_layer(BarMark(encoding={"x": "k", "y": "v"}, role="reference"),
+                     {"k": ["a", "b"], "v": [1.0, 2.0]})
+    _, ax = plt.subplots()
+    with pytest.raises(ValueError, match="role_styling=False supports"):
+        MatplotlibAdapter().draw_into(spec, ax, role_styling=False)
+    MatplotlibAdapter().draw_into(spec, ax)  # role styling on: any mark
