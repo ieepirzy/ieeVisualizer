@@ -126,6 +126,13 @@ artifact = export(spec, ["png", "svg"], LocalDirectoryWriter("out"))
 print(artifact.artifact_id, artifact.variant("png").sha256)  # out/<artifact_id>/manifest.json
 ```
 
+## Agent skills library
+
+[`skills/`](skills/README.md) holds agent skills for honest figures and
+reports, packaged as a Claude Code plugin. The skill text under `skills/` is
+licensed CC BY 4.0 (with third-party portions under the licences listed in
+[`skills/NOTICE.md`](skills/NOTICE.md)); the code in this repository is MIT.
+
 ## Development priorities
 
 1. Make the existing Python/Matplotlib functions installable, tested and functional.

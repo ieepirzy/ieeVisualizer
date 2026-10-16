@@ -1,0 +1,17 @@
+{
+  "name": "ieevisualizer",
+  "owner": {
+    "name": "Ilari Pirkkalainen"
+  },
+  "metadata": {
+    "description": "Skills for rigorous figures and reports built on ieeVisualizer."
+  },
+  "plugins": [
+    {
+      "name": "ieevisualizer-skills",
+      "source": "./",
+      "description": "Skills for honest, decision-useful figures and reports, and for using ieeVisualizer.",
+      "version": "0.1.0"
+    }
+  ]
+}
