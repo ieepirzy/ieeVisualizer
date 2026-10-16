@@ -7,20 +7,18 @@ import dataclasses
 
 import numpy as np
 import pytest
-from anim_helpers import SMALL, codes, png_pixels, run_limited, sine_anim, weekly_anim
+from anim_helpers import SMALL, codes, run_limited, sine_anim, weekly_anim
 
 from ieeVisualizer.animation import (
     AnimationRequest,
     AnimationSpec,
     FrameColumn,
     ParameterSweep,
-    export_animation,
     render_animation,
     validate_animation,
 )
 from ieeVisualizer.animation.cost import matplotlib_work_us
 from ieeVisualizer.animation.mpl import MatplotlibAnimationAdapter
-from ieeVisualizer.artifacts import MemoryWriter
 from ieeVisualizer.spec import (
     DataSnapshot,
     FigureSpec,
@@ -238,7 +236,7 @@ def test_histogram_fixed_y_range_is_the_union_of_the_frames():
 
 
 def test_no_data_frames_and_their_poster_use_the_theme():
-    """A dark clip flashed a white 'no data' frame (and poster)."""
+    """A dark clip flashed a white 'no data' frame (the poster: test_anim_mp4)."""
     from ieeVisualizer import themes
 
     dark = next(t for t in map(themes.get, (d["name"] for d in themes.list_themes()))
@@ -248,9 +246,6 @@ def test_no_data_frames_and_their_poster_use_the_theme():
     anim = weekly_anim("current", poster=2)  # week 2 has no value
     fp, _, pixels = MatplotlibAnimationAdapter().render_frames(anim, req)
     assert fp.states[2].spec is None and tuple(pixels[2][2, 2]) == want
-    w = MemoryWriter()
-    art = export_animation(anim, "gif", w, request=req)
-    assert tuple(png_pixels(w.files[(art.artifact_id, "poster.png")])[2, 2]) == want
 
 
 def test_sweep_range_overflow_is_refused_at_the_timeline():
@@ -264,14 +259,3 @@ def test_sweep_range_overflow_is_refused_at_the_timeline():
         render_animation(anim, SMALL)
 
 
-def test_ffmpeg_exiting_zero_without_output_is_encoder_failed(tmp_path):
-    from ieeVisualizer.animation import AnimationError
-    from ieeVisualizer.animation.encode import encode_mp4
-
-    fake = tmp_path / "ffmpeg"
-    fake.write_text("#!/bin/sh\ncat > /dev/null\nexit 0\n")
-    fake.chmod(0o755)
-    with pytest.raises(AnimationError) as e:
-        encode_mp4([np.zeros((8, 8, 3), np.uint8)] * 3, 10, str(fake), 20)
-    assert codes(e.value.issues) == ["encoder_failed"]
-    assert "without writing" in e.value.issues[0].message

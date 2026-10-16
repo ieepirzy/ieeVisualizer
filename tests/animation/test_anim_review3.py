@@ -1,10 +1,8 @@
-"""Review round 3: work per export, annotation cost, heatmap frame columns
-with fixed limits, MP4 encode deadline."""
+"""Review round 3: annotation cap, heatmap frame columns with fixed limits."""
 
-import shutil
 
 import pytest
-from anim_helpers import SMALL, codes, vector_field_anim
+from anim_helpers import SMALL, codes
 
 import ieeVisualizer.animation as A
 from ieeVisualizer import templates
@@ -12,7 +10,6 @@ from ieeVisualizer.animation import (
     AnimationSpec,
     FrameColumn,
     ParameterSweep,
-    export_animation,
     render_animation,
     validate_animation,
 )
@@ -43,16 +40,6 @@ def spies(monkeypatch):
 
         monkeypatch.setattr(owner, name, wrapped)
     return calls
-
-
-def test_an_export_validates_once_and_builds_each_state_once(spies, tmp_path):
-    from ieeVisualizer.artifacts.writers import LocalDirectoryWriter
-
-    values = [0.0, 0.5, 1.0]
-    fmts = ["gif", "mp4"] if shutil.which("ffmpeg") else ["gif"]
-    export_animation(vector_field_anim(values=values), fmts, LocalDirectoryWriter(tmp_path),
-                     request=SMALL)
-    assert spies == {"build": len(values), "validate": 1}
 
 
 # ---------------------------------------------------------------- H2

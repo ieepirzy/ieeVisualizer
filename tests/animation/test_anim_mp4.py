@@ -1,0 +1,151 @@
+"""MP4 through ffmpeg, export, and their deadline behaviour (worker kill,
+cleanup); the MP4 tests skip without ffmpeg (CI installs it)."""
+
+import dataclasses
+import os
+import shutil
+import threading
+import time
+
+import numpy as np
+import pytest
+from anim_helpers import SMALL, codes, png_pixels, sine_anim, vector_field_anim, weekly_anim
+from test_anim_deadline import HEAVY, _fn, _sweep
+from test_anim_guards import _ref_anim
+from test_anim_isolation import D, _left, _timed
+
+from ieeVisualizer.animation import (
+    AnimationError,
+    AnimationRegistry,
+    export_animation,
+    render_animation,
+)
+from ieeVisualizer.animation import frames as F
+from ieeVisualizer.animation import validate as V
+from ieeVisualizer.animation.isolate import ISOLATION_SLACK_S
+from ieeVisualizer.animation.mpl import MatplotlibAnimationAdapter
+from ieeVisualizer.artifacts import MemoryWriter
+from ieeVisualizer.render import CapabilityError
+from ieeVisualizer.spec import FigureSpec, SpecValidationError
+
+HAS_FFMPEG = shutil.which("ffmpeg") is not None
+needs_ffmpeg = pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg is not installed")
+MP4 = dataclasses.replace(SMALL, format="mp4")
+
+
+def test_mp4_is_refused_clearly_without_ffmpeg():
+    adapter = MatplotlibAnimationAdapter(ffmpeg_path="/nonexistent/ffmpeg")
+    caps = adapter.capabilities
+    assert caps.output_formats == {"gif"} and "ffmpeg" in caps.notes[0]
+    with pytest.raises(AnimationError) as e:
+        adapter.render(sine_anim(), MP4)
+    assert e.value.issues[0].code == "format_unavailable"
+    reg = AnimationRegistry()
+    reg.register(adapter)
+    with pytest.raises(CapabilityError) as e:
+        render_animation(sine_anim(), MP4, registry=reg)
+    assert "ffmpeg" in str(e.value)
+
+
+@needs_ffmpeg
+def test_mp4_when_ffmpeg_exists_and_odd_sizes_say_they_are_padded():
+    res = render_animation(sine_anim(hold_end=1), MP4)
+    assert res.media_type == "video/mp4" and res.content[4:8] == b"ftyp"
+    assert res.frame_count == 6 and res.frame_duration_ms == 100.0
+    assert "frame_size_padded" not in codes(res.warnings)
+    odd = render_animation(sine_anim(), dataclasses.replace(MP4, width=161, height=121))
+    assert "frame_size_padded" in codes(odd.warnings)
+    assert "161x121" in str([w.message for w in odd.warnings])
+
+
+def test_ffmpeg_exiting_zero_without_output_is_encoder_failed(tmp_path):
+    from ieeVisualizer.animation.encode import encode_mp4
+
+    fake = tmp_path / "ffmpeg"
+    fake.write_text("#!/bin/sh\ncat > /dev/null\nexit 0\n")
+    fake.chmod(0o755)
+    with pytest.raises(AnimationError) as e:
+        encode_mp4([np.zeros((8, 8, 3), np.uint8)] * 3, 10, str(fake), 20)
+    assert codes(e.value.issues) == ["encoder_failed"]
+    assert "without writing" in e.value.issues[0].message
+
+
+@needs_ffmpeg
+def test_mp4_and_export_stop_at_the_deadline_plus_the_kill_slack():
+    fn = _sweep(FigureSpec(layers=[_fn(HEAVY)]), 120)
+    before = _left()
+    for call in (lambda: render_animation(fn, MP4, deadline=D, isolation="process"),
+                 lambda: export_animation(fn, ["gif", "mp4"], MemoryWriter(), request=SMALL,
+                                          deadline=D, isolation="process")):
+        elapsed, e = _timed(call)
+        assert e.issues[0].code == "render_deadline_exceeded"
+        assert D <= elapsed <= D + ISOLATION_SLACK_S, (elapsed, e.stats)
+    assert _left() <= before
+
+
+def test_a_blocked_ffmpeg_is_killed_with_the_worker(tmp_path, monkeypatch):
+    """An ffmpeg that never reads its input blocks the frame write: inline
+    there is nothing to check, the worker and ffmpeg are killed at the
+    deadline. The overrun stats name the phase that was running."""
+    fake = tmp_path / "ffmpeg"
+    pid = tmp_path / "pid"
+    fake.write_text(f'#!/bin/sh\ncase "$*" in *-encoders*) exit 0;; esac\necho $$ > {pid}\n'
+                    "exec sleep 1000\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("IEEVISUALIZER_FFMPEG", str(fake))
+    anim = _sweep(FigureSpec(layers=[_fn()]), 40)
+    anim.axis_limits = "auto"
+    req = dataclasses.replace(MP4, width=640, height=480)
+    before = _left()
+    elapsed, e = _timed(lambda: render_animation(anim, req, deadline=D, isolation="process"))
+    assert D <= elapsed <= D + ISOLATION_SLACK_S, (elapsed, e.stats)
+    assert e.stats["phase"] == "draw" and e.stats.get("states_drawn", 0) >= 1, e.stats
+    ffmpeg = int(pid.read_text())
+    time.sleep(0.2)
+    assert not os.path.exists(f"/proc/{ffmpeg}") or "Z" in open(f"/proc/{ffmpeg}/stat").read()
+    assert _left() <= before
+
+
+@needs_ffmpeg
+def test_an_inline_mp4_render_leaves_no_helper_thread():
+    """A helper thread kept drawing (and changing rcParams) after an MP4
+    render had raised."""
+    render_animation(sine_anim(), MP4, isolation="inline")
+    assert not [t for t in threading.enumerate() if t.name.startswith("ieeVisualizer")]
+
+
+def test_export_with_a_bad_poster_raises_a_structured_error_and_writes_nothing():
+    from anim_helpers import weekly_data
+
+    w = MemoryWriter()
+    with pytest.raises(SpecValidationError) as e:
+        export_animation(_ref_anim(poster=99), "gif", w, request=SMALL,
+                         resolver=lambda ref: weekly_data(None))
+    assert codes(e.value.issues) == ["invalid_poster"] and w.files == {}
+
+
+def test_an_export_validates_once_and_builds_each_state_once(monkeypatch, tmp_path):
+    from ieeVisualizer.artifacts.writers import LocalDirectoryWriter
+
+    calls = {"build": 0, "validate": 0}
+    for owner, name in ((F, "_build_template"), (V, "_validate")):
+        orig = getattr(owner, name)
+        key = "build" if owner is F else "validate"
+        monkeypatch.setattr(owner, name, lambda *a, _o=orig, _k=key, **k:
+                            calls.__setitem__(_k, calls[_k] + 1) or _o(*a, **k))
+    values = [0.0, 0.5, 1.0]
+    export_animation(vector_field_anim(values=values), ["gif", "mp4"] if HAS_FFMPEG else
+                     ["gif"], LocalDirectoryWriter(tmp_path), request=SMALL)
+    assert calls == {"build": len(values), "validate": 1}
+
+
+def test_the_exported_poster_of_a_no_data_frame_uses_the_theme():
+    from ieeVisualizer import themes
+
+    dark = next(t for t in map(themes.get, (d["name"] for d in themes.list_themes()))
+                if t.background and int(t.background[1:3], 16) < 64)
+    want = tuple(int(dark.background[i:i + 2], 16) for i in (1, 3, 5))
+    w = MemoryWriter()
+    art = export_animation(weekly_anim("current", poster=2), "gif", w,
+                           request=dataclasses.replace(SMALL, theme=dark.name))
+    assert tuple(png_pixels(w.files[(art.artifact_id, "poster.png")])[2, 2]) == want

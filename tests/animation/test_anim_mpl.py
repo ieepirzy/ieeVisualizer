@@ -1,7 +1,6 @@
-"""Matplotlib animation adapter: frames are static renders; GIF/MP4 encoding."""
+"""Matplotlib animation adapter: frames are static renders; GIF encoding."""
 
 import dataclasses
-import shutil
 
 import numpy as np
 import pytest
@@ -17,16 +16,13 @@ from anim_helpers import (
 )
 
 from ieeVisualizer.animation import (
-    AnimationError,
-    AnimationRegistry,
     render_animation,
 )
 from ieeVisualizer.animation.mpl import MatplotlibAnimationAdapter
-from ieeVisualizer.render import CapabilityError, MatplotlibAdapter, RenderRequest, build_figure
+from ieeVisualizer.render import MatplotlibAdapter, RenderRequest, build_figure
 from ieeVisualizer.spec import SpecValidationError
 
 FRAME = RenderRequest(format="png", width=160, height=120, units="px", dpi=50)
-HAS_FFMPEG = shutil.which("ffmpeg") is not None
 
 
 def static(spec):
@@ -147,39 +143,6 @@ def test_a_frame_without_data_is_drawn_as_no_data_not_an_empty_chart():
     # no axes frame: the no-data image has far less dark ink than a chart
     ink = [(p < 128).mean() for p in pixels]
     assert ink[2] < ink[1] / 3 and ink[2] > 0
-
-
-def test_mp4_is_refused_clearly_without_ffmpeg():
-    adapter = MatplotlibAnimationAdapter(ffmpeg_path="/nonexistent/ffmpeg")
-    caps = adapter.capabilities
-    assert caps.output_formats == {"gif"} and "ffmpeg" in caps.notes[0]
-    assert caps.to_dict()["figure"]["animation"] is True
-    with pytest.raises(AnimationError) as e:
-        adapter.render(sine_anim(), dataclasses.replace(SMALL, format="mp4"))
-    assert e.value.issues[0].code == "format_unavailable"
-    reg = AnimationRegistry()
-    reg.register(adapter)
-    with pytest.raises(CapabilityError) as e:
-        render_animation(sine_anim(), dataclasses.replace(SMALL, format="mp4"), registry=reg)
-    assert "ffmpeg" in str(e.value)
-
-
-@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg is not installed")
-def test_mp4_when_ffmpeg_exists():
-    res = render_animation(sine_anim(hold_end=1), dataclasses.replace(SMALL, format="mp4"))
-    assert res.media_type == "video/mp4" and res.content[4:8] == b"ftyp"
-    assert res.frame_count == 6 and res.frame_duration_ms == 100.0
-    assert "mp4" in MatplotlibAnimationAdapter().capabilities.output_formats
-
-
-@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg is not installed")
-def test_odd_sized_mp4_says_its_frames_are_padded():
-    odd = dataclasses.replace(SMALL, format="mp4", width=161, height=121)
-    res = render_animation(sine_anim(), odd)
-    assert "frame_size_padded" in [w.code for w in res.warnings]
-    assert "161x121" in str([w.message for w in res.warnings])
-    even = render_animation(sine_anim(), dataclasses.replace(SMALL, format="mp4"))
-    assert "frame_size_padded" not in [w.code for w in even.warnings]
 
 
 def test_referenced_data_is_resolved_once_and_animated():
