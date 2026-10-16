@@ -918,7 +918,13 @@ def draw_quiver(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
     valid = _mask(*allc)
     _report_nulls(ctx, i, valid, "left out (no arrow)")
     _require(valid, i, m, None)
-    a = {k: np.asarray(v[valid], dtype=float) for k, v in chans.items()}
+    # 3D drops every row with a null. In 2D only a null position drops a row;
+    # a null component or colour keeps its row as a masked arrow
+    # (matplotlib's own "no arrow here", quiver.Umask), so a field with
+    # undefined points stays a complete grid and keeps its arrow scale.
+    keep = valid if ctx.three_d else _mask(chans["x"], chans["y"])
+    hole = ~valid[keep]
+    a = {k: np.ma.filled(np.ma.asarray(v[keep], dtype=float), 0.0) for k, v in chans.items()}
     comps = ("u", "v", "w") if ctx.three_d else ("u", "v")
     if m.normalize:
         mag = np.sqrt(sum(a[k] ** 2 for k in comps))
@@ -932,13 +938,26 @@ def draw_quiver(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         kw["label"] = legend_label(m.name, None, m.role)
     _approximate_role(ctx, i, m, kw)
     if ctx.three_d:
+        mappable = None
         if cvals is not None:
-            ctx.warn("color_channel_ignored", "3D quiver arrows are drawn in one colour; the "
-                     "color channel was ignored.", f"/layers/{i}/encoding/color")
-        kw["color"] = style.get("color", ctx.next_color(f"/layers/{i}"))
+            # Axes3D.quiver has no colour array: it emits all shafts, then all
+            # left head strokes, then all right head strokes, so each arrow's
+            # colour is repeated once per stroke.
+            import matplotlib
+
+            c = np.asarray(cvals[valid], dtype=float)
+            cmap = ctx.cmap(style)
+            cmap = matplotlib.colormaps[cmap] if isinstance(cmap, str) else cmap
+            norm = matplotlib.colors.Normalize(vmin=float(c.min()), vmax=float(c.max()))
+            kw["colors"] = np.tile(cmap(norm(c)), (3, 1))
+            mappable = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
+        else:
+            kw["color"] = style.get("color", ctx.next_color(f"/layers/{i}"))
         length = m.scale if m.scale is not None else 1.0
         q = ctx.ax.quiver(a["x"], a["y"], a["z"], a["u"], a["v"], a["w"],
                           length=length, normalize=False, **kw)
+        if mappable is not None:
+            _colorbar(ctx, mappable, m)
         # include the arrow tips in the view, not only the tails
         ctx.ax.auto_scale_xyz(*(np.concatenate([a[p], a[p] + length * a[c]])
                                 for p, c in (("x", "u"), ("y", "v"), ("z", "w"))),
@@ -957,9 +976,12 @@ def draw_quiver(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         tips_x, tips_y = a["x"] + length * a["u"], a["y"] + length * a["v"]
         ctx.ax.update_datalim(np.column_stack([np.concatenate([a["x"], tips_x]),
                                                np.concatenate([a["y"], tips_y])]))
-    args = [a["x"], a["y"], a["u"], a["v"]]
+    def holed(values: np.ndarray) -> np.ndarray:
+        return np.ma.array(values, mask=hole) if hole.any() else values
+
+    args = [a["x"], a["y"], holed(a["u"]), holed(a["v"])]
     if cvals is not None:
-        args.append(np.asarray(cvals[valid], dtype=float))
+        args.append(holed(np.ma.filled(np.ma.asarray(cvals[keep], dtype=float), 0.0)))
         kw["cmap"] = ctx.cmap(style)
     else:
         kw["color"] = style.get("color", ctx.next_color(f"/layers/{i}"))

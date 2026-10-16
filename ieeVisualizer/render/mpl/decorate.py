@@ -334,6 +334,8 @@ def apply_caption(fig: Any, caption: str | None, height_in: float, width_in: flo
     text = "\n".join(textwrap.fill(par, chars) for par in caption.splitlines() or [""])
     lines = text.count("\n") + 1
     frac = min(0.4, (lines * fontsize * 1.35 + 8) / (height_in * 72))
-    fig.get_layout_engine().set(rect=(0, frac, 1, 1 - frac))
+    engine = fig.get_layout_engine()  # None for a caller's figure (draw_into)
+    if engine is not None:
+        engine.set(rect=(0, frac, 1, 1 - frac))
     return fig.text(0.01, frac / 2, text, ha="left", va="center", fontsize=fontsize,
                     style="italic", color=color)

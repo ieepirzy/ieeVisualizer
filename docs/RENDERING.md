@@ -218,10 +218,24 @@ renders and stores it with a manifest, so the figure can be re-rendered
 from `spec.json` without the original callable.
 
 Not carried over (no spec 1.0 equivalent): streamlines, the equal aspect of
-2D fields, per-arrow magnitude colours in 3D (lengths match, colour is
-uniform), and the `ax=`/`style=`/`show=` drawing options. For those reasons
-`visualize()` and `visualize_vf()` still draw directly with Matplotlib; the
-tests check that both routes draw the same data.
+2D fields, and the `ax=`/`style=`/`show=` drawing options. Vector fields are
+coloured by `magnitude` in 2D and 3D (a 3D quiver's `color` channel colours
+each arrow and adds a colourbar).
+
+`visualize()` and `visualize_vf()` build that same spec from one sampling
+pass and draw it with `MatplotlibAdapter.draw_into(spec, ax)`, which draws
+into an existing axes under the caller's rcParams (no `render_context`, so
+not byte-reproducible; the spec's theme still supplies roles, colour maps
+and locale). They pin their legacy full-strength look as style hints
+(`opacity` 1; a 2D curve in the style's first cycle colour and default line
+width) while the layer keeps role `reference`. Render warnings are re-issued
+as `RuntimeWarning` (except `null_values_omitted`, already reported by
+sampling). Streamlines and the equal aspect of 2D fields are still drawn
+directly, on top of the adapter-drawn quiver.
+
+A 2D quiver keeps a row whose component or colour is null as a masked arrow
+(`Quiver.Umask`), so the grid stays complete; only a null position drops a
+row. 3D quivers drop any row with a null.
 
 ## Artifacts
 

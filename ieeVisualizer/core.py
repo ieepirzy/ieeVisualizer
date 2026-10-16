@@ -59,6 +59,23 @@ def _symbol_names(fn, symbols, n_inputs, default):
     return list(default[:n_inputs])
 
 
+def _legacy_look(spec):
+    """The spec ``visualize``/``visualize_vf`` draw: ``to_spec``'s, with the
+    legacy calls' full-strength look pinned as style hints. The layer keeps
+    role ``reference`` (a computed formula), which the adapter would draw
+    lighter; these calls have always drawn opaque, and a 2D curve in the
+    style's first cycle colour at its default line width."""
+    from dataclasses import replace
+
+    (mark,) = spec.layers
+    style = {**mark.style, "opacity": 1.0}
+    if mark.type == "function" and spec.coordinate_system == "cartesian2d":
+        cycle = matplotlib.rcParams["axes.prop_cycle"].by_key().get("color", ["C0"])
+        style.update(color=matplotlib.colors.to_hex(cycle[0], keep_alpha=True),
+                     linewidth=float(matplotlib.rcParams["lines.linewidth"]))
+    return replace(spec, layers=[replace(mark, style=style)])
+
+
 class Visualizer:
     def __init__(self, *, linspace=True, N=200, style=None, colormap="viridis", rng=None):
         """
@@ -108,6 +125,22 @@ class Visualizer:
         linspace = self.linspace if linspace is None else linspace
         gen = self.rng if rng is None else as_rng(rng)
         return linspace, gen
+
+    @staticmethod
+    def _draw_spec(spec, ax):
+        """Draw ``spec`` into ``ax`` with the Matplotlib adapter under the
+        caller's style (``draw_into``). Render warnings are re-issued as
+        ``RuntimeWarning``, except ``null_values_omitted``: sampling already
+        warned about the non-finite points."""
+        import warnings
+
+        from .render.mpl import MatplotlibAdapter
+
+        built = MatplotlibAdapter().draw_into(spec, ax)
+        for w in built.warnings:
+            if w.code != "null_values_omitted":
+                warnings.warn(f"{w.code}: {w.message}", RuntimeWarning, stacklevel=3)
+        return built
 
     # One sampling path for drawing (visualize/visualize_vf) and for the spec
     # bridge (to_spec/export), so both see exactly the same samples.
@@ -174,20 +207,14 @@ class Visualizer:
 
         :return: the ``matplotlib.figure.Figure`` drawn into
         """
-        s = self._sample_function(fn, dim, linspace, domain, n, symbols, rng)
-        dim, grid, values, labels = s.dim, s.grid, s.comps[0], s.labels
+        from ._bridge import function_spec
 
+        s = self._sample_function(fn, dim, linspace, domain, n, symbols, rng)
+        self._cmap()  # an unknown colormap is a ValueError before anything is drawn
         with self._style_context():
-            fig, ax = self._axes(ax, three_d=(dim == 3))
-            if dim == 2:
-                ax.plot(grid[0], values)
-                ax.set_xlabel(labels[0])
-                ax.set_ylabel(f"f({labels[0]})")
-            else:
-                ax.plot_surface(grid[0], grid[1], values, cmap=self._cmap())
-                ax.set_xlabel(labels[0])
-                ax.set_ylabel(labels[1])
-                ax.set_zlabel(f"f({labels[0]}, {labels[1]})")
+            fig, ax = self._axes(ax, three_d=(s.dim == 3))
+            spec = function_spec(self, fn, dim=s.dim, symbols=symbols, rng=rng, sampled=s)
+            self._draw_spec(_legacy_look(spec), ax)
         if show:
             plt.show()
         return fig
@@ -226,8 +253,8 @@ class Visualizer:
         :param rng: seed or Generator overriding the constructor's ``rng`` for this call
         :param streamplot: dim=2 only: also draw streamlines (needs ``linspace=True``)
 
-        Arrow colour encodes field magnitude (``colormap``); 2D plots get a
-        colorbar for it. 3D arrows are scaled so the longest one spans one grid
+        Arrow colour encodes field magnitude (``colormap``), with a colorbar
+        for it. 3D arrows are scaled so the longest one spans one grid
         cell. Points where any component is non-finite are left out with a
         ``RuntimeWarning``; if none is finite, ``ValueError`` is raised.
 
@@ -239,32 +266,29 @@ class Visualizer:
         if streamplot and not (self.linspace if linspace is None else linspace):
             raise ValueError("streamplot=True needs an evenly spaced grid (linspace=True)")
 
-        s = self._sample_field(fn, dim, linspace, domain, n, symbols, rng)
-        grid, comps, labels, bounds, n = s.grid, s.comps, s.labels, s.bounds, s.n
-        magnitude = field_magnitude(comps)
-        cmap = self._cmap()
+        from ._bridge import field_spec
 
+        s = self._sample_field(fn, dim, linspace, domain, n, symbols, rng)
+        self._cmap()  # an unknown colormap is a ValueError before anything is drawn
         with self._style_context():
             fig, ax = self._axes(ax, three_d=(dim == 3))
+            spec = field_spec(self, fn, dim=dim, symbols=symbols, rng=rng, sampled=s)
+            self._draw_spec(_legacy_look(spec), ax)
             if dim == 2:
-                q = ax.quiver(grid[0], grid[1], comps[0], comps[1], magnitude, cmap=cmap)
-                fig.colorbar(q, ax=ax, label="magnitude")
+                # Spec schema 1.0 has no streamlines and no aspect ratio, so
+                # these two legacy options are still drawn directly, on top of
+                # the adapter-drawn quiver, from the same samples.
                 if streamplot:
                     ax.streamplot(
-                        grid[0][0, :],
-                        grid[1][:, 0],
-                        comps[0],
-                        comps[1],
+                        s.grid[0][0, :],
+                        s.grid[1][:, 0],
+                        s.comps[0],
+                        s.comps[1],
                         color="0.4",
                         linewidth=0.8,
                         density=1.0,
                     )
                 ax.set_aspect("equal", adjustable="box")
-            else:
-                self._quiver3d(ax, grid, comps, magnitude, bounds, n, cmap)
-                ax.set_zlabel(labels[2])
-            ax.set_xlabel(labels[0])
-            ax.set_ylabel(labels[1])
         if show:
             plt.show()
         return fig
@@ -314,19 +338,16 @@ class Visualizer:
             not a measurement, drawn lighter) or ``"observed"``
 
         Not representable in spec schema 1.0, so not produced here:
-        ``streamplot`` streamlines, the equal aspect ratio of 2D fields, and
-        per-arrow magnitude colours in 3D (3D arrows keep the legacy lengths
-        but are drawn in one colour). ``style=``/``ax=``/``show=`` are
-        drawing options of the legacy calls and have no spec equivalent.
+        ``streamplot`` streamlines and the equal aspect ratio of 2D fields.
+        ``style=``/``ax=``/``show=`` are drawing options of the legacy calls
+        and have no spec equivalent.
 
-        Why ``visualize()``/``visualize_vf()`` still draw directly instead of
-        rendering this spec through the adapter: they must keep returning a
-        pyplot-managed Figure, drawing into a caller's ``ax=``, applying
-        ``style=``, drawing streamlines and colouring 3D arrows by magnitude,
-        none of which the adapter (which builds standalone, pyplot-free
-        figures under a fixed default style for byte-reproducible output)
-        provides. Equivalence of the data drawn both ways is tested instead
-        (``tests/test_legacy_bridge.py``).
+        ``visualize()``/``visualize_vf()`` draw this same spec (from the same
+        single sampling pass) into their own pyplot-managed axes with
+        ``MatplotlibAdapter.draw_into``, under ``style=``, with the legacy
+        full-strength look pinned as style hints (``opacity`` 1; a 2D curve
+        in the style's first cycle colour). Only streamlines and the equal
+        aspect of 2D fields are still drawn directly, on top.
 
         :return: a ``FigureSpec`` that validates without errors
         """
@@ -374,19 +395,3 @@ class Visualizer:
         spec = self.to_spec(fn, dim=dim, kind=kind, **spec_options)
         writer = LocalDirectoryWriter(out) if isinstance(out, (str, os.PathLike)) else out
         return export_artifact(spec, formats, writer, name=name, request=request, clock=clock)
-
-    @staticmethod
-    def _quiver3d(ax, grid, comps, magnitude, bounds, n, cmap):
-        keep = ~np.ma.getmaskarray(magnitude)
-        pts = [g[keep] for g in grid]
-        vecs = [np.ma.getdata(c)[keep] for c in comps]
-        mags = np.ma.getdata(magnitude)[keep]
-        mmax = float(mags.max())
-        cell = min(hi - lo for lo, hi in bounds) / (n - 1)
-        length = cell / mmax if mmax > 0 else 1.0
-        norm = matplotlib.colors.Normalize(vmin=float(mags.min()), vmax=mmax)
-        colors = cmap(norm(mags))
-        # Axes3D.quiver emits all shafts, then all left head strokes, then all
-        # right head strokes; colour each of the three by its arrow's magnitude.
-        colors = np.concatenate([colors, colors, colors])
-        ax.quiver(*pts, *vecs, length=length, normalize=False, colors=colors)
