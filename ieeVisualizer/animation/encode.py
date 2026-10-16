@@ -11,14 +11,12 @@ even sizes for yuv420p; byte reproducibility depends on the ffmpeg build.
 
 from __future__ import annotations
 
-import contextvars
 import io
 import itertools
 import os
 import shutil
 import subprocess
 import tempfile
-import threading
 from collections.abc import Iterable
 
 import numpy as np
@@ -46,7 +44,7 @@ def gif_frames(frames: Iterable[np.ndarray], deadline: Deadline | None = None) -
     images, last, last_img = [], None, None
     for f in frames:
         if deadline is not None:
-            deadline.check("encode")
+            deadline.check()  # keeps the running phase (drawing feeds this)
         if f is not last:
             last, last_img = f, Image.fromarray(f, "RGB").quantize(
                 colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
@@ -83,9 +81,10 @@ def find_ffmpeg(path: str | None = None) -> str | None:
     return shutil.which(os.environ.get("IEEVISUALIZER_FFMPEG", "ffmpeg"))
 
 
-def ffmpeg_version(exe: str) -> str:
+def ffmpeg_version(exe: str, timeout: float = 20) -> str:
     try:
-        out = subprocess.run([exe, "-version"], capture_output=True, text=True, timeout=20)
+        out = subprocess.run([exe, "-version"], capture_output=True, text=True,
+                             timeout=max(timeout, 1e-3))
     except (OSError, subprocess.SubprocessError) as e:
         return f"unknown ({type(e).__name__})"
     return (out.stdout.splitlines() or ["unknown"])[0]
@@ -100,70 +99,24 @@ def _has_x264(exe: str, timeout: float = 20) -> bool:
     return " libx264 " in out.stdout
 
 
-#: How long a stopped encode waits for the frame-writer thread after killing
-#: ffmpeg. A blocked pipe write ends at once; a frame being drawn finishes
-#: (the drawing checks the deadline before the next one) or, past this, is
-#: abandoned (a daemon thread: its write then fails on the closed pipe).
-STOP_JOIN_S = 2.0
-
-
 def encode_mp4(frames: Iterable[np.ndarray], fps: int, exe: str,
                deadline: Deadline | float = 300.0) -> bytes:
     """Frames are streamed to ffmpeg's stdin one at a time (never joined into
     one buffer); stderr goes to a file so a chatty ffmpeg cannot block.
-
-    ``deadline`` (a Deadline or seconds) bounds the whole encode: the encoder
-    probe, drawing the frames (a generator's frames are drawn while they are
-    encoded) and writing them. Frames are produced and written by a helper
-    thread (in a copy of the caller's context), because a write to a pipe
-    that ffmpeg does not read blocks without any timeout. When the deadline
-    passes, ffmpeg is killed and reaped, the helper is waited for at most
-    :data:`STOP_JOIN_S`, the temporary directory is removed and
-    ``render_deadline_exceeded`` is raised, its phase saying whether a frame
-    was still being drawn, ffmpeg had stopped reading, or ffmpeg had all
-    frames but did not finish. ffmpeg failing, or exiting 0 without writing
-    the file, is ``encoder_failed``."""
+    ``deadline`` (a Deadline or seconds) is checked before every frame (the
+    frames' own generator checks it while drawing) and bounds the encoder
+    probe and ffmpeg's finish; on expiry ffmpeg is killed and reaped, the
+    temporary directory removed and ``render_deadline_exceeded`` raised. A
+    write ffmpeg never reads would block: in a worker process
+    (``isolation="process"``) the kill bounds that, inline it is best effort.
+    ffmpeg failing, or exiting 0 without writing the file, is
+    ``encoder_failed``."""
     deadline = Deadline.of(deadline)
     it = iter(frames)
-    failed: list[BaseException] = []
-    state = {"phase": "frame", "index": 0}
-    first_box: list[np.ndarray] = []
-
-    def stopped(writer: threading.Thread | None, phase: str, k: int) -> AnimationError:
-        if phase == "frame":
-            why = (f"encode: frame {k} was still being drawn (frame generation is too slow; "
-                   "ffmpeg was waiting for input)"
-                   + ("; the drawing thread was abandoned" if writer is not None
-                      and writer.is_alive() else ""))
-        elif phase == "write":
-            why = f"encode: ffmpeg stopped reading input at frame {k}"
-        elif phase == "probe":
-            why = "encode: probing ffmpeg's encoders, before encoding started"
-        else:
-            why = "encode: ffmpeg received every frame but did not finish encoding"
-        deadline.phase = why
-        return deadline.exceeded()
-
-    def take_first() -> None:
-        try:
-            first_box.append(next(it))
-        except BaseException as e:  # noqa: BLE001 - re-raised in the caller
-            failed.append(e)
-
-    ctx = contextvars.copy_context()
-    getter = threading.Thread(target=ctx.run, args=(take_first,),
-                              name="ieeVisualizer-mp4-frame0", daemon=True)
-    getter.start()
-    getter.join(deadline.remaining())
-    if getter.is_alive():
-        raise stopped(getter, "frame", 0)
-    if failed:
-        raise failed[0]
-    first = first_box[0]
+    first = next(it)
     h, w = first.shape[:2]
     x264 = _has_x264(exe, min(20.0, deadline.remaining()))
-    if not deadline.remaining():
-        raise stopped(None, "probe", 0)
+    deadline.check()
     codec = ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-threads", "1"] \
         if x264 else ["-c:v", "mpeg4", "-q:v", "2"]
     with tempfile.TemporaryDirectory() as tmp:
@@ -176,47 +129,25 @@ def encode_mp4(frames: Iterable[np.ndarray], fps: int, exe: str,
         with open(os.path.join(tmp, "stderr.txt"), "w+b") as err:
             proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                     stderr=err)
-
-            def feed() -> None:
-                try:
-                    stream = itertools.chain([first], it)
-                    for k in itertools.count():
-                        state["phase"], state["index"] = "frame", k
-                        f = next(stream, None)
-                        if f is None:
-                            break
-                        data = np.ascontiguousarray(f).tobytes()
-                        state["phase"] = "write"
-                        try:
-                            proc.stdin.write(data)
-                        except (BrokenPipeError, ValueError):
-                            return  # ffmpeg exited (or was killed); its exit code says why
-                    state["phase"] = "done"
-                except BaseException as e:  # noqa: BLE001 - a frame failed; re-raised below
-                    failed.append(e)
-                finally:
-                    try:
-                        proc.stdin.close()
-                    except OSError:
-                        pass
-
-            writer = threading.Thread(target=contextvars.copy_context().run, args=(feed,),
-                                      name="ieeVisualizer-mp4-writer", daemon=True)
             try:
-                writer.start()
-                writer.join(deadline.remaining())
-                if writer.is_alive():
-                    raise subprocess.TimeoutExpired(cmd, deadline.seconds)
-                if failed:  # a frame failed or its deadline check fired: stop at once
-                    _stop(proc, writer)
-                    raise failed[0]
-                code = proc.wait(timeout=deadline.remaining())
+                for f in itertools.chain([first], it):
+                    deadline.check()
+                    try:
+                        proc.stdin.write(np.ascontiguousarray(f).tobytes())
+                        deadline.count("frames_encoded")
+                    except BrokenPipeError:
+                        break  # ffmpeg exited; its exit code says why
+                try:
+                    proc.stdin.close()
+                except BrokenPipeError:
+                    pass
+                deadline.phase = "encode: ffmpeg finishing"
+                code = proc.wait(timeout=max(deadline.remaining(), 1e-3))
             except subprocess.TimeoutExpired:
-                phase, k = state["phase"], state["index"]  # where it was at the deadline
-                _stop(proc, writer)
-                raise stopped(writer, phase, k) from None
+                _stop(proc)
+                raise deadline.exceeded() from None
             except BaseException:
-                _stop(proc, writer)
+                _stop(proc)
                 raise
             if code != 0 or not os.path.isfile(out) or not os.path.getsize(out):
                 err.seek(0)
@@ -228,10 +159,8 @@ def encode_mp4(frames: Iterable[np.ndarray], fps: int, exe: str,
             return fh.read()
 
 
-def _stop(proc: subprocess.Popen, writer: threading.Thread) -> None:
-    """Kill and reap ffmpeg; its closed pipe then ends a blocked write. A
-    frame still being drawn is not waited for beyond :data:`STOP_JOIN_S`."""
+def _stop(proc: subprocess.Popen) -> None:
+    """Kill and reap ffmpeg."""
     if proc.poll() is None:
         proc.kill()
     proc.wait()
-    writer.join(STOP_JOIN_S)

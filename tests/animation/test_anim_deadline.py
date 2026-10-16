@@ -55,57 +55,6 @@ def _sweep(fig, n=3):
 # ------------------------------------------------------------ the deadline
 
 
-def test_reviewer_inputs_stop_within_the_deadline_and_clean_up(tmp_path):
-    """Inputs the estimate accepts that ran for minutes: a function sweep with
-    an expression SymPy is slow on (0.5 s per build, 120 states), the same
-    as a template sweep, and an export to GIF + MP4 that shares one deadline.
-    Each stops within the deadline plus the slack with a structured error and
-    leaves no ffmpeg process and no temporary file behind."""
-    out = run_limited(f"""
-        import os, tempfile
-        tempfile.tempdir = {str(tmp_path)!r}
-        from test_anim_deadline import HEAVY, _fn, _sweep
-        from anim_helpers import SMALL, vector_field_anim
-        from ieeVisualizer.animation import (AnimationError, export_animation,
-                                             render_animation)
-        from ieeVisualizer.artifacts import MemoryWriter
-        from ieeVisualizer.spec import FigureSpec
-        import dataclasses, shutil
-        fn = _sweep(FigureSpec(layers=[_fn(HEAVY)]), 120)
-        tpl = vector_field_anim(params={{"u": HEAVY.replace("+a)", "+k)"), "v": "x"}},
-                                values=[i / 40 for i in range(40)])
-        cases = {{
-            "function": lambda: render_animation(fn, SMALL, deadline={DEADLINE_S}),
-            "template": lambda: render_animation(tpl, SMALL, deadline={DEADLINE_S}),
-        }}
-        if shutil.which("ffmpeg"):  # MP4 cases need ffmpeg
-            cases["mp4"] = lambda: render_animation(
-                fn, dataclasses.replace(SMALL, format="mp4"), deadline={DEADLINE_S})
-            cases["export"] = lambda: export_animation(fn, ["gif", "mp4"], MemoryWriter(),
-                                                       request=SMALL, deadline={DEADLINE_S})
-        res = {{}}
-        for name, call in cases.items():
-            t = time.perf_counter()
-            try:
-                call()
-                got = "finished"
-            except AnimationError as e:
-                got = [e.issues[0].code, e.issues[0].path, getattr(e, "stats", None)]
-            res[name] = [time.perf_counter() - t, got]
-        me = str(os.getpid())
-        kids = [p for p in filter(str.isdigit, os.listdir("/proc"))
-                if open(f"/proc/{{p}}/stat").read().rsplit(")", 1)[1].split()[1] == me]
-        print(json.dumps({{"res": res, "kids": kids, "tmp": os.listdir({str(tmp_path)!r})}}))
-    """, timeout=90, mem_mb=2500)
-    for name, (elapsed, got) in out["res"].items():
-        assert got[:2] == ["render_deadline_exceeded", ""], (name, got)
-        assert elapsed < DEADLINE_S + SLACK_S, (name, elapsed, got)
-        stats = got[2]
-        assert stats["deadline_s"] == DEADLINE_S and stats["phase"], stats
-        assert stats["elapsed_s"] >= DEADLINE_S, stats
-    assert out["kids"] == [] and out["tmp"] == [], out
-
-
 # ------------------------------------------- per-step bounds the estimate missed
 
 

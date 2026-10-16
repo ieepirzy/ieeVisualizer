@@ -26,7 +26,7 @@ from ..render.mpl import CAPABILITIES as FIGURE_CAPABILITIES
 from ..render.mpl import MatplotlibAdapter
 from ..render.mpl.adapter import _dedupe
 from ..render.mpl.function import expression_cache
-from ..spec import Axis, FigureSpec, FunctionMark, SpecValidationError
+from ..spec import REQUIRED_CHANNELS, Axis, FigureSpec, FunctionMark, SpecValidationError
 from .base import (
     AnimationCapabilities,
     AnimationError,
@@ -112,6 +112,13 @@ class MatplotlibAnimationAdapter:
             warnings = [RenderWarning(i.code, i.message, i.path) for i in fp.issues]
             _fix_colors(fp, anim, warnings, deadline)
             if anim.axis_limits == "fixed":
+                if index is not None:  # only rows some frame draws (not null-frame rows)
+                    from .frames import _subset
+
+                    ds = anim.timeline.dataset
+                    figure = dataclasses.replace(figure, datasets={
+                        **figure.datasets, ds: _subset(figure.datasets[ds],
+                                                       np.flatnonzero(index.row_key >= 0))})
                 self._fix_limits(fp, anim, figure, request, warnings, deadline)
         return fp, warnings
 
@@ -290,7 +297,12 @@ class _Drawn:
             return no_data_png(s.label, self.request, self.theme), [RenderWarning(
                 "frame_no_data", f"state {s.index} ({s.label}) has no data in any layer; drawn "
                 "as a 'no data' frame.", "/timeline")]
-        res = self.static.render(s.spec, self.request.frame_request())
+        try:
+            res = self.static.render(s.spec, self.request.frame_request())
+        except RecursionError:  # e.g. text the layout engine cannot nest that deep
+            raise AnimationError([issue("", "frame_not_drawable",
+                                        f"state {s.index} ({s.label}) could not be drawn: "
+                                        "its text or data nests too deeply.")]) from None
         for wn in res.warnings:
             self._per_state.setdefault((wn.code, wn.message, wn.path), []).append(s.index)
         return res.content, list(res.warnings)
@@ -370,8 +382,12 @@ def _fix_colors(fp: FramePlan, anim: AnimationSpec, warnings: list[RenderWarning
             fld = _continuous_color(s.spec, m)
             if fld is None or "color_range" in m.style:
                 continue
-            vals = [v for v in s.spec.datasets[m.data].columns[fld].values
-                    if isinstance(v, (int, float)) and math.isfinite(v)]
+            cols = s.spec.datasets[m.data].columns
+            need = [cols[m.encoding[ch].field].values for ch in REQUIRED_CHANNELS[m.type]
+                    if ch in m.encoding]  # a value is drawn only with all its positions
+            vals = [v for i, v in enumerate(cols[fld].values)
+                    if isinstance(v, (int, float)) and math.isfinite(v)
+                    and all(c[i] is not None for c in need)]
             if vals:
                 r = ranges.setdefault((m.type, m.data, fld), [min(vals), max(vals)])
                 r[0], r[1] = min(r[0], min(vals)), max(r[1], max(vals))
