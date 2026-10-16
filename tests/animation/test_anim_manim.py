@@ -6,7 +6,7 @@ import io
 
 import numpy as np
 import pytest
-from anim_helpers import gif_frames, sine_anim, vector_field_anim, weekly_anim
+from anim_helpers import gif_frames, png_pixels, sine_anim, vector_field_anim, weekly_anim
 
 from ieeVisualizer.animation import AnimationError, AnimationRequest
 from ieeVisualizer.animation.manim_adapter import CAPABILITIES, ManimAdapter, manim_available
@@ -95,9 +95,10 @@ def test_vector_field_arrows_share_one_length_scale_across_frames():
 def test_gif_result_reports_the_stored_delay_frame_mapping_and_poster():
     anim = sine_anim(fps=15, hold_start=1, hold_end=2)  # 8 states at 15 fps
     res = ManimAdapter().render(anim, AnimationRequest(format="gif", width=160, height=120,
-                                                       units="px", adapter="manim"))
-    _, delays = gif_frames(res.content)
-    assert res.frame_duration_ms == 70.0 and set(delays) == {70}
+                                                       units="px", dpi=50, adapter="manim"))
+    _, delays = gif_frames(res.content)  # Pillow merges the held frames, as for Matplotlib
+    assert res.frame_duration_ms == 70.0 and sum(delays) == 70 * res.frame_count
+    assert delays[0] == 140 and delays[-1] == 210 and set(delays[1:-1]) == {70}
     assert "frame_timing_rounded" in [w.code for w in res.warnings]
     assert res.frames == [0] + list(range(8)) + [7, 7] and res.frame_count == len(res.frames)
     assert res.poster_frame == len(res.frames) - 1 and res.poster_png[:4] == b"\x89PNG"
@@ -131,8 +132,11 @@ def test_export_records_the_manim_frame_as_poster_with_its_adapter(tmp_path):
     assert m["poster"]["adapter"]["name"] == "manim"
     assert m["poster"]["warnings"][0]["code"] == "poster_frame"
     poster = png_pixels(files["poster.png"])
-    frame = _video_frames(files["animation.mp4"])[2]
-    assert poster.shape == frame.shape and np.array_equal(poster, frame)
+    frames = _video_frames(files["animation.mp4"])
+    # the poster is the drawn frame; the MP4 holds it lossily (yuv420p): it is
+    # nearest to frame 2 of the clip
+    diffs = [np.abs(poster.astype(int) - f).mean() for f in frames]
+    assert poster.shape == frames[2].shape and int(np.argmin(diffs)) == 2 and diffs[2] < 3
 
 
 @needs_manim
@@ -141,7 +145,7 @@ def test_odd_request_size_is_kept_in_gif_and_poster():
     the GIF and poster are 161x121 as asked; the MP4 says it is padded."""
     from anim_helpers import png_pixels
 
-    odd = dict(width=161, height=121, units="px", adapter="manim")
+    odd = dict(width=161, height=121, units="px", dpi=50, adapter="manim")
     gif = ManimAdapter().render(sine_anim(poster=1), AnimationRequest(format="gif", **odd))
     frames, _ = gif_frames(gif.content)
     assert {f.shape for f in frames} == {(121, 161, 3)}
@@ -261,10 +265,11 @@ def test_theme_colours_are_used():
                 if t.background and int(t.background[1:3], 16) < 64)
     want = tuple(int(dark.background[i:i + 2], 16) for i in (1, 3, 5))
     res = ManimAdapter().render(sine_anim(), AnimationRequest(
-        format="gif", width=160, height=120, units="px", theme=dark.name))
+        format="gif", width=160, height=120, units="px", dpi=50, theme=dark.name))
     assert np.abs(png_pixels(res.poster_png)[2, 2].astype(int) - want).max() <= 3
     unknown = ManimAdapter().render(sine_anim(), AnimationRequest(
-        format="gif", width=160, height=120, units="px", theme="no-such-theme"))
+        format="gif", width=160, height=120, units="px", dpi=50,
+        theme="no-such-theme"))
     assert "unknown_theme" in [w.code for w in unknown.warnings]
 
 
@@ -285,7 +290,7 @@ def test_concurrent_renders_are_serialized_and_quiet(capfd):
                                                  values=[i / 10 for i in range(n)]))
         try:
             r = ManimAdapter().render(anim, AnimationRequest(format="gif", width=w, height=h,
-                                                             units="px"))
+                                                             units="px", dpi=50))
             out[name] = (Image.open(io.BytesIO(r.content)).size, r.frame_count)
         except Exception as e:  # noqa: BLE001 - recorded and asserted below
             out[name] = repr(e)
@@ -330,7 +335,8 @@ def test_manim_export_builds_no_template_state(monkeypatch):
 
     calls = []
     monkeypatch.setattr(F, "_build_template", lambda *a: calls.append(a))
-    req = AnimationRequest(format="mp4", width=160, height=120, units="px", adapter="manim")
+    req = AnimationRequest(format="mp4", width=160, height=120, units="px", dpi=50,
+                           adapter="manim")
     art = export_animation(vector_field_anim(), "mp4", MemoryWriter(), request=req)
     assert calls == [] and art.poster.adapter_name == "manim"
 
@@ -446,7 +452,7 @@ def _dark():
 NOT_VISUAL = {"animation": {"timeline", "figure", "id", "metadata", "schema_version"},
               "figure": {"layers", "datasets", "id", "metadata", "schema_version"},
               "legend": {"show"},  # one layer: no legend in either renderer
-              "function": {"type", "data", "encoding", "variables", "name", "parameters"}}
+              "function": {"type", "data", "encoding", "variables", "parameters"}}
 
 
 def _variants():
@@ -481,6 +487,7 @@ def _variants():
         "legend": {"position": fig(legend=Legend(position="upper-left")),
                    "title": fig(legend=Legend(title="L"))},
         "function": {"role": layer(role="reference"), "style": layer(style={"color": "red"}),
+                     "name": layer(name="signal"),
                      "expression": layer(expression="a*cos(x)"),
                      "domain": layer(domain={"x": [0.0, 3.0]}), "samples": layer(samples=20)},
     }
@@ -508,42 +515,225 @@ def _picture(res):
             res.frame_count, sorted(w.code for w in res.warnings))
 
 
+def _silent(adapter, spec_fields=True) -> list[str]:
+    """Fields set away from their default that are neither unmet nor change
+    the clip. Each variant is compared with its base rendered right before
+    it (renders are deterministic: test_renders_are_deterministic)."""
+    from ieeVisualizer.animation import AnimationSpec
+    from ieeVisualizer.spec import Axis, Legend
+    from ieeVisualizer.spec import FigureSpec as FS
+
+    silent = []
+    if spec_fields:
+        classes = {"animation": AnimationSpec, "figure": FS, "axis": Axis, "legend": Legend,
+                   "function": FunctionMark}
+        variants = _variants()
+        for kind, cls in classes.items():
+            fields = {f.name for f in dataclasses.fields(cls)}
+            assert fields == set(variants[kind]) | NOT_VISUAL.get(kind, set()), (kind, fields)
+        for kind, edits in variants.items():
+            for name, edit in edits.items():
+                anim = edit(_base())
+                if not adapter.unmet(anim, GIF) and _picture(adapter.render(anim, GIF)) == \
+                        _picture(adapter.render(_base(), GIF)):
+                    silent.append(f"{kind}.{name}")
+    for name, value in _vf_variants().items():
+        if name == "constants":  # the swept map: its key is replaced in every state
+            continue
+        anim = vector_field_anim(params={"scale": None, name: value})
+        if not adapter.unmet(anim, GIF) and _picture(adapter.render(anim, GIF)) == \
+                _picture(adapter.render(vector_field_anim(params={"scale": None}), GIF)):
+            silent.append(f"vector_field_2d.{name}")
+    return silent
+
+
 @needs_manim
 def test_every_field_set_is_drawn_or_reported_unmet():
     """Support is an allowlist: a field Manim does not draw is unmet, never
     silently ignored (a swept scale, normalize, captions, units and
     label_frames used to be dropped)."""
     from ieeVisualizer.animation import AnimationSpec, ParameterSweep, TemplateTarget
-    from ieeVisualizer.spec import Axis, Legend
-    from ieeVisualizer.spec import FigureSpec as FS
 
     adapter = ManimAdapter()
-    classes = {"animation": AnimationSpec, "figure": FS, "axis": Axis, "legend": Legend,
-               "function": FunctionMark}
-    variants = _variants()
-    for kind, cls in classes.items():
-        fields = {f.name for f in dataclasses.fields(cls)}
-        assert fields == set(variants[kind]) | NOT_VISUAL.get(kind, set()), (kind, fields)
-    silent = []
-    base = _picture(adapter.render(_base(), GIF))
-    for kind, edits in variants.items():
-        for name, edit in edits.items():
-            anim = edit(_base())
-            if not adapter.unmet(anim, GIF) and _picture(adapter.render(anim, GIF)) == base:
-                silent.append(f"{kind}.{name}")
-    vf = vector_field_anim(params={"scale": None})
-    vbase = _picture(adapter.render(vf, GIF))
-    for name, value in _vf_variants().items():
-        if name == "constants":  # the swept map: its key is replaced in every state
-            continue
-        anim = vector_field_anim(params={"scale": None, name: value})
-        if not adapter.unmet(anim, GIF) and _picture(adapter.render(anim, GIF)) == vbase:
-            silent.append(f"vector_field_2d.{name}")
+    assert _silent(adapter) == []
     swept = AnimationSpec(fps=4, timeline=ParameterSweep(parameter="grid", values=[3.0, 9.0],
                           target=TemplateTarget(name="vector_field_2d", version="1.0.0",
                                                 params={"u": "-y", "v": "x"})))
-    assert any("does not change what manim draws" in u for u in adapter.unmet(swept, GIF))
-    assert silent == []
+    assert "manim cannot sweep 'grid'" in adapter.unmet(swept, GIF)
+
+
+@needs_manim
+def test_the_field_check_catches_a_parameter_wrongly_allowlisted(monkeypatch):
+    """vector_unit is not drawn: allowlisting it must make the check fail
+    (it passed while inline renders differed from run to run)."""
+    from ieeVisualizer.animation import manim_adapter as MA
+
+    monkeypatch.setitem(MA.DRAWN, "vector_field_2d", MA.DRAWN["vector_field_2d"] | {"vector_unit"})
+    assert "vector_field_2d.vector_unit" in _silent(ManimAdapter(), spec_fields=False)
+
+
+@needs_manim
+@pytest.mark.parametrize("fmt", ["gif", "mp4"])
+def test_renders_are_deterministic(fmt):
+    """Inline renders in one process gave different frames (Manim's movie
+    encoder); frames are now drawn and encoded here."""
+    req = dataclasses.replace(GIF, format=fmt)
+    for anim in (vector_field_anim(params={"scale": None}), _base()):
+        got = [ManimAdapter().render(anim, req) for _ in range(8)]
+        assert len({r.poster_png for r in got}) == 1
+        if fmt == "gif":
+            assert len({r.content for r in got}) == 1
+        else:
+            first = _video_frames(got[0].content)
+            assert all(all(np.array_equal(a, b) for a, b in zip(first, _video_frames(r.content)))
+                       for r in got[1:])
+
+
+@needs_manim
+def test_frame_labels_are_the_state_labels():
+    """1.001 / 1.002 / 1.003 were all drawn as 'a = 1'."""
+    from ieeVisualizer.animation import ParameterSweep
+    from ieeVisualizer.animation.manim_adapter import _plan
+
+    anim = dataclasses.replace(_base(), timeline=ParameterSweep(parameter="a",
+                                                                values=[1.001, 1.002, 1.003]))
+    res = ManimAdapter().render(anim, GIF)
+    plot = _plan(anim, GIF)[0]
+    assert plot.titles == [s["label"] for s in res.states] == ["a = 1.001", "a = 1.002",
+                                                               "a = 1.003"]
+    frames, _ = gif_frames(res.content)
+    assert len(frames) == 3 and not np.array_equal(frames[0], frames[1])
+
+
+@needs_manim
+def test_default_axis_labels_follow_matplotlib():
+    from ieeVisualizer.animation.manim_adapter import _label, _plan
+    from ieeVisualizer.spec import Axis
+
+    anim = _base()
+    assert _plan(anim, GIF)[0].labels == ("x", "a*sin(x)")
+    anim.figure.layers[0].name = "signal"
+    anim.figure.axes = {"x": Axis(label="time (s)", unit="s")}
+    assert _plan(anim, GIF)[0].labels == ("time (s)", "signal")
+    assert _label("time", "s") == "time (s)" and _label(None, "s") == "(s)"
+
+
+@needs_manim
+def test_missing_values_are_reported_as_matplotlib_reports_them():
+    from ieeVisualizer.animation import ParameterSweep, render_animation
+
+    gap = _fm("sqrt(a - x**2)", (-3.0, 3.0), {}, 301)
+    gap = dataclasses.replace(gap, timeline=ParameterSweep(parameter="a", values=[1.0, 4.0]))
+    vf = vector_field_anim(params={"u": "1/x + k", "v": "sqrt(y)", "scale": None})
+    for anim, code in ((gap, "nonfinite_samples_omitted"), (vf, "null_values_omitted")):
+        want = [w for w in render_animation(anim, GIF).warnings if w.code == code]
+        got = [w for w in ManimAdapter().render(anim, GIF).warnings if w.code == code]
+        assert want and got == want
+
+
+def _boxes(anim, req):
+    """Per state: the bounding boxes of every text, the plot rectangle and
+    the marks, from the composed scene (nothing rendered)."""
+    import tempfile
+
+    import manim as M
+
+    from ieeVisualizer.animation import manim_adapter as MA
+
+    plot, _, theme, _ = MA._plan(anim, req)
+    out = []
+    with tempfile.TemporaryDirectory() as tmp, M.tempconfig(MA._config(req, theme, tmp)):
+        scene, set_state = MA._scene(plot, req, theme)
+        ax = next(m for m in scene.mobjects if isinstance(m, M.Axes))
+        (x0, y0), (x1, y1) = ax.c2p(plot.box[0], plot.box[2])[:2], ax.c2p(plot.box[1],
+                                                                            plot.box[3])[:2]
+        for k in range(len(plot.titles)):
+            set_state(k)
+
+            def box(m):
+                return (m.get_left()[0], m.get_right()[0], m.get_bottom()[1], m.get_top()[1])
+
+            texts = [box(m) for m in scene.mobjects if isinstance(m, M.Text)]
+            marks = [box(m) for m in scene.mobjects if not isinstance(m, (M.Text, M.Axes))
+                     and any(f.has_points() for f in m.get_family())]
+            out.append((texts, (x0, x1, y0, y1), marks,
+                        (M.config.frame_width, M.config.frame_height)))
+    return out
+
+
+def _overlap(a, b, eps=1e-6):
+    return a[0] < b[1] - eps and b[0] < a[1] - eps and a[2] < b[3] - eps and b[2] < a[3] - eps
+
+
+@needs_manim
+@pytest.mark.parametrize("size", [(560, 400), (300, 450), (400, 400), (320, 180)])
+@pytest.mark.parametrize("which", ["function", "vector_field"])
+def test_no_text_overlaps_another_or_the_plot_and_arrows_stay_inside(size, which):
+    """The caption overlapped the x title; edge arrows ran over the tick
+    labels, titles and frame label; portrait frames shrank text."""
+    from ieeVisualizer.spec import Axis
+
+    req = AnimationRequest(format="gif", width=size[0], height=size[1], units="px", dpi=100)
+    if which == "function":
+        anim = dataclasses.replace(_base(), title="Damping")
+        anim.figure.caption = "Source: model, not measured. " * 3
+        anim.figure.axes = {"x": Axis(label="time", unit="s"), "y": Axis(unit="mm")}
+    else:
+        anim = vector_field_anim(params={"title": "Spiral", "caption": "Model field",
+                                         "x_unit": "m", "y_unit": "m", "scale": 0.8,
+                                         "x_range": [-3.0, 3.0], "y_range": [-2.0, 2.0]})
+    for texts, plot, marks, (fw, fh) in _boxes(anim, req):
+        assert len(texts) >= 6  # title, caption, two axis titles, ticks
+        for i, a in enumerate(texts):
+            assert -fw / 2 <= a[0] and a[1] <= fw / 2 and -fh / 2 <= a[2] and a[3] <= fh / 2
+            assert not _overlap(a, plot), (a, plot)
+            assert not any(_overlap(a, b) for b in texts[i + 1:]), (a, texts)
+        for m in marks:
+            assert plot[0] - 1e-6 <= m[0] and m[1] <= plot[1] + 1e-6 and \
+                plot[2] - 1e-6 <= m[2] and m[3] <= plot[3] + 1e-6, (m, plot)
+
+
+@needs_manim
+def test_a_frame_too_small_for_its_text_is_refused():
+    req = AnimationRequest(format="gif", width=120, height=90, units="px", dpi=100)
+    with pytest.raises(AnimationError) as e:
+        ManimAdapter().render(_base(), req)
+    assert e.value.issues[0].code == "frame_too_small"
+
+
+@needs_manim
+def test_reference_arrows_are_translucent_and_observed_ones_are_drawn():
+    ref = ManimAdapter().render(vector_field_anim(params={"scale": None}), GIF)
+    obs = ManimAdapter().render(vector_field_anim(params={"scale": None, "role": "observed"}),
+                                GIF)
+    assert not ManimAdapter().unmet(vector_field_anim(params={"role": "observed"}), GIF)
+    # the same arrows, more ink when opaque
+    assert _ink(png_pixels(obs.poster_png)) >= _ink(png_pixels(ref.poster_png))
+    assert png_pixels(obs.poster_png).min() < png_pixels(ref.poster_png).min()
+
+
+def test_unmet_messages_name_what_is_missing(monkeypatch):
+    from ieeVisualizer.animation import (
+        AnimationSpec,
+        ParameterSweep,
+        TemplateTarget,
+        render_animation,
+    )
+    from ieeVisualizer.animation import manim_adapter as MA
+    from ieeVisualizer.render import CapabilityError
+
+    m = ManimAdapter()
+    ts = AnimationSpec(fps=2, timeline=ParameterSweep(parameter="target", values=[1.0, 2.0],
+                       target=TemplateTarget(name="timeseries", version="1.0.0")))
+    unmet = m.unmet(ts, GIF)
+    assert not any("expression mode" in u for u in unmet)
+    assert "manim cannot sweep 'target'" in unmet
+    assert any("axis_limits 'auto'" in u
+               for u in m.unmet(dataclasses.replace(_base(), axis_limits="auto"), GIF))
+    monkeypatch.setattr(MA, "manim_available", lambda: False)
+    with pytest.raises(CapabilityError) as e:  # not KeyError
+        render_animation(_base(), dataclasses.replace(GIF, adapter="manim"))
+    assert "manim cannot provide" in str(e.value) and "not installed" in str(e.value)
 
 
 @needs_manim

@@ -303,17 +303,17 @@ _DEFAULT: AnimationRegistry | None = None
 
 
 def default_animation_registry() -> AnimationRegistry:
-    """Matplotlib first; the Manim adapter only if ``import manim`` succeeds
-    (checked once, on first use; importing this package never imports manim)."""
+    """Matplotlib, then the Manim adapter (never selected automatically; when
+    named without manim installed, its unmet list says so, as a structured
+    ``no_capable_adapter``; registering it never imports manim)."""
     global _DEFAULT
     if _DEFAULT is None:
-        from .manim_adapter import ManimAdapter, manim_available
+        from .manim_adapter import ManimAdapter
         from .mpl import MatplotlibAnimationAdapter
 
         reg = AnimationRegistry()
         reg.register(MatplotlibAnimationAdapter())
-        if manim_available():
-            reg.register(ManimAdapter())
+        reg.register(ManimAdapter())
         _DEFAULT = reg
     return _DEFAULT
 

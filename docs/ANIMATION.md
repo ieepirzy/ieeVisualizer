@@ -267,22 +267,37 @@ the Matplotlib frames, so it is used only when named
   length scale for the whole clip, or (`normalize`) one length.
 
 **Support is an allowlist** (`manim_adapter.DRAWN`): any spec field or
-template parameter set away from its default that Manim does not draw, and
-any swept parameter that would not change the picture, is reported by
-`ManimAdapter().unmet(...)` and refused; `test_anim_manim.py` sets every
-field of every spec class and template parameter and requires each to be
-drawn or unmet. Drawn: title, caption, axis labels with units, the requested
-limits exactly, the frame label (`label_frames`), the theme's background,
-text and series colours, `color`/`linewidth` read by the Matplotlib style
-parser. Known visual differences: axes cross at the origin, only end values
-are tick-labelled, arrows are centred on their grid points.
+template parameter set away from its default that Manim does not draw, any
+parameter Manim cannot sweep and `axis_limits` other than `fixed` are
+reported by `ManimAdapter().unmet(...)` and refused; `test_anim_manim.py`
+sets every field of every spec class and template parameter and requires
+each to be drawn or unmet, and checks that allowlisting an undrawn parameter
+(`vector_unit`) makes that test fail. Drawn by Matplotlib's rules: the title
+(with exactly the state's label when `label_frames`), the wrapped caption,
+axis titles (x: the variable; y: the layer name or expression; `label
+(unit)` without repeating the unit), the requested limits exactly, the
+theme's background, text, series colours and reference alpha (a reference
+vector field is translucent), `color`/`linewidth` read by the Matplotlib
+style parser, and the same `nonfinite_samples_omitted` /
+`null_values_omitted` warnings.
+
+**Layout.** Text keeps its point size at the request's dpi, as in
+Matplotlib; every text has its own band (a test checks that no text
+bounding box intersects another or the plot, and that every arrow is inside
+the plot); the plot gets the rest. Arrow tails are on the grid points and
+the axes reach past the grid by the longest arrow. A frame that leaves less
+than 1.2 x 0.8 in for the plot is `frame_too_small` (use a larger size or a
+lower dpi). Known differences: axes cross at the origin, only end values are
+tick-labelled.
 
 The render runs in the deadline-killed worker by default; Manim's config is
 process-global, so inline renders are serialized behind `RENDER_LOCK`,
-acquired within the deadline. One `play()` covers every output frame; the
-clip is written as MP4 by Manim and decoded one frame at a time (GIF through
-the same Pillow encoder; odd sizes rendered one pixel larger and cropped
-back); the poster is the decoded poster frame.
+acquired within the deadline. Manim's camera draws each output frame (a
+held state once), streamed into the Matplotlib adapter's encoders (Pillow
+GIF, ffmpeg MP4; MP4 therefore needs ffmpeg). Manim never writes a movie:
+its threaded encoder gave different frames for the same spec in one
+process, and the lossy round trip blurred GIFs and posters; the poster is
+the drawn frame.
 
 ## Decisions and gaps
 
