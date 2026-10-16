@@ -33,6 +33,7 @@ import numpy as np
 
 from ...spec import Column, DataSnapshot, FigureSpec, FunctionMark, HistogramMark
 from ...spec._common import ptr
+from ...spec.data import finite_plain_floats
 from ..base import RenderError, RenderWarning, issue
 
 AXES = ("x", "y", "z")
@@ -117,6 +118,9 @@ def numbers(col: Column, path: str) -> np.ma.MaskedArray:
     if col.dtype not in (None, "float", "int", "bool"):
         raise RenderError([issue(path, "unsupported_dtype",
                                  f"this channel needs numbers but the column is {col.dtype}.")])
+    if finite_plain_floats(col.values):  # finite floats / None: nothing to refuse
+        vals = np.array(col.values, dtype=float)  # None -> nan
+        return np.ma.masked_array(vals, mask=np.isnan(vals))
     vals = np.full(len(col.values), np.nan)
     for i, v in enumerate(col.values):
         if v is not None:

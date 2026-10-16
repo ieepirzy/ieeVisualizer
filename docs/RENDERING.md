@@ -243,10 +243,39 @@ renders and stores it with a manifest, so the figure can be re-rendered
 from `spec.json` without the original callable.
 
 Not carried over (no spec 1.0 equivalent): streamlines, the equal aspect of
-2D fields, per-arrow magnitude colours in 3D (lengths match, colour is
-uniform), and the `ax=`/`style=`/`show=` drawing options. For those reasons
-`visualize()` and `visualize_vf()` still draw directly with Matplotlib; the
-tests check that both routes draw the same data.
+2D fields, and the `ax=`/`style=`/`show=` drawing options. Vector fields are
+coloured by `magnitude` in 2D and 3D (a 3D quiver's `color` channel colours
+each arrow and adds a colourbar).
+
+`visualize()` and `visualize_vf()` build exactly that spec (same spec hash)
+from one sampling pass and draw it with
+`MatplotlibAdapter.draw_into(spec, ax, role_styling=False)`:
+
+- `draw_into` draws into an existing axes under the caller's rcParams (no
+  `render_context`, so not byte-reproducible; the spec's theme still supplies
+  colour maps and locale). The adapter's `max_points` limit, which guards the
+  export path, is not applied. Drawn into a caller's axes, a 2D quiver without
+  an explicit `scale` uses matplotlib's own arrow autoscaling and no quiver
+  widens the axes limits to its arrow tips, as `ax.quiver` would draw.
+- `role_styling=False` draws the `reference` layer as these calls always drew
+  it: opaque, a curve unlabelled and in the axes' own property cycle (so
+  overlaid curves on one `ax=` get distinct colours). The role stays in the
+  spec. Only line, function and quiver layers support it.
+- Render warnings are re-issued as `RuntimeWarning` (except
+  `null_values_omitted`, already reported by sampling).
+- Still drawn directly: streamlines and the equal aspect of 2D fields (on top
+  of the adapter-drawn quiver), and anything drawn into a non-rectilinear 2D
+  axes such as `projection="polar"` (spec polar has its own angle
+  convention; the legacy calls plot raw pairs).
+
+Differences from the earlier direct drawing: 3D vector fields get a magnitude
+colourbar (padded so the z label stays visible), and a finite point between
+two gaps in a 2D curve is drawn as a marker instead of being invisible.
+
+A 2D quiver keeps a row whose component or colour is null as a masked arrow
+(`Quiver.Umask`), so the grid stays complete; only a null position drops a
+row. 3D quivers drop any row with a null. A 3D quiver's `color` channel
+colours each arrow and adds a colourbar.
 
 ## Artifacts
 

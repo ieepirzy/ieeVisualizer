@@ -89,6 +89,7 @@ from .data import (
     DatasetRef,
     DataSnapshot,
     Provenance,
+    finite_plain_floats,
     normalize_values,
 )
 from .figure import (
@@ -364,6 +365,8 @@ def _column_types_ok(c: _Ctx, cp: str, col: Any, cls: type) -> bool:
         items = list(values)
     except Exception:  # noqa: BLE001 - an iterable that fails to iterate is a bad type
         return _bad_type(c, cp + "/values", "values", "an array", values)
+    if dtype == "float" and finite_plain_floats(items):
+        return True  # finite floats / None in a float column: nothing to refuse
     for i, v in enumerate(items):
         if is_number(v) and _beyond_float64(v):
             c.add(f"{cp}/values/{i}", "number_out_of_range",
