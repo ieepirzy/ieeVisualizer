@@ -16,6 +16,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from cost import within
 
 from ieeVisualizer.render import RenderError
 from ieeVisualizer.spec import (
@@ -135,9 +136,9 @@ def test_largest_header_table_renders_quickly():
         assert not [i for i in validate_view(v) if i.severity == "error"]
         with measure() as c:
             render_view(v, "svg"); render_view(v, "html")
-        print(c.seconds)
+        print(c.seconds, c.wall)
     """, timeout=120)
-    assert float(out) < 5
+    assert within(5, *map(float, out.split()))
 
 
 AUDIT = Path(__file__).resolve().parent / "string_field_audit.py"
@@ -165,10 +166,12 @@ def test_every_string_field_is_budgeted_and_renders_in_bounded_time():
     assert total >= 27 and len(rows) == 2 * total, rows
     for name, shape, count, *times in rows:
         assert int(count) >= 1, (name, shape)
-        secs = [float(t.replace("refused ", "")) for t in times]
+        # reference seconds/wall seconds per format (string_field_audit.py)
+        secs = [tuple(map(float, t.replace("refused ", "").split("/"))) for t in times]
         # matplotlib draws ~100 us per glyph, so a PNG of the whole text
         # budget takes several seconds; SVG and HTML stay well under that
-        assert max(secs[:2]) < 10 and (len(secs) == 2 or secs[2] < 30), (name, shape, times)
+        budgets = [10, 10, 30][:len(secs)]
+        assert all(within(b, s, w) for b, (s, w) in zip(budgets, secs)), (name, shape, times)
 
 
 # --------------------------------------------------------------------------
