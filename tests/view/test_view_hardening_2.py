@@ -59,7 +59,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def run_py(code: str, timeout: float) -> str:
     """Run ``code`` in a fresh interpreter (this checkout first on the path)."""
     e = dict(os.environ, MPLBACKEND="Agg")
-    e["PYTHONPATH"] = str(ROOT) + os.pathsep + e.get("PYTHONPATH", "")
+    # tests/ for cost.py: the slow-path budgets are in its reference seconds
+    e["PYTHONPATH"] = os.pathsep.join([str(ROOT), str(ROOT / "tests"), e.get("PYTHONPATH", "")])
     r = subprocess.run([sys.executable, "-c", textwrap.dedent(code)], capture_output=True,
                        text=True, timeout=timeout, env=e, cwd=str(ROOT))
     assert r.returncode == 0, r.stderr
@@ -124,7 +125,7 @@ def test_view_title_and_kpi_units_count_in_the_text_budget():
 
 def test_largest_header_table_renders_quickly():
     out = run_py(f"""
-        import time
+        from cost import measure
         from ieeVisualizer.spec import DataSnapshot
         from ieeVisualizer.view import Stack, Table, ViewSpec, render_view, validate_view
         n = {L.MAX_TOTAL_TEXT_CHARS // (L.MAX_TEXT_CHARS + 2)}
@@ -132,8 +133,9 @@ def test_largest_header_table_renders_quickly():
                                        units={{f"c{{i}}": "u" * 10000 for i in range(n)}})
         v = ViewSpec(root=Stack([Table(data="d", max_rows=0)]), datasets={{"d": ds}})
         assert not [i for i in validate_view(v) if i.severity == "error"]
-        t = time.time(); render_view(v, "svg"); render_view(v, "html")
-        print(round(time.time() - t, 2))
+        with measure() as c:
+            render_view(v, "svg"); render_view(v, "html")
+        print(c.seconds)
     """, timeout=120)
     assert float(out) < 5
 
@@ -148,7 +150,8 @@ def test_every_string_field_is_budgeted_and_renders_in_bounded_time():
     view_too_large, in bounded time (before: 57 s for table units, and
     unbounded with ``max_rows`` 0). Two parts run side by side."""
     env = dict(os.environ, MPLBACKEND="Agg")
-    env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = os.pathsep.join([str(ROOT), str(ROOT / "tests"),
+                                         env.get("PYTHONPATH", "")])
     procs = [subprocess.Popen([sys.executable, str(AUDIT), f"{i}/2"], stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True, env=env, cwd=str(ROOT))
              for i in range(2)]
