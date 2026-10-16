@@ -134,6 +134,43 @@ def fit_title(ctx: Any) -> None:
                             title.get_fontweight() == "bold"))
 
 
+def refit_title_on_layout(ctx: Any) -> None:
+    """Profile renders: after every layout (value labels, legends and
+    constrained layout move the axes, and the title is centred over them),
+    re-wrap a title that runs past the image edge to the room it has there
+    and lay out once more. :func:`fit_title` before layout measures a
+    position the axes have not reached yet."""
+    if ctx.three_d:
+        return
+    engine = ctx.fig.get_layout_engine()
+    if engine is None:
+        return
+    inner, title = engine.execute, ctx.ax.title
+    original = " ".join(title.get_text().split("\n"))
+
+    def execute(figure: Any) -> Any:
+        out = inner(figure)
+        for _ in range(2):
+            if not original or not _title_off_edge(title, figure):
+                break
+            box = title.get_window_extent()
+            centre = (box.x0 + box.x1) / 2
+            room = 2 * min(centre, figure.bbox.width - centre) - 8
+            if room * 72.0 / figure.dpi < 4 * title.get_fontsize():
+                break  # no room to wrap into: the audit reports it clipped
+            title.set_text(wrap(original, title.get_fontsize(), room * 72.0 / figure.dpi,
+                                title.get_fontweight() == "bold"))
+            out = inner(figure)
+        return out
+
+    engine.execute = execute
+
+
+def _title_off_edge(title: Any, fig: Any) -> bool:
+    box = title.get_window_extent()
+    return box.x0 < -OVERLAP_TOLERANCE_PX or box.x1 > fig.bbox.width + OVERLAP_TOLERANCE_PX
+
+
 def wrap_annotations(ctx: Any, texts: list[Any]) -> None:
     """Wrap text annotations that would run past the right edge of the image
     onto more lines at their place (their anchor and words stay)."""

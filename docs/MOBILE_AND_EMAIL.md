@@ -116,7 +116,9 @@ renders without a profile are unchanged, byte for byte.
   value labels shrink no further than it (they are left out with the
   existing `value_labels_omitted` warning instead);
 - the title and axis labels are wrapped to the figure, a title centred over
-  the axes is re-wrapped if it still runs off the image, and text
+  the axes is re-wrapped if it still runs off the image (again after every
+  layout pass, since value labels, legends and constrained layout move the
+  axes it is centred over), and text
   annotations that would run past the right edge wrap at their place, but
   only into a column at least 8 em wide (a narrower one would stack the
   words and squeeze the plot; the text is then left whole and reported as
@@ -159,9 +161,12 @@ profile wraps long names at spaces until one column fits under the plot,
 then takes as many columns as fit. Views and emails lay a figure out at the
 height its render will take (`FigureRenderer.fitted_height`).
 
-**Row notes** (a funnel's rate column): a template lists the text
-annotations whose x is only a layout position, not data
-(`metadata["template"]["row_notes"]`). When one lies over a value label or
+**Row notes** (a funnel's rate column): a template records the text
+annotations whose x is only a layout position, not data, by content
+(`metadata["template"]["row_notes"]`: text, x and row of each); at render
+time an annotation is a row note only if its text, x and row are exactly a
+recorded note's, so a caller's own annotation, wherever it sits in the
+list, is never moved. When one lies over a value label or
 past the plot's right edge, every row note moves under its own row's value
 label, wrapped to the room left, and the plot grows until each row holds
 both. Words and rows stay. Any other annotation keeps its data position; if
@@ -183,10 +188,28 @@ whose message says why it stopped (height limit, top-down layout, rounds)
 and what to do (wider profile, fewer nodes, the text outline).
 
 **A node label belongs to its node** (every network render, profile or
-not): a place is taken only if the label box is at least 3 pt nearer its own
-node's centre than the rim of any other node. A label with free places but
-no such one is drawn at the first free place with a gating
-`label_ambiguous` warning naming the node.
+not): a place is taken only if the gap between the label box and its own
+node's rim is at least 3 pt smaller than the gap to every other node's rim
+(rim to rim, so a large node is judged like a small one). A label with free
+places but no such one is drawn whole at the first free place with a gating
+`label_ambiguous` warning naming the node; a whole ambiguous label is
+preferred to a shortened one. Without a profile, when looking for clear
+places would shorten or drop more labels than main's rule (the first free
+place), main's placement is kept and its unclear labels are flagged.
+**Renders without a profile change** where main's first free place for a
+label was not clearly its node's: the `org_chart` example (three labels move
+below their nodes) and 4 of 60 seeded random networks in the review sweep;
+the `network` and `dependency_map` examples keep main's bytes (recorded in
+`tests/render/data/main_render_hashes.json`).
+
+**Org charts are effectively not sendable on a phone.** A top-down tree is
+crowded across and the width is fixed. In a seeded sweep of 40 org charts
+with 10-25 nodes, the gate refuses 39 at `email-phone`, 35 at
+`email-tablet` and 16 at `desktop` (the template's own 9-node example
+passes everywhere). In a phone email, send
+the chart as a list or table instead - the network's text outline
+(`network_outline`) or a `Table` of unit, parent and headcount - and keep the
+figure for tablet or desktop renders. A phone layout for trees is issue #30.
 
 **Flows** on a profile: after the top-to-bottom fallback, node boxes narrow
 step by step (labels wrap at spaces onto more lines, never narrower than the
@@ -461,12 +484,18 @@ views as phone and tablet PNG and both emails pass the gate.
 `tests/render/test_mobile_gate.py` checks, for every template example at
 every profile (desktop included), that the gate passes and that every text
 of the desktop render is in the profile render with the same words in the
-same order and the same anchor - node (as a reader attributes it), bar,
-legend entry, category tick, annotation data position or row
-(`tests/render/anchored.py`) - and nothing else; for both gallery views that
+same order and the same anchor, measured from the drawing
+(`tests/render/anchored.py`): the node a reader model attributes a label to
+(nearest centre to the label box, independent of the renderer's rule), the
+bar a value label is drawn on, the swatch colour beside a legend text, the
+category tick, and an annotation's data anchor if its text is drawn there
+(or the row a row note sits in) - and nothing else; a test shows that
+swapping two value labels, two legend swatches or shifting a note through
+its offset is told apart; for both gallery views that
 the gate passes and no word of the desktop render is missing; and, for the
-templates and 30 seeded random networks with and without a profile, that
-every node label is clearly its own node's or reported `label_ambiguous`.
+templates and 30 seeded random networks (default request, 1920 px without a
+profile and every profile), that every node label is clearly its own node's
+by that reader model or reported `label_ambiguous`.
 
 ## Follow-ups
 

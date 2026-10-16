@@ -162,8 +162,9 @@ class FunnelTemplate(ComponentTemplate):
             },
             "label_locale": loc.tag,
             # the rate texts' x is a column position, not data: a profile
-            # render may move them under their own row's value label
-            "row_notes": list(range(len(spec.annotations))),
+            # render may move these exact notes (text, x and row must all
+            # match) under their own row's value label
+            "row_notes": [{"text": a.text, "x": a.x, "y": a.y} for a in spec.annotations],
         }
         return spec
 

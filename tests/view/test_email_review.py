@@ -298,3 +298,41 @@ def test_room_is_the_true_content_width_of_the_narrowest_screen():
 def test_a_tz_aware_updated_at_column_in_a_grid_card_is_not_refused():
     """Measured margin (6 %), not 20 %: this fits every tested font at 320 px."""
     check_legible(render_email(_updated_at(1, True)))
+
+
+@pytest.mark.parametrize("aspect", [None, 0.42, 0.6, 1.0])
+def test_bar_comparison_alone_in_a_phone_email_passes_the_gate(aspect):
+    """Its centred title used to be measured before the value labels and
+    constrained layout moved the axes, and ran off the image."""
+    from ieeVisualizer import templates
+
+    t = templates.get("bar_comparison")
+    kw = {} if aspect is None else {"aspect": aspect}
+    view = ViewSpec(title="Weekly", figures={"f": t.build_payload(t.example())},
+                    root=Stack([FigureComponent(figure="f", **kw)]))
+    check_legible(render_email(view, "email-phone"))
+
+
+def test_a_realistic_finnish_briefing_email_passes_the_gate():
+    from ieeVisualizer import templates
+    from ieeVisualizer.view import Note
+
+    figs = {n: templates.get(n).build_payload(templates.get(n).example())
+            for n in ("funnel", "bar_comparison")}
+    snap = DataSnapshot.from_columns({
+        "Toimipiste": ["Helsinki", "Tampere", "Turku", "Oulu"],
+        "Muutot (kpl)": [128, 64, 41, None],
+        "Liikevaihto (EUR)": [182340.5, 90210.0, 55012.25, None],
+        "Huomio": ["Kaksi autoa huollossa viikolla 41", "Normaali",
+                   "Uusi asiakasvastaava aloitti", "Ei tietoa"]})
+    view = ViewSpec(title="Viikkokatsaus — viikko 42", figures=figs, datasets={"t": snap},
+                    root=Stack([
+                        Text("Tilaukset kasvoivat. Oulun luvut puuttuvat lähteestä."),
+                        Grid([Kpi("Muutot", 233, unit="kpl", source="t", dataset="t"),
+                              Kpi("Kustannus/muutto", None, unit="EUR", source="ei kytketty")],
+                             columns=2),
+                        FigureComponent(figure="funnel", aspect=0.6),
+                        FigureComponent(figure="bar_comparison", aspect=0.6),
+                        Table("t", title="Toimipisteet"),
+                        Note("Oulu: ei toimitettu, ei nolla.")]))
+    check_legible(render_email(view, "email-phone"))

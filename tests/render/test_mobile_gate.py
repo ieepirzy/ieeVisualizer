@@ -77,19 +77,21 @@ def test_a_callers_annotation_keeps_its_data_position(profile):
     assert note.xy[0] == 20000.0
 
 
-def _random_network(rnd, trial):
+def _random_network(rnd, trial, sizes=False):
     from ieeVisualizer.network import Edge, NetworkSpec, Node
-    from ieeVisualizer.network.model import Layout
+    from ieeVisualizer.network.model import Layout, Quantity
 
     words = ["Chief", "executive", "Operations", "Finance", "Accounting", "Business", "sales",
              "Consumer", "Fleet", "Field", "teams", "Support", "Logistics", "Warehouse", "North"]
     n = rnd.randint(4, 22)
-    nodes = [Node(id=f"n{i}", label=" ".join(rnd.choice(words) for _ in range(rnd.randint(1, 3))))
+    nodes = [Node(id=f"n{i}", label=" ".join(rnd.choice(words) for _ in range(rnd.randint(1, 3))),
+                  size=rnd.choice([1, 5, 50, 400, 1000]) if sizes else None)
              for i in range(n)]
     edges = [Edge(source=f"n{rnd.randrange(i)}", target=f"n{i}") for i in range(1, n)]
     layout = Layout(algorithm=rnd.choice(["force", "circular", "layered"]),
                     direction=rnd.choice(["TB", "LR"]), seed=trial)
-    return NetworkSpec(nodes=nodes, edges=edges, layout=layout, title="T")
+    size = Quantity("Size", "units") if sizes else None
+    return NetworkSpec(nodes=nodes, edges=edges, layout=layout, title="T", node_size=size)
 
 
 def _network_cases():
@@ -101,7 +103,8 @@ def _network_cases():
     return cases + [(f"random {k}", _random_network(rnd, k)) for k in range(30)]
 
 
-@pytest.mark.parametrize("request_name", ["no profile", "email-phone", "email-tablet", "desktop"])
+@pytest.mark.parametrize("request_name", ["default request", "no profile", "email-phone",
+                                          "email-tablet", "desktop"])
 def test_every_node_label_is_clearly_its_own_nodes_or_said_not_to_be(request_name):
     """A drawn node label is nearer its own node than any other (by a
     margin), or the render says it is not (``label_ambiguous``, gating) -
@@ -111,19 +114,17 @@ def test_every_node_label_is_clearly_its_own_nodes_or_said_not_to_be(request_nam
 
     from ieeVisualizer.network.render import build_network
 
-    req = DESKTOP if request_name == "no profile" else \
-        get_profile(request_name).figure_request("png")
+    req = {"default request": RenderRequest(), "no profile": DESKTOP}.get(request_name) \
+        or get_profile(request_name).figure_request("png")
     silent = []
     for name, spec in _network_cases():
         built = build_network(spec, req)
         fig, ax = built.figure, built.axes
         renderer = fig.canvas.get_renderer()
         centres = ax.transData.transform(built.node_xy)
-        radii = [(a ** 0.5) / 2 * fig.dpi / 72.0 for a in built.node_areas]
         flagged = set(built.ambiguous_labels)
         for i, t in built.labels.items():
-            who = owner(i, t.get_window_extent(renderer), centres, radii,
-                        MARGIN_PX * fig.dpi / 192.0)
+            who = owner(t.get_window_extent(renderer), centres, MARGIN_PX * fig.dpi / 192.0)
             if who != i and i not in flagged:
                 silent.append((name, spec.nodes[i].display_label, who))
         if flagged:
@@ -339,3 +340,82 @@ def test_a_network_too_big_for_the_phone_is_refused_with_the_real_reason():
     msgs = [w.message for w in left_right.warnings
             if w.code in ("labels_skipped", "labels_abbreviated", "label_ambiguous")]
     assert msgs and all("grown to" in m and "too big for this screen" in m for m in msgs)
+
+
+def _swap_value_labels(built):
+    a, b = built.context.value_labels[0].text, built.context.value_labels[2].text
+    a.xy, b.xy = b.xy, a.xy
+
+
+def _swap_legend_swatches(built):
+    legend = built.axes.get_legend()
+    h = getattr(legend, "legend_handles", None) or legend.legendHandles
+    ca, cb = h[0].get_facecolor(), h[1].get_facecolor()
+    h[0].set_facecolor(cb)
+    h[1].set_facecolor(ca)
+
+
+def _shift_annotation(built):
+    note = next(a for a in built.annotation_artists if "Budget" in a.get_text())
+    note.xyann = (note.xyann[0] - 300, note.xyann[1])
+
+
+@pytest.mark.parametrize(("name", "mutate"), [
+    ("bar_comparison", _swap_value_labels),     # two bars' labels drawn on each other's bar
+    ("bar_comparison", _swap_legend_swatches),  # legend texts beside the other colour
+    ("funnel+note", _shift_annotation),         # a note drawn away from its data anchor
+])
+def test_the_anchor_comparison_tells_a_wrong_drawing_apart(name, mutate):
+    """tests/render/anchored.py measures anchors from the drawing: each of
+    these drawing errors changes what it reads."""
+    spec = _funnel_with_a_note() if name == "funnel+note" else example(name)
+    assert anchored(spec, DESKTOP, mutate) != anchored(spec, DESKTOP)
+
+
+def test_attribution_is_rim_to_rim_so_a_large_node_is_judged_like_a_small_one():
+    from matplotlib.transforms import Bbox
+
+    from ieeVisualizer.network.render import _attributable
+
+    label = Bbox.from_extents(100, 0, 140, 10)
+    pts = [(60.0, 5.0), (158.0, 5.0)]  # own node: radius 30, rim 10 px away; other: rim 16 px
+    assert _attributable(0, label, pts, [30.0, 2.0], 1.0)
+    assert not _attributable(1, label, pts, [30.0, 2.0], 1.0)
+
+
+@pytest.mark.parametrize("request_name", ["default request", "no profile"])
+def test_without_a_profile_no_label_main_drew_whole_is_shortened_or_dropped(monkeypatch,
+                                                                           request_name):
+    """Main's rule takes a label's first free place. Looking for a clearer
+    place must not cost a label its whole text: a label main's rule draws
+    whole is drawn whole (perhaps flagged label_ambiguous)."""
+    import random
+
+    import ieeVisualizer.network.render as net
+
+    req = {"default request": RenderRequest(), "no profile": DESKTOP}[request_name]
+    rnd = random.Random(3)
+    specs = [_random_network(rnd, k, sizes=k % 2 == 0) for k in range(30)]
+    worse = []
+    for k, spec in enumerate(specs):
+        built = net.build_network(spec, req)
+        with monkeypatch.context() as m:
+            m.setattr(net, "_attributable", lambda *a: True)  # main's rule
+            mains = net.build_network(spec, req)
+        whole = set(mains.labels) - set(mains.abbreviated_labels)
+        lost = whole & (set(built.abbreviated_labels) | set(built.skipped_labels))
+        if lost:
+            worse.append((k, sorted(spec.nodes[i].display_label for i in lost)))
+    assert worse == []
+
+
+def test_a_callers_annotation_listed_first_is_not_taken_for_a_row_note():
+    """Row notes are recognised by content, not by position in the list."""
+    spec = example("funnel")
+    spec.annotations.insert(0, TextAnnotation(text="Budget cap here", x=20000.0,
+                                              y="Visited site"))
+    built = build_figure(spec, PHONE.figure_request("png"))
+    notes = {a.get_text().replace("\n", " "): a.xy for a in built.annotation_artists}
+    assert notes["Budget cap here"][0] == 20000.0
+    moved = [xy for text, xy in notes.items() if text.endswith("of previous")]
+    assert len(moved) == 3 and all(xy[0] < 20000.0 * 0.7 for xy in moved)  # at their bars

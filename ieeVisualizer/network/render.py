@@ -446,7 +446,7 @@ def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]
     prio = sorted(range(len(spec.nodes)),
                   key=lambda i: (-deg[i], -(spec.nodes[i].size or 0.0), i))
 
-    def place(order: list[int]) -> None:
+    def place(order: list[int], seek: bool = True) -> None:
         built.labels, built.abbreviated_labels = {}, []
         built.skipped_labels, built.ambiguous_labels = [], []
         placed: list[Any] = []
@@ -483,7 +483,11 @@ def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]
             if frame is None:  # main's order: each text at every place in turn
                 tries = [(c, sp) for c in whole + short for sp in spots]
             fallback = None  # the first free place, if no place is clearly this node's
-            for text, (off, ha, va, inside) in tries:
+            n_whole = sum(1 for c, _ in tries if c in whole)
+            t = None
+            for k, (text, (off, ha, va, inside)) in enumerate(tries):
+                if k >= n_whole and fallback is not None:
+                    break  # the whole label, said to be ambiguous, before a shortened one
                 t = ax.annotate(text, xy=tuple(built.node_xy[i]), xytext=off,
                                 textcoords="offset points", ha=ha, va=va,
                                 fontsize=fontsize, color="0.15", zorder=4,
@@ -497,11 +501,15 @@ def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]
                 if not clash and _attributable(i, bb, pts, radius_pt, px):
                     fallback = None
                     break
+                if not clash and not seek:  # main's rule: the first free place
+                    fallback = None
+                    built.ambiguous_labels.append(i)
+                    break
                 if not clash and fallback is None:
                     fallback = (text, off, ha, va)
                 t.remove()
-            else:
                 t = None
+            if t is None:
                 if fallback is not None:  # drawn, but said to be ambiguous
                     text, off, ha, va = fallback
                     t = ax.annotate(text, xy=tuple(built.node_xy[i]), xytext=off,
@@ -520,6 +528,18 @@ def _place_labels(spec: NetworkSpec, built: BuiltNetwork, radius_pt: list[float]
                 built.abbreviated_labels.append(i)
 
     place(prio)
+    if frame is None and (built.skipped_labels or built.abbreviated_labels):
+        # without a profile: if looking for a clear place shortens or drops
+        # more labels than taking the first free one (main's rule), take
+        # the first free ones, whole, and say which are ambiguous
+        lost = len(built.skipped_labels) + len(built.abbreviated_labels)
+        for t in built.labels.values():
+            t.remove()
+        place(prio, seek=False)
+        if len(built.skipped_labels) + len(built.abbreviated_labels) >= lost:
+            for t in built.labels.values():
+                t.remove()
+            place(prio)
     for _ in range(2 if frame is not None else 0):
         # profile renders: the labels that found no clear place go first
         failed = built.skipped_labels + built.ambiguous_labels + built.abbreviated_labels
@@ -559,16 +579,18 @@ ATTRIBUTION_MARGIN_PT = 3.0
 
 
 def _attributable(i: int, bb: Any, pts: Any, radius_pt: list[float], px: float) -> bool:
-    """Is label box ``bb`` clearly node ``i``'s: its nearest point to node
-    ``i``'s centre is :data:`ATTRIBUTION_MARGIN_PT` nearer than to the rim of
-    every other node?"""
-    def dist(x: float, y: float) -> float:
+    """Is label box ``bb`` clearly node ``i``'s: is the gap between the box
+    and node ``i``'s rim at least :data:`ATTRIBUTION_MARGIN_PT` smaller than
+    the gap to every other node's rim (rim to rim, so a large node is judged
+    like a small one)?"""
+    def gap(j: int) -> float:
+        x, y = pts[j]
         dx = max(bb.x0 - x, 0.0, x - bb.x1)
         dy = max(bb.y0 - y, 0.0, y - bb.y1)
-        return (dx * dx + dy * dy) ** 0.5
+        return max((dx * dx + dy * dy) ** 0.5 - radius_pt[j] * px, 0.0)
 
-    own = dist(*pts[i]) + ATTRIBUTION_MARGIN_PT * px
-    return all(dist(*p) - radius_pt[j] * px > own for j, p in enumerate(pts) if j != i)
+    own = gap(i) + ATTRIBUTION_MARGIN_PT * px
+    return all(gap(j) > own for j in range(len(pts)) if j != i)
 
 
 def render_network(spec: NetworkSpec, request: RenderRequest | None = None) -> RenderResult:

@@ -394,15 +394,35 @@ class MatplotlibAdapter:
             # only text whose x is a layout position, not data: a template
             # says which (the funnel's rate column); a caller's annotation
             # keeps its data position and the audit reports a collision
-            meta = spec.metadata.get("template") if isinstance(spec.metadata, dict) else None
-            movable = set(meta.get("row_notes") or ()) if isinstance(meta, dict) else set()
+            movable = row_notes(spec)
             ctx.text_annotations = [a for a in ann if isinstance(a, Annotation)
                                     and getattr(a, "_ieev_index", None) in movable]
         fit_value_labels(ctx)
+        if ctx.min_pt:
+            from .legibility import refit_title_on_layout
+
+            refit_title_on_layout(ctx)
         apply_legend(ctx)  # last: an "auto" legend is placed against the final layout
         return BuiltFigure(figure=fig, axes=ax, warnings=warnings,
                            layer_artists=ctx.layer_artists, annotation_artists=ann,
                            caption=caption, context=ctx)
+
+
+def row_notes(spec: FigureSpec) -> set[int]:
+    """Indexes of the text annotations a template declared as row notes
+    (``metadata["template"]["row_notes"]``: text, x and y of each), matched
+    by content: an annotation counts only if its text, x and row are exactly
+    one declared note's, so a caller's own annotation - wherever it is in
+    the list - is never one."""
+    from ...spec import TextAnnotation
+
+    meta = spec.metadata.get("template") if isinstance(spec.metadata, dict) else None
+    declared = meta.get("row_notes") if isinstance(meta, dict) else None
+    if not isinstance(declared, list):
+        return set()
+    keys = {(d.get("text"), d.get("x"), d.get("y")) for d in declared if isinstance(d, dict)}
+    return {i for i, a in enumerate(spec.annotations)
+            if isinstance(a, TextAnnotation) and (a.text, a.x, a.y) in keys}
 
 
 def _audit(built: BuiltFigure, request: RenderRequest) -> None:
