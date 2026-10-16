@@ -130,17 +130,20 @@ layer states:
 | `interval_multiplier` | How many standard errors / deviations the bar spans on each side (`1`, `1.96`). Required for standard-error and standard-deviation; refused for the others. A ±k bar claims value ± one half-width: bounds that are not symmetric about the value are drawn as given, with a warning and "(bounds not symmetric)" in the legend. |
 
 Renderers state it in words where the reader sees it: the legend entry
-("95 % prediction interval", "80 % central interval (P10–P90)",
-"quantile interval P5–P75", "±1 standard error", "min-max range";
+("95 % prediction interval", "P10–P90 percentiles (80 %)",
+"P5–P75 percentiles", "±1 standard error", "min-max range";
 percentiles in P-notation, so locale decimals need no ordinal: "P2,5";
 `interval_label(kind, level, multiplier, quantiles=...)`), or the caption,
 each statement prefixed with its series as the legend would name it, when
 the legend is hidden. Levels and multipliers are written exactly (up to 4
-decimals of a percent; more, up to 12, only so a value never reads as a
-whole number it is not, e.g. 99.99999 % rather than 100 %). A level (or
+decimals of a percent; more, up to 12, so a value does not read as a whole
+number it is not, e.g. 99.99999 % rather than 100 %). Differences beyond 12
+decimals are float noise and are dropped on purpose: 0.9500000000000001 is
+written 95 %. A level (or
 quantile) that cannot be written distinctly from 0 % / 100 % (P0 / P100)
 within 12 decimals, such as `1 - 1e-15`, is refused (`invalid_interval_level`
-/ `invalid_interval_quantiles`). "%" follows a no-break space, so a wrapped
+/ `invalid_interval_quantiles`), as is a quantile pair whose two percentiles
+are written the same (`[0.1, 0.10000000000000002]` would read "P10–P10"). "%" follows a no-break space, so a wrapped
 legend or caption never separates "95" from "%". The bounds are data: drawn as given, never computed, widened,
 symmetrised or smoothed. A null bound is a gap in the interval, never zero.
 Several bands of one series at different levels make a fan chart.

@@ -264,10 +264,13 @@ def test_a_percentage_delta_is_in_percentage_points(unit, value_text):
 
 def test_band_bounds_have_distinct_names_in_the_alt_text(rendered):
     text = " ".join(re.split("[ \n]+", rendered.text))
-    # timeseries 2.0.0: the range is a min-max band, named as its legend entry
-    assert "min-max range (forecast), lower bound: 4 values from 329 to 380" in text
-    assert "min-max range (forecast), upper bound: 4 values from 413 to 430" in text
-    assert "min-max range (forecast):" not in text
+    # timeseries 2.0.0: the range is the model's 80 % prediction interval, named
+    # as its legend entry (the caption and the caveat say the same)
+    assert "80\u00a0% prediction interval (forecast), lower bound: 4 values from 329 to 380" \
+        in text
+    assert "80\u00a0% prediction interval (forecast), upper bound: 4 values from 413 to 430" \
+        in text
+    assert "80\u00a0% prediction interval (forecast):" not in text
 
 
 # --------------------------------------------------------------------------
@@ -657,3 +660,20 @@ def test_ascii_words_stay_plain_so_buggy_readers_lose_nothing(rendered):
     back = email.message_from_bytes(raw, policy=policy.default)
     assert str(back["Subject"]) == subject
     assert back["From"].addresses[0].display_name == name
+
+
+def test_briefing_band_says_one_thing_everywhere():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "examples" / "weekly_briefing.py"
+    mod_spec = importlib.util.spec_from_file_location("_briefing_claim", path)
+    wb = importlib.util.module_from_spec(mod_spec)
+    mod_spec.loader.exec_module(wb)
+    view = wb.briefing()
+    (band,) = [m for m in view.figures["trend"].layers if m.type == "band"]
+    assert (band.interval_kind, band.interval_level) == ("prediction", 0.8)
+    assert "80 % interval" in view.figures["trend"].caption
+    source = path.read_text(encoding="utf-8")
+    assert "80 % prediction interval, not a guarantee" in source
+    assert "min-max" not in source and "planning scenarios" not in source

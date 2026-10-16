@@ -120,8 +120,8 @@ def test_interval_problems_are_structured_errors(layer, path, code):
     ("confidence", 0.95, None, "95\u00a0% confidence interval"),
     ("credible", 0.9, None, "90\u00a0% credible interval"),
     ("prediction", 0.8, None, "80\u00a0% prediction interval"),
-    ("quantile", 0.5, None, "50\u00a0% central interval (P25–P75)"),
-    ("quantile", 0.975, None, "97.5\u00a0% central interval (P1.25–P98.75)"),
+    ("quantile", 0.5, None, "P25–P75 percentiles (50\u00a0%)"),
+    ("quantile", 0.975, None, "P1.25–P98.75 percentiles (97.5\u00a0%)"),
     ("min-max", None, None, "min-max range"),
     ("standard-error", None, 1, "±1 standard error"),
     ("standard-deviation", None, 1.96, "±1.96 standard deviations"),
@@ -133,7 +133,7 @@ def test_every_kind_is_stated_in_words(kind, level, mult, text):
     assert errors(spec_dict(layer)) == []
     assert interval_label(kind, level, mult) == text
     assert interval_label("quantile", 0.975, None, decimal=",") == \
-        "97,5\u00a0% central interval (P1,25–P98,75)"
+        "P1,25–P98,75 percentiles (97,5\u00a0%)"
 
 
 def test_inverted_row_is_an_error_at_the_value():
@@ -265,8 +265,8 @@ def test_multiplier_is_shown_exactly_and_pluralised_from_what_is_shown():
 def test_quantile_level_is_central_and_says_so():
     from ieeVisualizer.spec import interval_label
 
-    assert interval_label("quantile", 0.8) == "80\u00a0% central interval (P10–P90)"
-    assert interval_label("quantile", 0.95) == "95\u00a0% central interval (P2.5–P97.5)"
+    assert interval_label("quantile", 0.8) == "P10–P90 percentiles (80\u00a0%)"
+    assert interval_label("quantile", 0.95) == "P2.5–P97.5 percentiles (95\u00a0%)"
 
 
 def test_explicit_quantile_pair_for_an_asymmetric_band():
@@ -276,9 +276,9 @@ def test_explicit_quantile_pair_for_an_asymmetric_band():
     spec = from_dict(spec_dict(layer))
     assert validate(spec) == []
     assert to_dict(spec)["layers"][0]["interval_quantiles"] == [0.05, 0.75]
-    assert interval_label("quantile", quantiles=[0.05, 0.75]) == "quantile interval P5–P75"
+    assert interval_label("quantile", quantiles=[0.05, 0.75]) == "P5–P75 percentiles"
     assert interval_label("quantile", quantiles=[0.025, 0.5], decimal=",") == \
-        "quantile interval P2,5–P50"
+        "P2,5–P50 percentiles"
 
 
 @pytest.mark.parametrize("over, code", [
@@ -341,3 +341,28 @@ def test_plural_follows_the_displayed_multiplier():
     from ieeVisualizer.spec import interval_label
 
     assert interval_label("standard-error", None, 1 + 1e-15) == "±1 standard error"
+
+
+@pytest.mark.parametrize("pair", [[1e-15, 0.5], [0.5, 1 - 1e-15]])
+def test_a_quantile_pair_that_reads_as_p0_or_p100_is_refused(pair):
+    layer = band(interval_kind="quantile", interval_level=None, interval_quantiles=pair)
+    assert ("/layers/0/interval_quantiles", "invalid_interval_quantiles") in errors(
+        spec_dict(layer))
+
+
+def test_a_quantile_pair_that_prints_identically_is_refused():
+    import math
+
+    layer = band(interval_kind="quantile", interval_level=None,
+                 interval_quantiles=[0.1, math.nextafter(0.1, 1)])
+    assert ("/layers/0/interval_quantiles", "invalid_interval_quantiles") in errors(
+        spec_dict(layer))
+
+
+def test_tails_are_mentioned_only_for_a_quantile_level():
+    from ieeVisualizer.spec.intervals import metadata_problems
+
+    ((_, _, msg),) = metadata_problems("confidence", 1 - 1e-15, None)
+    assert "P0" not in msg
+    ((_, _, msg),) = metadata_problems("quantile", 1 - 1e-15, None)
+    assert "P0/P100" in msg

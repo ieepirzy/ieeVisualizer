@@ -148,7 +148,12 @@ symmetric: Treatment)"). Nested bands
 of one colour (a fan chart) get legend swatches of the composited opacity
 1 - prod(1 - alpha) of every band containing them on most of their rows (a
 row overshooting does not change it), so each swatch is the colour of the
-bulk of the region it names. Each interval's legend entry states its kind and level ("95 %
+bulk of the region it names. In a profile (phone/tablet) render an interval
+entry too wide for a one-column legend inside the figure is wrapped: a
+percentile statement before its "(80 %)", then a long series name after
+its colon. Other renders are not wrapped. The timeseries template's
+connector row (`connect_forecast`) is an observation, so its missing bounds
+are not counted in `interval_bounds_missing`. Each interval's legend entry states its kind and level ("95 %
 prediction interval", with the theme's decimal separator: "97,5 %"), and a
 figure with an interval always has a legend; with `legend.show` false the
 caption gains "Intervals: A: 95 % confidence interval; B: ..." instead,

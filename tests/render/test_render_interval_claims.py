@@ -207,3 +207,64 @@ def test_percent_never_wraps_away_from_its_number():
         lines = built.caption.get_text().split("\n")
         assert not any(line.rstrip().endswith("95") for line in lines), lines
         assert "95 %" in built.caption.get_text()
+
+
+# --------------------------------------------------------------------------
+# Review round 3
+# --------------------------------------------------------------------------
+
+NAMES = ["Conversion rate", "Toimitusaika (pv)", "Average repair turnaround days", None]
+
+
+@pytest.mark.parametrize("theme", [None, "report-light"])
+@pytest.mark.parametrize("series", [True, False])
+@pytest.mark.parametrize("level", [0.5, 0.8, 0.95])
+@pytest.mark.parametrize("name", NAMES)
+def test_quantile_passes_the_phone_gate_wherever_confidence_does(name, level, series, theme):
+    from ieeVisualizer.render import GATING_CODES, get_profile, render
+
+    enc = {"x": "g", "y": "y", "y_lower": "lo", "y_upper": "hi"}
+    if series:
+        enc["series"] = "arm"
+    cols = dict(ARMS, hi={"values": [1.5, 2.5, 3.5, 4.5]})
+    gated = {}
+    for kind in ("confidence", "quantile"):
+        layer = {"type": "bar", "encoding": enc, "interval_kind": kind, "interval_level": level}
+        if name:
+            layer["name"] = name
+        s = spec(cols, [layer], title="Conversion by region", theme=theme)
+        r = render(s, get_profile("email-phone").figure_request("png"))
+        gated[kind] = sorted({w.code for w in r.warnings if w.code in GATING_CODES})
+    assert gated == {"confidence": [], "quantile": []}
+
+
+@pytest.mark.parametrize("level", [0.5, 0.8, 0.95])
+def test_quantile_timeseries_example_passes_the_phone_gate_at_every_level(level):
+    from ieeVisualizer import templates
+    from ieeVisualizer.render import check_legible, get_profile, render
+
+    t = templates.get("timeseries")
+    payload = t.example()
+    payload["params"]["intervals"] = [
+        {"lower": "p10", "upper": "p90", "kind": "quantile", "level": level}]
+    check_legible(render(t.build_payload(payload),
+                         get_profile("email-phone").figure_request("png")))
+
+
+def test_percentile_label_states_its_kind():
+    built = build_figure(spec(ARMS, [{"type": "errorbar", "encoding": {
+        "x": "g", "y": "y", "y_lower": "lo", "y_upper": "hi"},
+        "interval_kind": "quantile", "interval_level": 0.95}]))
+    assert legend(built) == ["P2.5–P97.5 percentiles (95\u00a0%)"]
+
+
+def test_the_template_connector_row_is_not_a_missing_bound():
+    from ieeVisualizer import templates
+
+    t = templates.get("timeseries")
+    built = build_figure(t.build_payload(t.example()))
+    assert "interval_bounds_missing" not in [w.code for w in built.warnings]
+    payload = t.example()
+    payload["data"]["columns"]["p10"]["values"][6] = None  # a real gap still warns
+    built = build_figure(t.build_payload(payload))
+    assert "interval_bounds_missing" in [w.code for w in built.warnings]

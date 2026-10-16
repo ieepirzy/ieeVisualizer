@@ -460,7 +460,7 @@ def draw_line(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
             _mark_lone_points(drawn, lone)
         artists += drawn
         if "y_lower" in m.encoding and not ctx.three_d:
-            artists += _iv.line_band(ctx, i, m, x, idx, drawn[-1].get_color(),
+            artists += _iv().line_band(ctx, i, m, x, idx, drawn[-1].get_color(),
                                      kw.get("label"), style)
     return artists
 
@@ -533,7 +533,7 @@ def draw_scatter(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         if cont:
             _colorbar(ctx, art, m, style=style)
         if "y_lower" in m.encoding:
-            artists += _iv.point_intervals(ctx, i, m, x[rows], rows,
+            artists += _iv().point_intervals(ctx, i, m, x[rows], rows,
                                            kw.get("color", kw.get("edgecolors", "0.25")),
                                            kw["label"], style)
     return artists
@@ -714,7 +714,7 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
         _record_centres(ctx, val_ch, pp)
         if "y_lower" in m.encoding:
             with_interval.append((pp, idx[valid], kw["label"], group))
-            _iv.values_missing(ctx, i, m, idx[~np.ma.getmaskarray(p) & np.ma.getmaskarray(v)])
+            _iv().values_missing(ctx, i, m, idx[~np.ma.getmaskarray(p) & np.ma.getmaskarray(v)])
         if labelled:
             labels = _value_labels(ctx, m, val_ch, pp, vv, horizontal)
             ctx.value_labels += [ValueLabel(a, val_ch, i, float(q), float(each), bool(v < 0),
@@ -761,7 +761,7 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
             artists.append(note)
     if with_interval:
         ink = getattr(ctx.theme, "foreground", None) or "0.15"  # legible on any fill
-        artists += _iv.bar_intervals(ctx, i, m, with_interval, ink)
+        artists += _iv().bar_intervals(ctx, i, m, with_interval, ink)
     return artists
 
 
@@ -1156,8 +1156,15 @@ DRAW = {
     "function": draw_function,
 }
 
-from . import intervals as _iv  # noqa: E402 - uses the helpers above
+def _iv() -> Any:
+    """The interval drawing module, looked up at call time: it builds on
+    the helpers above, so either module may be imported first."""
+    from . import intervals
 
-DRAW.update(band=_iv.draw_band, errorbar=_iv.draw_errorbar)
+    return intervals
+
+
+DRAW.update(band=lambda ctx, i, m: _iv().draw_band(ctx, i, m),
+            errorbar=lambda ctx, i, m: _iv().draw_errorbar(ctx, i, m))
 
 __all__ = ["DRAW", "DrawContext", "FORECAST_SUFFIX"]

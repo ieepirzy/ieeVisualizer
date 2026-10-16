@@ -43,9 +43,12 @@ MAX_PLACES = 12
 
 def _shown(v: float) -> tuple[Decimal, Decimal]:
     """(exact decimal of ``v``, what a label shows): exact when it has at
-    most 4 decimals, else rounded to 4 -- but never onto a whole number it is
+    most 4 decimals, else rounded to 4 -- but not onto a whole number it is
     not (99.99999 % does not read as 100 %, a multiplier of 1.00001 as 1):
-    more decimals are used instead, up to :data:`MAX_PLACES`."""
+    more decimals are used instead, up to :data:`MAX_PLACES`. Beyond that a
+    difference is float noise and is dropped on purpose (0.9500000000000001
+    is written 95 %); a level or quantile whose noise would make it read as
+    0 % or 100 % is refused by validation instead."""
     exact = Decimal(repr(float(v)))
     places = 4
     while True:
@@ -86,8 +89,8 @@ def indistinct_percent(fraction: float) -> bool:
 def interval_label(kind: str, level: float | None = None, multiplier: float | None = None,
                    decimal: str = ".", quantiles: list[float] | None = None) -> str:
     """What an interval is, in words: ``"95 % prediction interval"``,
-    ``"80 % central interval (P10–P90)"`` (a quantile interval with a level:
-    equal-tailed), ``"quantile interval P5–P75"``, ``"min-max range"``,
+    ``"P10–P90 percentiles (80 %)"`` (a quantile interval with a level:
+    central, equal-tailed), ``"P5–P75 percentiles"``, ``"min-max range"``,
     ``"±1 standard error"``. ``decimal`` is the decimal separator (``","``
     writes ``"97,5 %"``); "%" follows a no-break space. Numbers are written
     exactly up to 4 decimals, rounded beyond that but never onto a whole
@@ -97,10 +100,10 @@ def interval_label(kind: str, level: float | None = None, multiplier: float | No
     if kind == "quantile":
         if quantiles is not None:
             lo, hi = quantiles
-            return f"quantile interval {_pct(lo, decimal)}–{_pct(hi, decimal)}"
+            return f"{_pct(lo, decimal)}–{_pct(hi, decimal)} percentiles"
         tail = (Decimal(1) - Decimal(repr(float(level)))) / 2  # equal-tailed (central)
-        return (f"{_percent(level, decimal)}{pct} central interval "
-                f"({_pct(float(tail), decimal)}–{_pct(float(1 - tail), decimal)})")
+        return (f"{_pct(float(tail), decimal)}–{_pct(float(1 - tail), decimal)} percentiles "
+                f"({_percent(level, decimal)}{pct})")
     if kind in LEVEL_KINDS:
         return f"{_percent(level, decimal)}{pct} {_KIND_TEXT[kind]}"
     if kind in MULTIPLIER_KINDS:
@@ -210,6 +213,11 @@ def metadata_problems(kind: Any, level: Any, multiplier: Any,
             out.append(("quantiles", "invalid_interval_quantiles",
                         f"interval quantiles {quantiles!r} cannot be written distinctly from "
                         "P0/P100; a figure would claim the extreme. Round them upstream."))
+        elif _pct(quantiles[0], ".") == _pct(quantiles[1], "."):
+            out.append(("quantiles", "invalid_interval_quantiles",
+                        f"interval quantiles {quantiles!r} are both written "
+                        f"{_pct(quantiles[0], '.')}: the label could not tell them apart. "
+                        "Round them upstream."))
     if kind in LEVEL_KINDS and not (kind == "quantile" and quantiles is not None):
         if level is None:
             out.append(("level", "missing_interval_level",
@@ -225,8 +233,8 @@ def metadata_problems(kind: Any, level: Any, multiplier: Any,
                 float((Decimal(1) - Decimal(repr(float(level)))) / 2))):
             out.append(("level", "invalid_interval_level",
                         f"interval level {level!r} cannot be written distinctly from 0 % or "
-                        "100 % (or its tails from P0/P100); a figure would claim the extreme. "
-                        "Round it upstream."))
+                        "100 %" + (" (or its tails from P0/P100)" if kind == "quantile" else "")
+                        + "; a figure would claim the extreme. Round it upstream."))
     elif level is not None and kind not in LEVEL_KINDS:
         out.append(("level", "unexpected_interval_level",
                     f"a {kind} interval has no coverage level; remove the level"

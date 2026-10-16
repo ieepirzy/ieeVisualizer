@@ -50,8 +50,8 @@ SOURCE = Provenance(source="examples/weekly_briefing.py", timezone="Europe/Helsi
 
 #: Service orders per ISO week, weeks 30-41 of 2026 (observed) ...
 ORDERS = [318, 335, 352, 361, 347, 372, 380, 366, 391, 404, 389, 412]
-#: ... and the planning forecast for weeks 42-45, with its low and high
-#: planning scenarios (a range with no stated probability: a min-max range).
+#: ... and the planning forecast for weeks 42-45, with the model's 80 %
+#: prediction interval (low, high).
 FORECAST = [405, 398, 384, 371]
 FORECAST_LOW = [380, 366, 347, 329]
 FORECAST_HIGH = [430, 430, 421, 413]
@@ -98,9 +98,9 @@ def briefing() -> ViewSpec:
     trend = templates.get("timeseries").build(
         trend_data(), time_column="week", value_columns=["Orders"], y_label="Orders",
         forecast_from=monday(42), connect_forecast=True,
-        intervals=[{"lower": "low", "upper": "high", "kind": "min-max"}],
+        intervals=[{"lower": "low", "upper": "high", "kind": "prediction", "level": 0.8}],
         title="Service orders per week",
-        caption="Weeks 42-45 forecast; band: planning scenarios.")
+        caption="Weeks 42-45 forecast; band: the model's 80 % interval.")
     # TODO(bar_comparison): use templates "bar_comparison" with value_labels=True once
     # its value labels pass the phone gate (in-flight fix); without them the
     # bars carry no printed numbers, and the table below gives the exact values.
@@ -142,8 +142,8 @@ def briefing() -> ViewSpec:
             # data and behind the "Repairs done on time" tile)
             Table("workshops", columns=["Workshop", "Orders", "Revenue"],
                   title="Week 41 by workshop"),
-            Note("The forecast is the planning team's seasonal model; its range is the "
-                 "model's 80 % interval, not a guarantee."),
+            Note("The forecast is the planning team's seasonal model; its band is the "
+                 "model's 80 % prediction interval, not a guarantee."),
             Note(f"Source: {COMPANY} workshop system and till export, ISO weeks starting "
                  "Monday (Europe/Helsinki). On time = finished by the promised date; the tile is "
                  "the order-weighted share across workshops. "

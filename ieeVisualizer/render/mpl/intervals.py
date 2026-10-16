@@ -64,6 +64,44 @@ def asymmetric(ctx: Any, m: Any, rows: Any = None) -> bool:
     return bool(asymmetric_rows(y, lo, hi))
 
 
+#: Where a profile (phone/tablet) render breaks a percentile interval's
+#: legend label: before its level, "P10–P90 percentiles\n(80 %)".
+PERCENTILE_BREAK = " ("
+#: Points kept free for the legend frame's line and rounding.
+FRAME_PT = 4.0
+
+
+def _text_width_pt(text: str, size: float) -> float:
+    from matplotlib.font_manager import FontProperties
+    from matplotlib.textpath import TextToPath
+
+    prop = FontProperties(size=size)
+    return max(TextToPath().get_text_width_height_descent(line, prop, ismath=False)[0]
+               for line in text.split("\n"))
+
+
+def narrow_label(label: str, width_pt: float, size: float) -> str:
+    """An interval's legend label for a narrow (profile) render, wrapped
+    only when it is wider than a one-column legend can be within the figure
+    (the figure width less the legend's handle, paddings and frame, from the
+    legend rcParams): a percentile interval puts its level on the next line,
+    then a long ``"<series>: <statement>"`` puts the series on its own line."""
+    from matplotlib import rcParams
+
+    ems = (rcParams["legend.handlelength"] + rcParams["legend.handletextpad"]
+           + 2 * rcParams["legend.borderpad"] + 2 * rcParams["legend.borderaxespad"])
+    room = width_pt - ems * size - FRAME_PT
+    if _text_width_pt(label, size) <= room:
+        return label
+    head, sep, tail = label.partition(PERCENTILE_BREAK)
+    if sep and head.endswith("percentiles"):
+        label = f"{head}\n{sep.lstrip()}{tail}"
+    name, colon, rest = label.partition(": ")
+    if colon and _text_width_pt(label, size) > room:
+        label = f"{name}:\n{rest}"
+    return label
+
+
 def record(ctx: Any, label: str | None) -> str | None:
     """Note an interval's legend label (for the caption when the legend is
     hidden); returns it."""
@@ -87,6 +125,30 @@ def _missing(ctx: Any, i: int, placed: np.ndarray, lo: Any, hi: Any) -> None:
         ctx.warn("interval_bounds_missing",
                  f"{n} row(s) of layer {i} have no lower or upper bound, so no interval is "
                  "drawn there (a gap, not a zero-width or zero interval).", f"/layers/{i}")
+
+
+def connector_rows(ctx: Any, m: Any) -> np.ndarray:
+    """Rows of a forecast layer that the timeseries template copied from the
+    observed data so the lines join (``connect_forecast``; recorded as
+    ``metadata.template.forecast.shared_boundary``): an observation, which
+    has no forecast interval, so its missing bounds are not a gap."""
+    snap = _m._snapshot(ctx, m)
+    n = len(snap.columns[m.encoding["x"].field].values)
+    out = np.zeros(n, dtype=bool)
+    meta = ctx.spec.metadata.get("template") if isinstance(ctx.spec.metadata, dict) else None
+    fc = meta.get("forecast") if isinstance(meta, dict) else None
+    if m.role != "forecast" or not (isinstance(fc, dict) and fc.get("shared_boundary")):
+        return out
+    xname = m.encoding["x"].field
+    observed = set()
+    for o in ctx.spec.layers:
+        ds = ctx.spec.datasets.get(o.data) if o.role != "forecast" else None
+        col = getattr(ds, "columns", {}).get(xname) if ds is not None else None
+        if col is not None:
+            observed |= {v for v in col.values if v is not None}
+    for k, v in enumerate(snap.columns[xname].values):
+        out[k] = v in observed
+    return out
 
 
 def _qualified(base: str | None, text: str) -> str:
@@ -235,7 +297,7 @@ def draw_band(ctx: Any, i: int, m: Any) -> list[Any]:
     x = _m._pos(ctx, m, "x")
     lo, hi = bounds(ctx, m)
     _m._report_nulls(ctx, i, ~np.ma.getmaskarray(x), "left out of the band")
-    _missing(ctx, i, ~np.ma.getmaskarray(x), lo, hi)
+    _missing(ctx, i, ~np.ma.getmaskarray(x) & ~connector_rows(ctx, m), lo, hi)
     text = interval_text(ctx, m)
     artists: list[Any] = []
     for group, idx in _m._groups(ctx, i, m, len(x)):
