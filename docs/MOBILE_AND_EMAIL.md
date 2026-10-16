@@ -346,15 +346,26 @@ Subject, From and To are encoded and folded by `ieeVisualizer.view._headers`,
 not by the stdlib policy: on Python 3.9 the policy folds a long non-ASCII
 header with the space between two words *between* encoded words, where RFC
 2047 tells decoders to drop it ("kasvoi Pääkaupunkiseutu" read
-"kasvoiPääkaupunkiseutu" in 50 of 400 random Finnish subjects). Here every
-space is inside an encoded word (base64 UTF-8, at most 64 characters, cut
-after a word where possible), ASCII names are atoms or quoted strings, and
-lines are folded only between tokens. Over 400 Finnish subjects and names and
-a 4 000-case random header fuzz, Node's `mailparser` reads Subject, From and
-To back as exactly what was given, from 3.9 and 3.13 alike, and so does
-Python's `email.header.decode_header`. (Python 3.9's own *address* parser
-adds a space between adjacent encoded words, against RFC 2047 6.2; that is
-a bug of the reader, fixed in later versions.)
+"kasvoiPääkaupunkiseutu" in 50 of 400 random Finnish subjects). Here an
+ASCII word is written as itself (an atom, or a quoted string in a display
+name) and each run of consecutive non-ASCII words becomes as few base64
+encoded words as fit, with the spaces inside the run inside the encoded
+text; the whitespace between an encoded word and plain text is kept by
+every decoder. A run is split only where it exceeds the 75-character limit
+of one encoded word (after a word where possible), and lines are folded
+only between tokens, at most 76 characters. Only ASCII spaces separate
+words; a no-break or thin space is encoded with its word.
+
+Correct (RFC 2047 6.2) decoders read every header back exactly: Node's
+`mailparser` over 400 Finnish subjects and names and a 4 000-case random
+header fuzz, from messages built on Python 3.9, 3.12 and 3.13, and Python
+3.13's parser; the tests use a strict RFC 2047 decoder as their oracle on
+every Python. Python's default-policy parser before 3.13 keeps the
+whitespace between two adjacent encoded words, against 6.2: there a split
+run shows one extra space (103 of 800 long Finnish headers on 3.12), never a
+missing one, which the tests assert. Gmail, Outlook and Apple Mail are
+expected to decode per the RFC; this has not been checked in those clients
+(follow-up 7: real-client screenshots).
 
 **Previewing.** `write_eml` writes the message as sent; open the `.eml`
 in Thunderbird, Apple Mail or Outlook (double-click, or drag it into the

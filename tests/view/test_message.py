@@ -457,20 +457,60 @@ def _phrases(words, seed, n):
     return [" ".join(rnd.choice(words) for _ in range(rnd.randint(2, 18))) for _ in range(n)]
 
 
+_EW = re.compile(r"=\?([^?]+)\?([bBqQ])\?([^?]*)\?=")
+
+
+def rfc2047(value: str) -> str:
+    """A strict RFC 2047 decoder (the oracle): unfold, decode every encoded
+    word, and drop whitespace only *between* two adjacent encoded words
+    (section 6.2). Cross-checked against Node's mailparser and Python 3.13."""
+    import base64
+    import quopri
+
+    value = value.replace("\r\n", "").replace("\n", "").strip()  # the FWS after "Name:"
+    out, pos = [], 0
+    for m in _EW.finditer(value):
+        between = value[pos:m.start()]
+        if not (pos and not between.strip()):
+            out.append(between)
+        charset, enc, data = m.groups()
+        raw = (base64.b64decode(data) if enc in "bB"
+               else quopri.decodestring(data.replace("_", " ").encode(), header=True))
+        out.append(raw.decode(charset))
+        pos = m.end()
+    out.append(value[pos:])
+    return "".join(out)
+
+
+def only_extra_spaces(got: str, want: str) -> bool:
+    """Is ``got`` ``want`` with spaces added (never one missing, nothing else)?"""
+    i = 0
+    for ch in got:
+        if i < len(want) and ch == want[i]:
+            i += 1
+        elif ch != " ":
+            return False
+    return i == len(want)
+
+
+def test_the_oracle_decodes_like_rfc_2047():
+    assert rfc2047("=?utf-8?b?w6Q=?= =?utf-8?b?w7Y=?=") == "äö"  # 6.2: dropped
+    assert rfc2047("a =?utf-8?b?w6Q=?=  b") == "a ä  b"  # kept next to plain text
+    assert rfc2047("=?utf-8?q?a_b?=\r\n =?utf-8?q?=C3=A4?=") == "a bä"
+    assert only_extra_spaces("a  b", "a b") and not only_extra_spaces("ab", "a b")
+
+
 @pytest.mark.parametrize("words", [FINNISH, CJK, FINNISH + CJK + ["Report", "a@b"]],
                          ids=["fi", "cjk", "mixed"])
 def test_long_non_ascii_headers_decode_to_exactly_the_text_given(rendered, words):
-    """Folding never drops the space between two words (Python 3.9 put it
-    between encoded words, where decoders drop it). Decoded the RFC 2047 way
-    (``decode_header``, on every Python) and, from Python 3.10, by the
-    default policy too (3.9's address parser adds a space between adjacent
-    encoded words, against RFC 2047 6.2)."""
+    """Folding never loses the space between two words (Python 3.9's policy
+    put it between encoded words, where decoders drop it). The oracle is a
+    strict RFC 2047 decoder on every Python. Python's own default-policy
+    parser before 3.13 keeps whitespace between adjacent encoded words
+    (against RFC 2047 6.2): there the only difference allowed is an extra
+    space, never a missing one."""
     import sys
-    from email.header import decode_header, make_header
     from email.utils import getaddresses
-
-    def rfc2047(value) -> str:
-        return str(make_header(decode_header(value)))
 
     subjects = _phrases(words, 5, 80)
     names = [n.replace("@", "") for n in _phrases(words, 6, 80)]
@@ -483,15 +523,21 @@ def test_long_non_ascii_headers_decode_to_exactly_the_text_given(rendered, words
         assert all(b < 128 for b in head)
         old = email.message_from_bytes(raw, policy=policy.compat32)
         assert rfc2047(old["Subject"]) == subject
-        assert [(rfc2047(n), a) for n, a in getaddresses([old["To"]])] == [
-            (name, "a@example.com"), ("", "b@example.com")]
-        assert [(rfc2047(n), a) for n, a in getaddresses([old["From"]])] == [
-            (name, "r@example.com")]
+        to = getaddresses([old["To"].replace("\r\n", "")])
+        assert [(rfc2047(n), a) for n, a in to] == [(name, "a@example.com"),
+                                                    ("", "b@example.com")]
+        frm = getaddresses([old["From"].replace("\r\n", "")])
+        assert [(rfc2047(n), a) for n, a in frm] == [(name, "r@example.com")]
         back = email.message_from_bytes(raw, policy=policy.default)
-        assert str(back["Subject"]) == subject
-        if sys.version_info >= (3, 10):
-            assert [(a.display_name, a.addr_spec) for a in back["To"].addresses] == [
-                (name, "a@example.com"), ("", "b@example.com")]
+        got = [str(back["Subject"]), back["To"].addresses[0].display_name,
+               back["From"].addresses[0].display_name]
+        assert [a.addr_spec for a in back["To"].addresses] == ["a@example.com",
+                                                               "b@example.com"]
+        for g, want in zip(got, [subject, name, name]):
+            if sys.version_info >= (3, 13):
+                assert g == want
+            else:
+                assert only_extra_spaces(g, want), (g, want)
 
 
 def test_ascii_names_needing_quotes_round_trip(rendered):
@@ -577,3 +623,36 @@ def test_fraction_warning_needs_a_percentage_value_and_comparison(kpi):
     assert not render_email(ViewSpec(root=Stack([kpi]))).warnings
     pts = Kpi("Gap", 0.4, unit="%-points", comparison=Comparison(0.3, "prev"))
     assert not render_email(ViewSpec(root=Stack([pts]))).warnings
+
+
+@pytest.mark.parametrize("text", ["Revenue 48 230 EUR", "Myynti   kasvoi",
+                                  "a b 　c", "Report – 12 % up"])
+def test_unicode_spaces_are_encoded_not_written_raw(rendered, text):
+    from email.utils import getaddresses
+
+    raw = build_message(rendered, subject=text, sender=Address(text, "r", "example.com"),
+                        recipients=["c@example.com"]).as_bytes()
+    head = raw.split(b"\r\n\r\n", 1)[0]
+    assert all(b < 128 for b in head)
+    old = email.message_from_bytes(raw, policy=policy.compat32)
+    assert rfc2047(old["Subject"]) == text
+    assert rfc2047(getaddresses([old["From"].replace("\r\n", "")])[0][0]) == text
+
+
+def test_ascii_words_stay_plain_so_buggy_readers_lose_nothing(rendered):
+    """Runs of non-ASCII words that fit one encoded word each, separated by
+    ASCII words: no two encoded words are adjacent, so even a reader that
+    keeps the whitespace between adjacent encoded words (Python < 3.13)
+    decodes the text exactly."""
+    subject = ("Viikkoraportti myynti Pääkaupunkiseutu kasvoi 12 % Länsi-Suomi tilaukset "
+               "Itä-Suomi hyväksytty Ääkkönen ja Hämäläinen")
+    name = "Ääkkönen Raportti Hämäläinen"
+    msg = build_message(rendered, subject=subject, sender=Address(name, "r", "example.com"),
+                        recipients=["c@example.com"])
+    raw = msg.as_bytes()
+    head = raw.split(b"\r\n\r\n", 1)[0].decode()
+    assert not re.search(r"\?=\s+=\?", head)  # no adjacent encoded words
+    assert "myynti" in head and "Raportti" in head  # ASCII words written as themselves
+    back = email.message_from_bytes(raw, policy=policy.default)
+    assert str(back["Subject"]) == subject
+    assert back["From"].addresses[0].display_name == name
