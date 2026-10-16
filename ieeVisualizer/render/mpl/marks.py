@@ -73,6 +73,10 @@ class DrawContext:
     dodged_horizontal: set = field(default_factory=set)
     #: The resolved :class:`~ieeVisualizer.themes.Theme` (None = adapter defaults).
     theme: Any = None
+    #: The request's :class:`~ieeVisualizer.render.profiles.RenderProfile`
+    #: (None = no profile) and the smallest font size (pt) it allows here.
+    profile: Any = None
+    min_pt: float = 0.0
     _color_i: int = 0
     _series: dict[tuple, _Series] = field(default_factory=dict)
     _color_of: dict[int, int | None] = field(default_factory=dict)
@@ -85,6 +89,19 @@ class DrawContext:
     @property
     def three_d(self) -> bool:
         return self.spec.coordinate_system == "cartesian3d"
+
+    @property
+    def narrow(self) -> bool:
+        return self.profile is not None and self.profile.narrow
+
+    def fs(self, size: Any) -> Any:
+        """Font size ``size`` (pt or a name like ``"small"``), raised to the
+        profile's minimum; unchanged without a profile."""
+        if not self.min_pt:
+            return size
+        from .legibility import points
+
+        return max(points(size), self.min_pt)
 
     @property
     def roles(self) -> Roles:
@@ -695,7 +712,7 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                 "no data", xy, xycoords=coords, xytext=(3, 0) if horizontal else (0, 3),
                 textcoords="offset points", ha="left" if horizontal else "center",
                 va="center" if horizontal else "bottom", rotation=0 if horizontal else 90,
-                fontsize="x-small", color=ctx.muted("0.4"), style="italic")
+                fontsize=ctx.fs("x-small"), color=ctx.muted("0.4"), style="italic")
             ctx.no_data_notes.append(NoDataNote(note, val_ch, i, float(q), float(each),
                                                 _where(ctx, cat_ch, float(c))))
             artists.append(note)
@@ -785,7 +802,7 @@ def _value_labels(ctx: DrawContext, m: Mark, val_ch: str, pos: np.ndarray,
             kw = {"xytext": (0, -3 if neg else 3), "ha": "center",
                   "va": "top" if neg else "bottom"}
             xy = (float(q), float(v))
-        out.append(ctx.ax.annotate(text, xy, textcoords="offset points", fontsize="small",
+        out.append(ctx.ax.annotate(text, xy, textcoords="offset points", fontsize=ctx.fs("small"),
                                    color=ctx.muted("0.25"), **kw))
     return out
 

@@ -62,7 +62,11 @@ class RenderRequest:
     ``width``/``height`` are in ``units`` (``"in"`` or ``"px"``); ``dpi``
     converts between the two and sets raster resolution. ``theme`` overrides
     the spec's theme name. ``adapter`` pins a renderer by name; otherwise one
-    is selected by capability.
+    is selected by capability. ``profile`` names a
+    :class:`~ieeVisualizer.render.profiles.RenderProfile` whose minimum text
+    size and narrow-screen rules apply; ``display_width`` (CSS px, needs a
+    profile) is how wide the figure is shown when narrower than the
+    profile's full content width.
     """
 
     format: str = "png"
@@ -72,6 +76,8 @@ class RenderRequest:
     dpi: float = 100.0
     theme: str | None = None
     adapter: str | None = None
+    profile: str | None = None
+    display_width: float | None = None
 
     def __post_init__(self) -> None:
         if self.format not in MEDIA_TYPES:
@@ -93,6 +99,25 @@ class RenderRequest:
             )
         if min(w, h) < 1:
             raise ValueError(f"requested size rounds to {w}x{h} px; increase the size or dpi.")
+        if self.profile is not None:
+            from .profiles import get_profile
+
+            get_profile(self.profile)
+        dw = self.display_width
+        if dw is not None and (self.profile is None or isinstance(dw, bool)
+                               or not isinstance(dw, (int, float))
+                               or not math.isfinite(dw) or dw <= 0):
+            raise ValueError("display_width must be a positive number of CSS px and needs a "
+                             f"profile, got {dw!r} with profile {self.profile!r}.")
+
+    @property
+    def render_profile(self) -> Any:
+        """The :class:`RenderProfile` named by ``profile`` (or ``None``)."""
+        if self.profile is None:
+            return None
+        from .profiles import get_profile
+
+        return get_profile(self.profile)
 
     @property
     def media_type(self) -> str:
@@ -119,6 +144,10 @@ class RenderRequest:
             d["theme"] = self.theme
         if self.adapter is not None:
             d["adapter"] = self.adapter
+        if self.profile is not None:
+            d["profile"] = self.profile
+        if self.display_width is not None:
+            d["display_width"] = self.display_width
         return d
 
 

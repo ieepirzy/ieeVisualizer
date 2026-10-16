@@ -43,6 +43,7 @@ artifact.artifact_id, artifact.variant("png").sha256
 | `dpi` | `100` | |
 | `theme` | `None` | overrides `spec.theme`; a registered theme `name` or `name@version` ([THEMES.md](THEMES.md)): `default`, `minimal`, `presentation`, `dashboard-dark`, `report-light` |
 | `adapter` | `None` | pin an adapter by name |
+| `profile`, `display_width` | `None` | a render profile (`email-phone`, `email-tablet`, `desktop`) and the CSS width the figure is shown at: minimum text size, narrow-screen layout and a legibility audit ([MOBILE_AND_EMAIL.md](MOBILE_AND_EMAIL.md)); recorded only when set |
 
 `RenderResult` has `content`, `format`, `media_type`, `adapter_name`,
 `adapter_version`, `warnings`, `request`, `theme` (the resolved theme's
@@ -278,7 +279,8 @@ A custom writer with only `write` gets one call per file, manifest last.
   `bin_edges`; a capability, so more is a `CapabilityError` before anything
   is drawn) and a category axis at most 5,000 distinct values
   (`too_many_categories`). Above 50 categories only every n-th tick label is
-  drawn (`category_labels_thinned` warning); the bars are all drawn.
+  drawn (`category_labels_thinned` warning); the bars are all drawn. A render
+  for a profile never thins (see MOBILE_AND_EMAIL.md).
 - Reference lines/bands are not drawn in 3D (warning); log scales in 3D are
   refused.
 - Forecast heatmaps, quivers and surfaces are distinguished only by
