@@ -264,9 +264,10 @@ def test_a_percentage_delta_is_in_percentage_points(unit, value_text):
 
 def test_band_bounds_have_distinct_names_in_the_alt_text(rendered):
     text = " ".join(re.split("[ \n]+", rendered.text))
-    assert "Orders range (low to high), lower bound: 4 values from 329 to 380" in text
-    assert "Orders range (low to high), upper bound: 4 values from 413 to 430" in text
-    assert "Orders range (low to high):" not in text
+    # timeseries 2.0.0: the range is a min-max band, named as its legend entry
+    assert "min-max range (forecast), lower bound: 4 values from 329 to 380" in text
+    assert "min-max range (forecast), upper bound: 4 values from 413 to 430" in text
+    assert "min-max range (forecast):" not in text
 
 
 # --------------------------------------------------------------------------

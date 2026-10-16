@@ -554,6 +554,7 @@ def figure_summary(spec: Any, resolver: Resolver | None = None, limit: int = 400
         # an observation, not a forecast value: it is not counted twice
         skip = shared.get(m.data, set()) if getattr(m, "role", None) == "forecast" else set()
         what = ""
+        parts += _interval_summary(m, cols, skip)
         if m.type == "quiver" and "u" in enc and "v" in enc:
             comps = [cols[enc[c].field] for c in ("u", "v", "w") if c in enc]
             vals = [math.sqrt(sum(c * c for c in row)) for row in zip(*(c.values for c in comps))
@@ -583,6 +584,32 @@ def figure_summary(spec: Any, resolver: Resolver | None = None, limit: int = 400
                      f"{format_number(max(vals))}{unit}")
     text = "; ".join(parts)
     return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _interval_summary(m: Any, cols: Any, skip: set) -> list[str]:
+    """An interval's bounds (band, errorbar, y_lower/y_upper), named as its
+    legend entry ("min-max range (forecast), lower bound: ...")."""
+    from ..render.mpl.style import legend_label
+    from ..spec.intervals import has_interval, mark_interval_label
+    from .text import format_number
+
+    enc = getattr(m, "encoding", {}) or {}
+    if not has_interval(m) or "y_lower" not in enc or "y_upper" not in enc:
+        return []
+    lo, hi = cols.get(enc["y_lower"].field), cols.get(enc["y_upper"].field)
+    if lo is None or hi is None:
+        return []
+    rows = [(a, b) for i, (a, b) in enumerate(zip(lo.values, hi.values))
+            if a is not None and b is not None and i not in skip]
+    if not rows:
+        return []
+    text = mark_interval_label(m)
+    name = legend_label(f"{m.name}: {text}" if m.name else text, None, m.role)
+    unit = f" {lo.unit}" if lo.unit else ""
+    return [f"{name}, {which}: {len(rows)} values from {format_number(min(v))} to "
+            f"{format_number(max(v))}{unit}"
+            for which, v in (("lower bound", [a for a, _ in rows]),
+                             ("upper bound", [b for _, b in rows]))]
 
 
 def _boundary_copies(spec: Any) -> dict[str, set[int]]:

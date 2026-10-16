@@ -50,7 +50,8 @@ SOURCE = Provenance(source="examples/weekly_briefing.py", timezone="Europe/Helsi
 
 #: Service orders per ISO week, weeks 30-41 of 2026 (observed) ...
 ORDERS = [318, 335, 352, 361, 347, 372, 380, 366, 391, 404, 389, 412]
-#: ... and the planning forecast for weeks 42-45, with its range.
+#: ... and the planning forecast for weeks 42-45, with its low and high
+#: planning scenarios (a range with no stated probability: a min-max range).
 FORECAST = [405, 398, 384, 371]
 FORECAST_LOW = [380, 366, 347, 329]
 FORECAST_HIGH = [430, 430, 421, 413]
@@ -96,9 +97,10 @@ def workshop_data() -> DataSnapshot:
 def briefing() -> ViewSpec:
     trend = templates.get("timeseries").build(
         trend_data(), time_column="week", value_columns=["Orders"], y_label="Orders",
-        forecast_from=monday(42), connect_forecast=True, lower_column="low",
-        upper_column="high", title="Service orders per week",
-        caption="Weeks 30-41 observed; weeks 42-45 forecast (dashed) with its planning range.")
+        forecast_from=monday(42), connect_forecast=True,
+        intervals=[{"lower": "low", "upper": "high", "kind": "min-max"}],
+        title="Service orders per week",
+        caption="Weeks 42-45 forecast; band: planning scenarios.")
     # TODO(bar_comparison): use templates "bar_comparison" with value_labels=True once
     # its value labels pass the phone gate (in-flight fix); without them the
     # bars carry no printed numbers, and the table below gives the exact values.
