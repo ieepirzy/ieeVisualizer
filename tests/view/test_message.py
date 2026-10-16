@@ -239,3 +239,30 @@ def test_example_script_passes_the_gate_and_writes_a_parseable_eml(tmp_path, cap
 def test_write_eml_returns_the_path(rendered, tmp_path):
     path = write_eml(build_message(rendered, **HEADERS), tmp_path / "x.eml")
     assert path.read_bytes().startswith(b"Subject: Weekly briefing\r\n")
+
+
+@pytest.mark.parametrize("unit, value_text", [("%", "94.2%"), ("percent", "94.2 percent")])
+def test_a_percentage_delta_is_in_percentage_points(unit, value_text):
+    """94.2 % vs 92.7 % is 1.5 percentage points; "+1.5%" reads as a relative
+    change (it would be +1.6 % relative), a different and wrong claim."""
+    from ieeVisualizer.view import Comparison, render_view
+
+    kpi = Kpi("On time", 94.2, unit=unit, decimals=1, comparison=Comparison(92.7, "week 40"))
+    expected = f"▲ +1.5 pp vs week 40 (92.7{'%' if unit == '%' else ' percent'})"
+    assert kpi_lines(kpi) == (value_text, expected)
+    view = ViewSpec(root=Stack([kpi]))
+    email_render = render_email(view)
+    assert expected in email_render.text
+    assert "+1.5 pp" in email_render.html and "+1.5%" not in email_render.html
+    assert "+1.5 pp" in render_view(view, "svg").content.decode("utf-8")
+    down = Kpi("Share", 40.0, unit="%", comparison=Comparison(42.5, "plan"))
+    assert kpi_lines(down)[1] == "▼ −2.5 pp vs plan (42.5%)"
+    other = Kpi("Revenue", 10.0, unit="EUR", comparison=Comparison(8.0, "plan"))
+    assert kpi_lines(other)[1] == "▲ +2 EUR vs plan (8 EUR)"  # other units unchanged
+
+
+def test_band_bounds_have_distinct_names_in_the_alt_text(rendered):
+    text = " ".join(re.split("[ \n]+", rendered.text))
+    assert "Orders range (low to high), lower bound: 4 values from 329 to 380" in text
+    assert "Orders range (low to high), upper bound: 4 values from 413 to 430" in text
+    assert "Orders range (low to high):" not in text

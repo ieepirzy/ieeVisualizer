@@ -79,7 +79,10 @@ A KPI delta is computed exactly in `Decimal` on the numbers as written
 (`0.3` vs `0.1` gives `+0.2`, not `+0.19999999999999998`), so it can
 neither gain digits nor overflow: `1e308` vs `-1e308` is `▲ +2e+308`, never
 `inf`. The arrow follows the sign of the exact delta: only an exact tie is
-`= 0.0`; a delta below the last decimal is `▲ <+0.1` / `▼ >−0.1`. Every line
+`= 0.0`; a delta below the last decimal is `▲ <+0.1` / `▼ >−0.1`. The
+delta of a percentage (unit `%` or `percent`) is in **percentage points**:
+94.2 % vs 92.7 % is `▲ +1.5 pp`, never `+1.5%`, which would read as a
+relative change (that is +1.6 %); no relative change is computed. Every line
 of a KPI tile stays inside the tile, and no number is split: the value
 shrinks from 30 to 14 px and then wraps between words (at ASCII spaces
 only); a number that still does not fit shrinks down to 8 px and then is

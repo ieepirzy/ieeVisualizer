@@ -238,15 +238,24 @@ def _delta_text(delta: Decimal, decimals: int | None, fmt=None) -> str:
     return fmt(delta, decimals)
 
 
+#: Units that make a KPI a percentage: the difference of two of them is in
+#: percentage points ("pp"), never "%", which would read as a relative change.
+PERCENT_UNITS = ("%", "percent", "per cent")
+
+
 def kpi_lines(n: Kpi, fmt=None) -> tuple[str, str | None]:
     """(value text, comparison text). Shared with the HTML renderer. The
     arrow follows the sign of the exact delta, and a non-zero delta is never
     written as zero: one below the last decimal reads "▲ <+0.1", only an
     exact tie reads "= 0.0". A ``%`` unit makes 100 a bound too (99.97 at
     one decimal is ">99.9%"). ``fmt`` replaces :func:`.text.format_number`
-    (the tile uses it for compact notation when a number does not fit)."""
+    (the tile uses it for compact notation when a number does not fit). The
+    delta of a percentage (:data:`PERCENT_UNITS`) is in percentage points:
+    94.2 % vs 92.7 % is "▲ +1.5 pp", not "+1.5%"."""
     fmt = fmt or format_number
     pct = n.unit == "%"
+    delta_unit = ("pp" if isinstance(n.unit, str) and n.unit.strip().lower() in PERCENT_UNITS
+                  else n.unit)
 
     def num(v):
         return with_unit(fmt(v, n.decimals, percent=pct), n.unit)
@@ -270,7 +279,7 @@ def kpi_lines(n: Kpi, fmt=None) -> tuple[str, str | None]:
                 arrow, sign, text = "▲", "<+", text[1:]
             else:
                 arrow, sign = "▲", "+"
-            cmp = f"{arrow} {sign}{with_unit(text, n.unit)} vs {c.label} ({num(c.value)})"
+            cmp = f"{arrow} {sign}{with_unit(text, delta_unit)} vs {c.label} ({num(c.value)})"
     return value, cmp
 
 

@@ -298,7 +298,9 @@ anyway: `EmailRender.text` has the title, every text and note, each KPI's
 value with its unit, its comparison line ("▲ +23 orders vs week 40 (389
 orders)") and source, exactly as written (never the compacted tile form),
 every table cell as a `header (unit): value` line, each figure's `alt`
-summary and each flow's text version. `text_fallback=` replaces it.
+summary (the two bounds of a range are named "lower bound" / "upper bound")
+and each flow's text version. A percentage KPI's delta is in percentage
+points (`▲ +1.5 pp`), in the tile and in the text alike. `text_fallback=` replaces it.
 
 **Gate.** `build_message` calls `check_legible` first and raises
 `EmailGateError` (a `LegibilityError`; `.codes` lists the gating codes, and
@@ -331,8 +333,7 @@ media queries (none are used); dark-mode clients may invert the page but not
 the images, which stay light cards; Gmail clips HTML over about 102 KB (the
 gate refuses that, `email_clipped_by_gmail`); images may be blocked until
 the reader allows them, so the `alt` text and the plain-text part carry the
-values. A KPI delta in `%` units is the difference of the two values
-(percentage points), written with `%`.
+values.
 
 ## Measured in this slice
 

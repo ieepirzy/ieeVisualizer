@@ -503,12 +503,19 @@ def figure_summary(spec: Any, resolver: Resolver | None = None, limit: int = 400
     from ..render import prepare
     from .text import format_number
 
+    meta = spec.metadata.get("template") if isinstance(spec.metadata, dict) else None
+    bounds: dict[int, str] = {}  # layer index -> which bound of a band it draws
+    for band in (meta or {}).get("bands") or []:
+        if isinstance(band, dict):
+            bounds[band.get("lower_layer")] = "lower bound"
+            bounds[band.get("upper_layer")] = "upper bound"
+    names = [m.name for m in spec.layers]
     try:
         spec = prepare(spec, resolver).spec
     except Exception:  # noqa: BLE001 - the render itself reports why
         return ""
     parts = []
-    for m in spec.layers:
+    for k, m in enumerate(spec.layers):
         snap = spec.datasets.get(m.data) if isinstance(m.data, str) else None
         cols = getattr(snap, "columns", None)
         enc = getattr(m, "encoding", {}) or {}
@@ -534,6 +541,10 @@ def figure_summary(spec: Any, resolver: Resolver | None = None, limit: int = 400
         if not vals:
             continue
         name = m.name or label
+        if k in bounds:  # both bounds of a band share one (legend) name
+            name = f"{name}, {bounds[k]}"
+        elif m.name and names.count(m.name) > 1:  # never two summaries under one name
+            name = f"{name} ({label})"
         unit = f" {unit}" if unit else ""
         parts.append(f"{name}: {what}{len(vals)} values from {format_number(min(vals))} to "
                      f"{format_number(max(vals))}{unit}")
