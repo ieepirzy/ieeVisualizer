@@ -170,13 +170,25 @@ room it gets on the phone, so it would run off the screen), and
 listened for: after layout, every visible text artist's own FontProperties
 (family list, style, weight) is resolved to font files the way Matplotlib's
 Agg text path does (`fontManager._find_fonts_by_props`, first to last
-fallback) and each character is looked up in those fonts (`get_char_index`);
-mathtext is parsed by Matplotlib's mathtext parser and a substituted dummy
-glyph counts as missing. View PNG labels and email flows are checked with the
-exact font the PNG draws them in. The answer depends only on the text and its
-font, so the host's logging or warnings configuration and concurrent renders
-cannot change it. SVG and HTML text is left to the reader's fonts and not
-checked. A pipeline that must not
+fallback) and each character is looked up in those fonts (`get_char_index`).
+Only " " and "\n" are skipped: tabs, carriage returns (a stray CSV "\r"),
+other controls and other spaces are looked up like any character, because Agg
+draws them as boxes when the font lacks them. With text shaping (matplotlib
+3.11+, HarfBuzz) a lacking default-ignorable (U+200B, U+200D, U+FE0F, ...)
+draws nothing and a lacking fallback space (U+00A0, U+2000-200A, U+202F,
+U+205F, U+3000) draws a space, so those are not reported there; before 3.11
+they are boxes and are. Mathtext is parsed by Matplotlib's mathtext parser:
+more dummy glyphs (¤) than the text itself holds means a character is
+missing; the parser's own "does not have a glyph" log records are filtered
+on that one logger during the parse. View PNG labels and email flows are
+checked with the exact font the PNG draws them in. The answer depends only on
+the text and its font, so the host's logging or warnings configuration and
+concurrent renders cannot change it. `tests/render/test_glyph_truth.py`
+checks it against pixels: each character drawn alone is compared with how the
+running matplotlib draws a missing glyph (LastResort box on 3.11+, .notdef
+before), for several fonts and the three mathtext font sets; CI runs it on
+matplotlib 3.6.3 (the declared floor), 3.9 and 3.11. SVG and HTML text is
+left to the reader's fonts and not checked. A pipeline that must not
 send an illegible or incomplete report calls it on every output. The tests
 check the property it protects: for every template at every profile, each
 word a desktop render draws outside the tick labels is drawn outside the

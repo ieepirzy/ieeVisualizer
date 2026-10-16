@@ -20,6 +20,7 @@ without one nothing here runs, so other renders keep their bytes.
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from typing import Any
@@ -409,19 +410,60 @@ def annotations_outside(built: Any) -> list[RenderWarning]:
 
 
 #: The glyph mathtext substitutes for a character no math font has.
-_MATH_DUMMY = 0xA4
+_MATH_DUMMY = "\u00a4"
+#: Characters Agg lays out without drawing a glyph: everything else
+#: (tabs, carriage returns, other spaces, controls) is looked up in the font
+#: and, if the font lacks it, drawn as an empty box.
+_LAID_OUT_AS_SPACE = frozenset(" \n")
+#: Unicode Default_Ignorable_Code_Point (DerivedCoreProperties.txt): with text
+#: shaping (matplotlib >= 3.11, HarfBuzz) a font lacking one draws nothing
+#: (and a lacking space separator draws a space); without shaping (3.6-3.10)
+#: each is drawn as an empty box like any other. The pixel ground-truth test
+#: (tests/render/test_glyph_truth.py) checks both on the running version.
+_DEFAULT_IGNORABLE = ((0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C),
+                      (0x115F, 0x1160), (0x17B4, 0x17B5), (0x180B, 0x180F),
+                      (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F),
+                      (0x3164, 0x3164), (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF),
+                      (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3),
+                      (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF))
+
+
+def _shapes_text() -> bool:
+    import matplotlib
+
+    major, minor = (int(x) for x in matplotlib.__version__.split(".")[:2])
+    return (major, minor) >= (3, 11)
+
+
+#: Spaces HarfBuzz draws as space when the font lacks them (its "space
+#: fallback": no-break, en/em/thin/hair..., narrow no-break, medium
+#: mathematical and ideographic space). Other separators (U+1680 OGHAM SPACE
+#: MARK, which has ink) are boxes like any glyph.
+_SHAPED_SPACES = frozenset([0x00A0, *range(0x2000, 0x200B), 0x202F, 0x205F, 0x3000])
+
+
+def _ignorable(ch: str) -> bool:
+    """With shaping, a missing default-ignorable draws nothing and a missing
+    fallback space is drawn as a space."""
+    c = ord(ch)
+    return c in _SHAPED_SPACES or any(lo <= c <= hi for lo, hi in _DEFAULT_IGNORABLE)
 
 
 def _font_paths(prop: Any) -> list[str]:
     """The fonts Matplotlib's Agg text path draws ``prop`` with: the family
     list resolved to files, first to last fallback (``RendererAgg`` uses the
-    same ``fontManager._find_fonts_by_props``)."""
+    same ``fontManager._find_fonts_by_props``, matplotlib >= 3.6)."""
     from matplotlib import font_manager as fm
 
-    find = getattr(fm.fontManager, "_find_fonts_by_props", None)
-    if find is not None:
-        return list(find(prop))
-    return [fm.findfont(prop)]  # pragma: no cover - matplotlib < 3.6
+    return list(fm.fontManager._find_fonts_by_props(prop))
+
+
+class _NoGlyphLog(logging.Filter):
+    """Drops mathtext's own "does not have a glyph" records while the
+    checker parses (the check reports them itself)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "does not have a glyph" not in record.getMessage()
 
 
 def missing_glyphs_in(text: str, prop: Any, math: bool = False) -> str:
@@ -429,24 +471,33 @@ def missing_glyphs_in(text: str, prop: Any, math: bool = False) -> str:
     glyph for, in order: looked up in the fonts themselves, so the answer
     depends only on the text and its font, not on warnings or logging.
     ``math``: the text is mathtext; it is parsed by Matplotlib's mathtext
-    parser and a substituted dummy glyph means a character is missing."""
+    parser, and a substituted dummy glyph beyond the ``¤`` the text itself
+    holds means a character is missing."""
     if math:
         from matplotlib.mathtext import MathTextParser
 
+        log, quiet = logging.getLogger("matplotlib.mathtext"), _NoGlyphLog()
+        log.addFilter(quiet)  # only that logger, only during the parse
         try:
             parsed = MathTextParser("path").parse(text, 72, prop)
         except ValueError:  # malformed mathtext fails the draw itself
             return ""
-        drawn = {g[2] for g in parsed.glyphs}
-        if _MATH_DUMMY in drawn and chr(_MATH_DUMMY) not in text:
+        finally:
+            log.removeFilter(quiet)
+        drawn = [chr(g[2]) for g in parsed.glyphs]
+        if drawn.count(_MATH_DUMMY) > text.count(_MATH_DUMMY):
+            have = set(drawn)
             return "".join(dict.fromkeys(ch for ch in text
-                                         if ord(ch) > 127 and ord(ch) not in drawn)) or "?"
+                                         if ord(ch) > 127 and ch not in have)) or "?"
         return ""
     from matplotlib.font_manager import get_font
 
     fonts = [get_font(p) for p in _font_paths(prop)]
-    return "".join(dict.fromkeys(ch for ch in text if not ch.isspace()
-                                 and not any(f.get_char_index(ord(ch)) for f in fonts)))
+    shaped = _shapes_text()
+    return "".join(dict.fromkeys(
+        ch for ch in text
+        if ch not in _LAID_OUT_AS_SPACE and not (shaped and _ignorable(ch))
+        and not any(f.get_char_index(ord(ch)) for f in fonts)))
 
 
 def glyph_warning(found: list[tuple[str, str]], path: str = "") -> list[RenderWarning]:

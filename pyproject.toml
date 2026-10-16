@@ -10,7 +10,9 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 dependencies = [
-    "matplotlib",
+    # 3.6: font fallback lists (fontManager._find_fonts_by_props), used to
+    # check that every character has a glyph; CI tests this floor
+    "matplotlib>=3.6",
     "numpy",
     "sympy",
 ]

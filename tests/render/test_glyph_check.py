@@ -83,3 +83,59 @@ def test_concurrent_renders_neither_miss_nor_invent_missing_glyphs():
     for t in threads:
         t.join()
     assert seen == Counter({("東京 売上", True): 30, ("Plain ascii", False): 30})
+
+
+def test_controls_and_stray_carriage_returns_are_looked_up_not_skipped():
+    """A CSV row ending "\\r" draws a box after the category name."""
+    from ieeVisualizer.spec import BarMark
+
+    data = DataSnapshot.from_columns({"city": ["Helsinki\r", "Espoo"], "n": [3, 4]})
+    spec = FigureSpec(datasets={"d": data},
+                      layers=[BarMark(data="d", encoding={"x": "city", "y": "n"})])
+    result = render(spec, RenderRequest())
+    assert "glyph_missing" in {w.code for w in result.warnings}
+    assert missing("Sales\r") and missing("a\tb") and not missing("a b")
+
+
+def test_a_literal_currency_sign_does_not_hide_mathtext_dummies():
+    assert missing("Hinta ¤ $x$ 東京") and not missing("Hinta ¤ $x$")
+
+
+def test_default_ignorables_follow_the_text_engine():
+    """matplotlib >= 3.11 shapes text: a variation selector the font lacks
+    draws nothing; before that it is drawn as a box."""
+    import matplotlib
+    from matplotlib.font_manager import FontProperties
+
+    from ieeVisualizer.render.mpl.legibility import missing_glyphs_in
+
+    shaped = tuple(int(x) for x in matplotlib.__version__.split(".")[:2]) >= (3, 11)
+    mono = FontProperties(family="DejaVu Sans Mono")  # an inline `code` run
+    check, vs16 = chr(0x2714), chr(0xFE0F)
+    assert missing_glyphs_in(check, mono) == ""
+    assert missing_glyphs_in(check + vs16, mono) == ("" if shaped else vs16)
+
+
+def test_the_check_adds_nothing_to_the_hosts_log():
+    import logging
+
+    from matplotlib.font_manager import FontProperties
+
+    from ieeVisualizer.render.mpl.legibility import missing_glyphs_in
+
+    records: list = []
+
+    class Keep(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    root, keep = logging.getLogger(), Keep(logging.DEBUG)
+    root.addHandler(keep)
+    mathtext = logging.getLogger("matplotlib.mathtext")
+    before = list(mathtext.filters)
+    try:
+        assert missing_glyphs_in("$x_{東}$", FontProperties(), math=True)
+    finally:
+        root.removeHandler(keep)
+    assert [r.getMessage() for r in records if "glyph" in r.getMessage()] == []
+    assert mathtext.filters == before
