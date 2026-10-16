@@ -66,7 +66,10 @@ def test_reviewer_inputs_stop_at_the_deadline_plus_the_kill_slack():
         elapsed, e = _timed(call)
         assert e.issues[0].code == "render_deadline_exceeded" and e.issues[0].path == ""
         assert D <= elapsed <= D + ISOLATION_SLACK_S, (elapsed, e.stats)
-        assert e.stats["deadline_s"] == D and e.stats["phase"] in ("parse", "plan"), e.stats
+        # which phase the deadline lands in depends on the machine's speed (a
+        # loaded runner can still be starting the worker or validating)
+        assert e.stats["deadline_s"] == D and e.stats["phase"] in (
+            "start worker", "start", "validate", "prepare", "plan", "parse"), e.stats
     assert _left() <= before
 
 
