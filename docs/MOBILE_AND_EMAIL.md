@@ -275,7 +275,8 @@ by default) and warnings. Inline styles only; no `<style>`, script, SVG,
 class, link or media query; `role="presentation"` tables for the column;
 KPI tiles and table cards as fluid `inline-block` boxes; each flow followed
 by its text version (shown, since `<details>` is not dependable in mail).
-Delivery (MIME assembly) stays out of scope.
+`EmailRender.text` carries the same content as plain text; assembling the
+message is `build_message` (next section).
 
 - Every text container has `overflow-wrap:anywhere; word-break:break-word`,
   so a URL or id longer than the screen wraps instead of widening the email.
@@ -337,6 +338,119 @@ re-record, export main (`git archive origin/main | tar -x -C /tmp/main`) and
 run `PYTHONPATH=/tmp/main python tests/render/data/record_main_hashes.py`
 with the new matplotlib; commit the updated `main_render_hashes.json`.
 
+## Sending a briefing
+
+```python
+from ieeVisualizer.view import build_message, render_email, write_eml
+
+email = render_email(view, "email-phone")
+msg = build_message(email, subject="Weekly briefing: week 41",
+                    sender="Reporting <reports@example.com>",
+                    recipients=["Management <management@example.com>"])
+write_eml(msg, "briefing.eml")        # preview; smtplib.SMTP(...).send_message(msg) sends
+```
+
+`build_message` returns a stdlib `EmailMessage`: `multipart/alternative`
+holding a `text/plain` part and a `multipart/related` part with the HTML and
+one `image/png` per image (`Content-ID: <figure-0.<hash>.png@ieevisualizer>`,
+`Content-Disposition: inline`, a filename). Every `cid:` the HTML references
+has exactly one part and every image is referenced; otherwise it raises
+`MessageError` `cid_mismatch` (an email rendered with a custom `image_src`
+cannot be sent this way). Text parts are UTF-8 quoted-printable and images
+base64, with CRLF line ends and no line over 76 characters (RFC 2045); a
+body line starting with "From " is written `=46rom` so mbox tools cannot
+mangle it. The related part carries `type="text/html"` (RFC 2387).
+
+**Plain text.** Clients that block images or show no HTML get the numbers
+anyway: `EmailRender.text` has the title, every text and note, each KPI's
+value with its unit, its comparison line ("▲ +23 orders vs week 40 (389
+orders)") and source, exactly as written (never the compacted tile form),
+every table cell as a `header (unit): value` line, each figure's `alt`
+summary (the two bounds of a range are named "lower bound" / "upper bound";
+the observed point a forecast line starts from is not counted as a forecast
+value) and each flow's text version. A percentage KPI's delta is in
+percentage points (`▲ +1.5 pp`), in the tile and in the text alike.
+
+**Gate.** `build_message` calls `check_legible` first and raises
+`EmailGateError` (a `LegibilityError`; `.codes` lists the gating codes, and
+`.issues` has their messages and pointers) for any render the gate refuses,
+including every `email-tablet` render (`email_not_phone_safe`). The verdict
+is the one `render_email` reached: it records digests of the HTML, text,
+images, profile and gating codes (`EmailRender.seal`), and `build_message`
+refuses a render changed since - warnings cleared, HTML edited, an image
+swapped - with `MessageError` `render_modified` and the field's pointer, an
+`EmailRender` built by hand (`not_rendered`) and a non-phone profile
+(`not_phone_safe`). `allow_ungated=True` builds any of these anyway; that
+is the caller's explicit choice. `text_fallback=` (which replaces the
+generated text and could say anything) needs its own
+`allow_custom_text=True` (`custom_text_not_allowed` otherwise); the gate,
+seal and profile checks still apply to it.
+
+**Headers.** Subject, sender, recipients, `date` and `message_id` are
+checked before anything is built: a CR, LF, other control character or
+U+2028/2029 is `header_injection`; an address must be exactly one
+`Name <local@domain>` or `local@domain` (ASCII, dotted domain; one per
+list entry, so `"a@x.example, b@y.example"` in one string is refused, not
+split); an empty subject or recipient list is refused. A subject or display
+name holding encoded-word syntax (`=?utf-8?q?...?=`) is refused
+(`encoded_word`): the stdlib decodes it while folding the header, so
+`"=?utf-8?q?CEO_=3Cceo=40x.example=3E?= <reports@example.com>"` would be
+written as `CEO <ceo@x.example> <reports@example.com>`, an address of the
+caller's string's choosing. So are invisible format characters (bidi
+overrides, zero-width; `format_character`), display names that look like
+an address once NFKC-normalised (`＠`, `﹫`, `＜` included;
+`address_in_display_name`) and names that show blank (whitespace, Hangul
+fillers; `blank_display_name`). A local part must be ASCII, at most 64
+characters and free of `=?`; a domain at most 253 characters with labels of
+at most 63 (RFC 5321); an internationalised domain is written in IDNA
+(`pääkaupunki.fi` as `xn--...`). `date` must be an RFC 5322 date with
+a time zone (`invalid_date`; default: now, GMT) and `message_id` an
+`<id@domain>` (`invalid_message_id`). Each issue points at its argument
+(`/subject`, `/recipients/1`).
+
+Subject, From and To are encoded and folded by `ieeVisualizer.view._headers`,
+not by the stdlib policy: on Python 3.9 the policy folds a long non-ASCII
+header with the space between two words *between* encoded words, where RFC
+2047 tells decoders to drop it ("kasvoi Pääkaupunkiseutu" read
+"kasvoiPääkaupunkiseutu" in 50 of 400 random Finnish subjects). Here an
+ASCII word is written as itself (an atom, or a quoted string in a display
+name) and each run of consecutive non-ASCII words becomes as few base64
+encoded words as fit, with the spaces inside the run inside the encoded
+text; the whitespace between an encoded word and plain text is kept by
+every decoder. A run is split only where it exceeds the 75-character limit
+of one encoded word (after a word where possible), and lines are folded
+only between tokens, at most 76 characters. Only ASCII spaces separate
+words; a no-break or thin space is encoded with its word.
+
+Correct (RFC 2047 6.2) decoders read every header back exactly: Node's
+`mailparser` over 400 Finnish subjects and names and a 4 000-case random
+header fuzz, from messages built on Python 3.9, 3.12 and 3.13, and Python
+3.13's parser; the tests use a strict RFC 2047 decoder as their oracle on
+every Python. Python's default-policy parser before 3.13 keeps the
+whitespace between two adjacent encoded words, against 6.2: there a split
+run shows one extra space (103 of 800 long Finnish headers on 3.12), never a
+missing one, which the tests assert. Gmail, Outlook and Apple Mail are
+expected to decode per the RFC; this has not been checked in those clients
+(follow-up 7: real-client screenshots).
+
+**Previewing.** `write_eml` writes the message as sent; open the `.eml`
+in Thunderbird, Apple Mail or Outlook (double-click, or drag it into the
+client) to see it as a recipient would, images included. Python's own
+parser reads it back (`email.message_from_bytes(..., policy=policy.default)`).
+`examples/weekly_briefing.py` builds a whole briefing for a fictional
+company, prints the gate verdict and writes `briefing.eml`, plus
+`briefing.html` and its PNGs for a browser (narrow the window to 360 px).
+
+**Known client caveats** (from the sections above; not yet confirmed in
+real-client screenshots, follow-up 7): Outlook for Windows ignores
+`max-width` on images and lays tiles out without `inline-block`
+(they stack); Gmail with non-Google accounts and Outlook for Windows ignore
+media queries (none are used); dark-mode clients may invert the page but not
+the images, which stay light cards; Gmail clips HTML over about 102 KB (the
+gate refuses that, `email_clipped_by_gmail`); images may be blocked until
+the reader allows them, so the `alt` text and the plain-text part carry the
+values.
+
 ## Measured in this slice
 
 `examples/mobile_gallery.py` renders every template and gallery view at both
@@ -366,7 +480,7 @@ These are layout improvements; the gate already refuses each case.
 3. Annotations that cannot wrap at the right edge: move them left of their
    anchor instead of reporting them clipped.
 4. Ghost tables (`<!--[if mso]>`) so Outlook for Windows shows tiles side by
-   side on desktop; MIME assembly helper; real-client screenshots (Litmus /
+   side on desktop; real-client screenshots (Litmus /
    Email on Acid) before relying on the email layout in production.
 5. A text summary visible under each figure (not only `alt`), for clients
    that block images and do not show `alt`.

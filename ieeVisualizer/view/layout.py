@@ -11,6 +11,7 @@ wrapping is the same in SVG and PNG.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field, replace
 from decimal import Decimal, localcontext
 from functools import lru_cache
@@ -249,15 +250,82 @@ def _delta_text(delta: Decimal, decimals: int | None, fmt=None) -> str:
     return fmt(delta, decimals)
 
 
+#: Words that make a unit a percentage: the difference of two of them is in
+#: percentage points ("pp"), never "%", which would read as a relative change.
+PERCENT_WORDS = ("pct", "percent", "per cent")
+#: Units that already are points (a difference of percentages): kept as written.
+_POINTS = re.compile(r"(pp|p\.p\.|percentage points?|prosenttiyksikk\w*|[%％]\s*-?\s*"
+                     r"(points?|pts?\.?|yks\.?|yksikk\w*|pistett\w*|pisteet?))(\s.*)?",
+                     re.I)
+
+
+def delta_unit(unit: str | None) -> str | None:
+    """The unit of the difference of two values in ``unit``. The rule:
+
+    * a percentage - ``%`` or ``％`` alone, or followed by a space and a
+      qualifier (``% YoY``, ``% of revenue``), or by ``/`` (a rate,
+      ``%/yr``), or one of ``pct``, ``percent``, ``per cent`` - gives
+      percentage points with the qualifier kept: ``pp``, ``pp YoY``,
+      ``pp/yr``;
+    * a unit that already is points (``pp``, ``%-points``, ``% points``,
+      ``%-pts``, ``%-yks.``, ``%-pisteet``, ...) is kept as written;
+    * anything else, including a percentile (``%-ile``, ``percentile``), is
+      kept as written.
+
+    Relative (percent) changes are never computed."""
+    if not isinstance(unit, str):
+        return unit
+    u = unit.strip()
+    if _POINTS.fullmatch(u):
+        return unit
+    if u.lower() in PERCENT_WORDS:
+        return "pp"
+    if u[:1] in ("%", "％"):
+        rest = u[1:]
+        if not rest:
+            return "pp"
+        if rest[0].isspace():
+            return f"pp {rest.strip()}"
+        if rest[0] == "/":
+            return "pp" + rest
+    return unit
+
+
+def is_percent(unit: str | None) -> bool:
+    """Is ``unit`` a percentage (not points, not a percentile)? (:func:`delta_unit`)"""
+    return delta_unit(unit) != unit
+
+
+def percent_fraction_warning(n: Kpi, path: str):
+    """A non-gating ``kpi_percent_looks_like_fraction`` warning, or ``None``.
+    The rule: the unit is a percentage (:func:`is_percent`; not points), the
+    KPI has both a value and a comparison value, both lie in [0, 1], and they
+    are not both 0 - 0.942 vs 0.927 "%" was probably meant as 94.2 % vs
+    92.7 %. A single value is never flagged (0.5 % is an ordinary share)."""
+    vals = [n.value, n.comparison.value if n.comparison else None]
+    if None in vals or not is_percent(n.unit) or not all(0 <= v <= 1 for v in vals) \
+            or all(v == 0 for v in vals):
+        return None
+    from ..render import RenderWarning
+
+    return RenderWarning("kpi_percent_looks_like_fraction", (
+        f"KPI {n.label!r} is in {n.unit!r} but its value and comparison both lie between 0 "
+        f"and 1 ({', '.join(format_number(v) for v in vals)}): if they are fractions, "
+        "multiply by 100."), path)
+
+
 def kpi_lines(n: Kpi, fmt=None) -> tuple[str, str | None]:
     """(value text, comparison text). Shared with the HTML renderer. The
     arrow follows the sign of the exact delta, and a non-zero delta is never
     written as zero: one below the last decimal reads "▲ <+0.1", only an
     exact tie reads "= 0.0". A ``%`` unit makes 100 a bound too (99.97 at
     one decimal is ">99.9%"). ``fmt`` replaces :func:`.text.format_number`
-    (the tile uses it for compact notation when a number does not fit)."""
+    (the tile uses it for compact notation when a number does not fit). The
+    delta of a percentage (:func:`delta_unit`) is in percentage points:
+    94.2 % vs 92.7 % is "▲ +1.5 pp", not "+1.5%"."""
     fmt = fmt or format_number
     pct = n.unit == "%"
+    d_unit = delta_unit(n.unit)
 
     def num(v):
         return with_unit(fmt(v, n.decimals, percent=pct), n.unit)
@@ -281,7 +349,7 @@ def kpi_lines(n: Kpi, fmt=None) -> tuple[str, str | None]:
                 arrow, sign, text = "▲", "<+", text[1:]
             else:
                 arrow, sign = "▲", "+"
-            cmp = f"{arrow} {sign}{with_unit(text, n.unit)} vs {c.label} ({num(c.value)})"
+            cmp = f"{arrow} {sign}{with_unit(text, d_unit)} vs {c.label} ({num(c.value)})"
     return value, cmp
 
 
@@ -363,6 +431,9 @@ def _kpi(n: Kpi, path, x, y, w, ctx):
         items.append(Label(ix, cy + 13, line, 13, MUTED))
         cy += 18
     variants = _kpi_variants(n)
+    w_frac = percent_fraction_warning(n, path)
+    if w_frac is not None:
+        ctx.warnings.append(w_frac)
     if n.value is None:
         items.append(Label(ix, cy + 30, NO_DATA, 22, MUTED, italic=True))
         cy += 42
