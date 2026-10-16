@@ -7,9 +7,10 @@ every gallery mark and legacy entry, and every template example at every
 version that branch had. Each must still hash the same, and render to the
 same SVG and PNG bytes.
 
-In an environment the baseline did not record, only specs built from literal
-data are compared, and only when every recorded environment agreed (a spec
-computed with numpy hashes numpy's output); renders are skipped.
+Specs whose data is computed with numpy (gallery formulas, sampled
+expressions) are built but not pinned: their float bits depend on the CPU.
+In an environment the baseline did not record, literal-data specs are
+compared when every recorded environment agreed, and renders are skipped.
 """
 
 from __future__ import annotations
@@ -31,16 +32,18 @@ KEYS = sorted(set().union(*RECORDED.values()))
 
 
 #: Specs whose data is computed with numpy/sympy (gallery formulas, sampled
-#: expressions): their floats, and so their hash, can differ in another
-#: numpy, so outside a recorded environment only literal-data specs compare.
+#: expressions): numpy's exp/cos/... take CPU-specific SIMD paths, so their
+#: last bits (and hash, and figure) depend on the machine, not on this code.
+#: Seen on CI: gallery.mark-line hashed differently on two runners of one
+#: environment. They are built here (so a crash still fails) but not pinned.
 COMPUTED = ("gallery.", "template.vector_field_2d@")
 
 
 def _expected_hash(key: str) -> str | None:
-    if HERE is not None:
-        return HERE[key]["spec_hash"]
     if key.startswith(COMPUTED):
         return None
+    if HERE is not None:
+        return HERE[key]["spec_hash"]
     seen = {env[key]["spec_hash"] for env in RECORDED.values()}
     return seen.pop() if len(seen) == 1 else None
 
@@ -54,7 +57,7 @@ def test_every_baseline_spec_is_still_built():
 def test_spec_hash_is_unchanged(key):
     want = _expected_hash(key)
     if want is None:
-        pytest.skip(f"{key}: computed data, and {environment()} was not recorded")
+        pytest.skip(f"{key}: computed data, machine-dependent bits; not pinned")
     spec = SPECS[key]
     assert spec_hash(spec) == want
     assert to_json(from_json(to_json(spec))) == to_json(spec)
@@ -65,6 +68,8 @@ def test_spec_hash_is_unchanged(key):
 @pytest.mark.parametrize("key", KEYS)
 def test_figure_without_intervals_is_byte_identical(key):
     want = {fmt: HERE[key][fmt] for fmt in ("svg", "png") if HERE[key][fmt] != UNSTABLE}
+    if key.startswith(COMPUTED):
+        want = {}
     if not want:
         pytest.skip(f"{key}: main's own renders differ between processes here")
     got = fingerprint(SPECS[key])
