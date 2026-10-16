@@ -95,8 +95,9 @@ class RenderProfile:
 _PROFILES = {p.name: p for p in (
     RenderProfile(
         "email-phone", 320, 1200, 12.0, 13.0, True, 0.8,
-        "Phone email (viewports from 360 CSS px): content at least 320 px wide after the "
-        "email's 12 px gutters and up to 16 px of client margin. 1200 px images stay sharp "
+        "Phone email: a figure or view image shown 320 CSS px wide; render_email treats "
+        "320 px as the narrowest screen (296 px of content inside its 12 px gutters, so "
+        "320 px phones are covered too). 1200 px images stay sharp "
         "at 3x on phones and at 2x when a 600 px tablet column shows them; the default for "
         "email, since one image must serve both."),
     RenderProfile(

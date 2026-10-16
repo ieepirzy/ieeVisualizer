@@ -33,7 +33,6 @@ from ..base import (
     issue,
 )
 from ..prepare import PreparedSpec, prepare
-from .legibility import figure_texts, glyph_signals, glyph_warning
 
 ADAPTER_NAME = "matplotlib"
 ADAPTER_VERSION = "1.0.0"
@@ -168,16 +167,14 @@ class MatplotlibAdapter:
         with render_context(theme, _min_pt(request)), \
                 _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
-            with glyph_signals() as missing:
-                built = self._draw(prepared, request, warnings, theme)
-                if request.profile is None:
-                    built.figure.draw_without_rendering()
-                else:  # the draw the audit measures, as a PNG save would make it
-                    from .legibility import recording_canvas
+            built = self._draw(prepared, request, warnings, theme)
+            if request.profile is None:
+                built.figure.draw_without_rendering()
+            else:  # the draw the audit measures, as a PNG save would make it
+                from .legibility import recording_canvas
 
-                    recording_canvas(built.figure).draw()
+                recording_canvas(built.figure).draw()
             _audit(built, request)
-        built.warnings.extend(glyph_warning(missing, figure_texts(built.figure)))
         _backend_warnings(caught, built.warnings)
         _collapsed(built.warnings, request)
         built.warnings[:] = _dedupe(built.warnings)  # same list: draw-time warnings land here
@@ -198,16 +195,14 @@ class MatplotlibAdapter:
         with render_context(theme, _min_pt(request)), \
                 _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
-            with glyph_signals() as missing:  # what the real draw could not draw
-                built = self._draw(prepared, request, warnings, theme)
-                if request.profile is not None:
-                    from .legibility import recording_canvas
+            built = self._draw(prepared, request, warnings, theme)
+            if request.profile is not None:
+                from .legibility import recording_canvas
 
-                    recording_canvas(built.figure)
-                built.figure.savefig(buf, format=request.format, dpi=request.dpi,
-                                     metadata=_metadata(request.format))
+                recording_canvas(built.figure)
+            built.figure.savefig(buf, format=request.format, dpi=request.dpi,
+                                 metadata=_metadata(request.format))
             _audit(built, request)
-        built.warnings.extend(glyph_warning(missing, figure_texts(built.figure)))
         _backend_warnings(caught, built.warnings)
         _collapsed(built.warnings, request)
         return RenderResult(
@@ -296,9 +291,10 @@ class MatplotlibAdapter:
 
 def _audit(built: BuiltFigure, request: RenderRequest) -> None:
     """Profile renders: append the legibility audit of the figure as drawn."""
-    from .legibility import annotations_outside, audit
+    from .legibility import annotations_outside, audit, figure_glyphs
 
     built.warnings.extend(annotations_outside(built))
+    built.warnings.extend(figure_glyphs(built.figure))  # inside the render's rc context
     profile = request.render_profile
     if profile is not None:
         built.warnings.extend(audit(built.figure, profile, request.display_width, built.axes))

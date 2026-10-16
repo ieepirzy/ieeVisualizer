@@ -23,8 +23,10 @@ Phones are 360-430 CSS px wide at 2x-3x device pixel ratio; tablets 768-1024
 CSS px at 2x. An email is a single column of at most 600 px (here 576 px of
 content between 12 px gutters). On a 360 px phone the column is 360 - 2 x 12
 = 336 px, less any margin the client adds; `email-phone` assumes at least
-**320 px**, so up to 16 px of client margin is covered. Narrower viewports
-(320 px phones) are below this target.
+**320 px**, so up to 16 px of client margin is covered. `render_email` is
+stricter: it takes 320 px as the narrowest *screen* and lays the email out
+for the 296 px inside its gutters (figures included), so 320 px phones are
+covered too.
 
 **How clients scale images.** An image written as
 `<img width="W" style="width:100%;max-width:Wpx;height:auto">` is drawn at
@@ -164,12 +166,17 @@ could not be laid out - `value_labels_omitted`, `value_label_outside_axes`,
 `email_clipped_by_gmail`, `email_not_phone_safe`,
 `value_too_wide_for_screen` (a value that must stay whole is wider than the
 room it gets on the phone, so it would run off the screen), and
-`glyph_missing`: a character drawn as an empty box. That one is not
-predicted: it comes from Matplotlib's own signals during the real draw
-(its "Glyph N missing from font(s)" warning and mathtext's "does not have a
-glyph" log record), so font fallback lists, italics and mathtext count as
-actually drawn; it covers figures, networks, view PNGs and email flows. SVG
-and HTML text is left to the reader's fonts and not checked. A pipeline that must not
+`glyph_missing`: a character drawn as an empty box. It is looked up, not
+listened for: after layout, every visible text artist's own FontProperties
+(family list, style, weight) is resolved to font files the way Matplotlib's
+Agg text path does (`fontManager._find_fonts_by_props`, first to last
+fallback) and each character is looked up in those fonts (`get_char_index`);
+mathtext is parsed by Matplotlib's mathtext parser and a substituted dummy
+glyph counts as missing. View PNG labels and email flows are checked with the
+exact font the PNG draws them in. The answer depends only on the text and its
+font, so the host's logging or warnings configuration and concurrent renders
+cannot change it. SVG and HTML text is left to the reader's fonts and not
+checked. A pipeline that must not
 send an illegible or incomplete report calls it on every output. The tests
 check the property it protects: for every template at every profile, each
 word a desktop render draws outside the tick labels is drawn outside the
@@ -189,13 +196,23 @@ Delivery (MIME assembly) stays out of scope.
   so a URL or id longer than the screen wraps instead of widening the email.
   Table values never wrap (`white-space:nowrap`): a number or date split over
   two lines reads as two values. One measure (`whole_width`: DejaVu width
-  plus 20 % for a substitute font) decides every keep-whole case against the
-  room the value really gets at its depth - the slot minus every enclosing
+  plus 6 %) decides every keep-whole case against the room the value really
+  gets at its depth - the screen width minus the two 12 px gutters (296 px on
+  a 320 px screen), minus every enclosing
   card (26 px), table card (30 px) or KPI tile (30 px): a table only when
   every column fits its widest value and longest header word, otherwise one
   card per row, where only text values may wrap; a number, date or KPI line
   that does not fit even its card is `value_too_wide_for_screen`, never
-  split and never silently over the edge.
+  split and never silently over the edge. The 6 % comes from measurement in
+  Chromium at 13 px, normal and bold, on dates, grouped numbers, long words,
+  WWWWWW/MMMMMM and CJK: DejaVu Sans renders at 1.000 of the model; Liberation
+  Sans (0.80-0.97), FreeSans (0.79-0.97) and WenQuanYi Zen Hei (0.74-0.95) are
+  narrower; Inter, the widest substitute seen, reaches 1.047 (MMMMMM).
+  Against the reviewers' fuzz (300 random emails x 5 fonts x 320/360/430 px)
+  nothing that overflows or splits passes the gate; 47 of the 171 refusals
+  would have fitted every tested font: 14 of those are compacted KPI numbers
+  (refused by design, the shown number differs) and 27 are values within the
+  6 % margin. The 360 realistic emails all pass.
 - Image names are Content-IDs, `figure-<n>.<12 hex of the PNG's SHA-256>.png@ieevisualizer`:
   the same picture keeps its name, other data gives another. A figure's
   `alt` summarises its measured values (references resolved first) for

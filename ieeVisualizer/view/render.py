@@ -220,33 +220,32 @@ def render_view(view: ViewSpec, format: str = "svg", *, width: float | None = No
                     f"{px_w * px_h / 1e6:.1f} megapixels; the limit is "
                     f"{MAX_PNG_PIXELS / 1e6:g}. Render HTML or SVG, lower width or scale, or "
                     "split the view.")])
-            content = png_with_glyph_check(items, width, height, scale, figs.png_array,
-                                           layout_warnings)
+            content = to_png(items, width, height, scale, figs.png_array)
+            layout_warnings += label_glyphs(items)
     return RenderResult(content=content, format=format, media_type=VIEW_FORMATS[format],
                         adapter_name=RENDERER_NAME, adapter_version=RENDERER_VERSION,
                         warnings=layout_warnings + list(figs.warnings))
 
 
-def labels_of(items: list) -> list[str]:
-    """Every text the display list draws (flows included)."""
-    out: list[str] = []
-    for it in items:
-        if isinstance(it, Group):
-            out += labels_of(it.items)
-        elif isinstance(it, Label):
-            out.append(it.text)
-    return out
+def label_glyphs(items: list, path: str = "") -> list[RenderWarning]:
+    """``glyph_missing`` for the display list's text as the PNG draws it
+    (:func:`.draw.label_font`: family, weight and style), flows included."""
+    from ..render.mpl.legibility import glyph_warning, missing_glyphs_in
+    from .draw import label_font
 
+    found: list[tuple[str, str]] = []
 
-def png_with_glyph_check(items: list, width: float, height: float, scale: float, embed,
-                         warnings: list[RenderWarning], path: str = "") -> bytes:
-    """``to_png`` plus ``glyph_missing`` for what the draw could not draw."""
-    from ..render.mpl.legibility import glyph_signals, glyph_warning
+    def walk(its: list) -> None:
+        for it in its:
+            if isinstance(it, Group):
+                walk(it.items)
+            elif isinstance(it, Label) and it.text.strip():
+                m = missing_glyphs_in(it.text, label_font(it))
+                if m:
+                    found.append((it.text, m))
 
-    with glyph_signals() as missing:
-        content = to_png(items, width, height, scale, embed)
-    warnings += glyph_warning(missing, labels_of(items), path)
-    return content
+    walk(items)
+    return glyph_warning(found, path)
 
 
 def small_text(items: list, profile: Any) -> list[RenderWarning]:

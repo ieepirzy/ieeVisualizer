@@ -91,7 +91,8 @@ def test_email_images_fit_the_column_and_are_attached(briefing_email):
         assert re.search(r'alt="Bookings and quotes per week\. bookings: 6 values from 41 to 55',
                          tag)
     (png,) = briefing_email.images.values()
-    assert png_width(png) == get_profile("email-phone").pixel_width
+    prof = get_profile("email-phone")  # laid out for the 296 px content of a 320 px screen
+    assert png_width(png) == round((prof.css_width - 24) * prof.scale)
     assert not [w for w in briefing_email.warnings if w.code.startswith("legibility_")]
 
 

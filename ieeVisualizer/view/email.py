@@ -33,7 +33,7 @@ from typing import Any
 from ..render import RenderRequest, RenderWarning, Resolver, get_profile, render
 from ..spec import SpecValidationError
 from ..spec._common import ptr_join
-from .draw import Group, Rect, esc
+from .draw import Group, Rect, esc, to_png
 from .flow import flow_outline
 from .html import markdown_html
 from .layout import (
@@ -48,7 +48,7 @@ from .layout import (
 )
 from .limits import MAX_PNG_PIXELS, MAX_PNG_SIDE_PX
 from .model import Card, FigureComponent, Flow, Grid, Kpi, Node, Note, Stack, Table, Text, ViewSpec
-from .render import png_with_glyph_check
+from .render import label_glyphs
 from .text import NO_DATA, NULL_CELL
 from .validate import errors
 
@@ -65,10 +65,13 @@ MIN_TILE = 180
 #: Gmail cuts a message whose HTML exceeds about 102 KB behind "View entire
 #: message"; the rest is not shown in the mail view.
 GMAIL_CLIP_BYTES = 102 * 1024
-#: Email clients may substitute Verdana/Arial for DejaVu Sans: a value that
-#: must stay whole is trusted to fit only with this much extra room (see
-#: :func:`whole_width`, the one measure behind every such decision).
-SLACK = 1.2
+#: Extra room a value that must stay whole needs over its DejaVu Sans width
+#: (:func:`whole_width`, the one measure behind every such decision).
+#: Measured in Chromium at 13 px (normal and bold; dates, grouped numbers,
+#: words, WWWWWW/MMMMMM, CJK): DejaVu Sans renders at 1.000 of this model;
+#: Liberation Sans, FreeSans and WenQuanYi Zen Hei are narrower; Inter, the
+#: widest fallback seen, reaches 1.047 on WWW/MMM. 6 % covers that.
+SLACK = 1.06
 #: Horizontal space a table card takes from its slot: padding, border, margin.
 CARD_INSET = 30
 #: ... and a KPI tile: padding and border.
@@ -331,9 +334,9 @@ class _Email:
                 f"the flow's image would be {px_w} x {px_h} px; the limits are "
                 f"{MAX_PNG_SIDE_PX} px a side and {MAX_PNG_PIXELS / 1e6:g} megapixels. Split "
                 "the flow or use a grid layout."))])
-        png = png_with_glyph_check([Rect(0, 0, w, h, fill="#ffffff"), Group(items, scale=s)],
-                                   w, h, self.p.scale, lambda e, pw, ph: None, self.warnings,
-                                   path)
+        png = to_png([Rect(0, 0, w, h, fill="#ffffff"), Group(items, scale=s)], w, h,
+                     self.p.scale, lambda e, pw, ph: None)
+        self.warnings += label_glyphs(items, path)
         title = (f'<div style="{FONT}font-size:{self.px(15):g}px;font-weight:bold;color:{INK};'
                  f'margin:0 0 6px 0">{esc(f.title)}</div>' if f.title else "")
         lis = "".join(f"<li>{esc(line.split('. ', 1)[1])}</li>"
@@ -365,7 +368,9 @@ def render_email(view: ViewSpec, profile: str = "email-phone", *,
     if errs:
         raise SpecValidationError(errs)
     e = _Email(view, prof, resolver, image_src or (lambda name: f"cid:{name}"))
-    lo = min(prof.css_width, COLUMN)
+    # the profile width is the narrowest screen; the content is that minus the
+    # outer gutters (296 px on a 320 px phone)
+    lo = min(prof.css_width - 2 * GUTTER, COLUMN)
     body = e.node(view.root, "/root", lo, COLUMN)
     title = (f'<h1 style="{FONT}font-size:24px;line-height:1.25;color:{INK};margin:0 0 16px 0">'
              f"{esc(view.title)}</h1>" if view.title else "")

@@ -246,3 +246,37 @@ def test_whole_values_too_wide_for_their_card_are_refused(depth):
         assert "this table gets on a phone screen" in " ".join(email.html.split())
     assert "value_too_wide_for_screen" in {w.code for w in email.warnings}
     assert _gated(email)
+
+
+def _updated_at(depth: int, grid: bool) -> ViewSpec:
+    import datetime as dt
+
+    tz = dt.timezone(dt.timedelta(hours=3))
+    cols = {"Updated at": [dt.datetime(2026, 10, 5, 8, 30, tzinfo=tz),
+                           dt.datetime(2026, 10, 12, 9, 15, tzinfo=tz)],
+            "Revenue €": [48250.5, 51230.75], "Bookings": [41, 44],
+            "Crew": ["Helsinki A", "Espoo B"]}
+    node = Table(data="t", title="Weekly")
+    for _ in range(depth):
+        node = Card(title="Section", children=[node])
+    root = (Grid(columns=2, children=[node, Kpi(label="Bookings", value=85)]) if grid
+            else Stack(children=[node]))
+    return ViewSpec(datasets={"t": DataSnapshot.from_columns(cols)}, root=root)
+
+
+def test_room_is_the_true_content_width_of_the_narrowest_screen():
+    """320 px screen - 2 x 12 px gutters - 2 cards x 26 px - the table card's
+    30 px = 214 px for a value two cards deep."""
+    import datetime as dt
+
+    when = dt.datetime(2026, 10, 5, 8, 30, 0, 123456, tzinfo=dt.timezone(dt.timedelta(hours=3)))
+    email = render_email(ViewSpec(
+        datasets={"t": DataSnapshot.from_columns({"at": [when] * 2, "n": [1, 2]})},
+        root=Card(children=[Card(children=[Table(data="t")])])))
+    (w,) = [w for w in email.warnings if w.code == "value_too_wide_for_screen"]
+    assert "the 214 px they get on a 320 px screen" in w.message
+
+
+def test_a_tz_aware_updated_at_column_in_a_grid_card_is_not_refused():
+    """Measured margin (6 %), not 20 %: this fits every tested font at 320 px."""
+    check_legible(render_email(_updated_at(1, True)))
