@@ -50,6 +50,10 @@ def _font_configs() -> dict:
     if "Liberation" in findfont(FontProperties(family="Liberation Sans")):
         configs["liberation-then-dejavu"] = FontProperties(family=["Liberation Sans",
                                                                    "DejaVu Sans"])
+    from ieeVisualizer.render.mpl.style import with_fallbacks
+
+    if len(with_fallbacks("DejaVu Sans")) > 1:  # the installed CJK fallback (test_font_fallback)
+        configs["dejavu-then-cjk"] = FontProperties(family=with_fallbacks("DejaVu Sans"))
     return configs
 
 

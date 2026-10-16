@@ -25,13 +25,23 @@ from ieeVisualizer.view import (
     render_email,
     render_view,
 )
-from ieeVisualizer.view.examples import reporting_pipeline, weekly_briefing
+from ieeVisualizer.view.examples import weekly_briefing
 from ieeVisualizer.view.model import FlowEdge
 
 
+def _hub_flow() -> ViewSpec:
+    """Six boxes side by side in one layer: too wide for a phone even with
+    the narrowest boxes."""
+    nodes = [FlowNode("hub", "Source")] + [FlowNode(f"t{i}", f"Destination {i}")
+                                           for i in range(6)]
+    edges = [FlowEdge("hub", f"t{i}") for i in range(6)]
+    return ViewSpec(root=Stack([Flow(nodes=nodes, edges=edges,
+                                     layout=FlowLayout("layered", "TB"))]))
+
+
 def test_a_flow_too_small_to_read_is_reported_once_and_fails_the_gate():
-    for result in (render_email(reporting_pipeline()),
-                   render_view(reporting_pipeline(), "png", profile="email-phone")):
+    for result in (render_email(_hub_flow()),
+                   render_view(_hub_flow(), "png", profile="email-phone")):
         codes = [w.code for w in result.warnings]
         assert codes.count("flow_text_too_small") == 1
         assert "legibility_text_too_small" not in codes  # the same problem, said once
@@ -39,9 +49,9 @@ def test_a_flow_too_small_to_read_is_reported_once_and_fails_the_gate():
             check_legible(result)
 
 
-def test_a_cut_table_in_the_phone_png_fails_the_gate():
-    with pytest.raises(LegibilityError, match="table_cells_truncated"):
-        check_legible(render_view(weekly_briefing(), "png", profile="email-phone"))
+def test_a_table_too_wide_for_the_phone_png_is_cards_and_passes_the_gate():
+    result = render_view(weekly_briefing(), "png", profile="email-phone")
+    check_legible(result)  # no cell cut (tests/view/test_view_mobile.py checks the cards)
 
 
 def test_the_briefing_email_passes_the_gate():
@@ -157,7 +167,8 @@ def test_lines_are_limited_in_bytes_not_characters():
 
 
 @pytest.mark.filterwarnings("ignore:Glyph .* missing from font")  # the case under test
-def test_missing_glyphs_fail_the_gate():
+def test_missing_glyphs_fail_the_gate(monkeypatch):
+    no_cjk_fallback(monkeypatch)
     from ieeVisualizer.render import get_profile, render
     from ieeVisualizer.spec import FigureSpec, LineMark
 
@@ -172,6 +183,12 @@ def test_missing_glyphs_fail_the_gate():
     for out in (result, render_email(flow), render_view(flow, "png", profile="email-phone")):
         with pytest.raises(LegibilityError, match="glyph_missing"):
             check_legible(out)
+
+
+def no_cjk_fallback(monkeypatch) -> None:
+    """These cases use CJK as text the fonts lack: without the CJK fallback a
+    host may have installed (tests/render/test_font_fallback.py covers it)."""
+    monkeypatch.setattr("ieeVisualizer.render.mpl.style.fallback_families", lambda: ())
 
 
 def _gated(result) -> bool:
@@ -189,7 +206,8 @@ def _gated(result) -> bool:
     ("Status ✓ ⚠ ok", "fallback-list-test", False),  # drawn by the fallback font
     ("Hyvä päivä: äöå ÄÖÅ", None, False),
 ])
-def test_missing_glyphs_are_taken_from_the_real_draw(title, theme, refused):
+def test_missing_glyphs_are_taken_from_the_real_draw(monkeypatch, title, theme, refused):
+    no_cjk_fallback(monkeypatch)
     import dataclasses
 
     from ieeVisualizer.render import get_profile, render
@@ -280,3 +298,41 @@ def test_room_is_the_true_content_width_of_the_narrowest_screen():
 def test_a_tz_aware_updated_at_column_in_a_grid_card_is_not_refused():
     """Measured margin (6 %), not 20 %: this fits every tested font at 320 px."""
     check_legible(render_email(_updated_at(1, True)))
+
+
+@pytest.mark.parametrize("aspect", [None, 0.42, 0.6, 1.0])
+def test_bar_comparison_alone_in_a_phone_email_passes_the_gate(aspect):
+    """Its centred title used to be measured before the value labels and
+    constrained layout moved the axes, and ran off the image."""
+    from ieeVisualizer import templates
+
+    t = templates.get("bar_comparison")
+    kw = {} if aspect is None else {"aspect": aspect}
+    view = ViewSpec(title="Weekly", figures={"f": t.build_payload(t.example())},
+                    root=Stack([FigureComponent(figure="f", **kw)]))
+    check_legible(render_email(view, "email-phone"))
+
+
+def test_a_realistic_finnish_briefing_email_passes_the_gate():
+    from ieeVisualizer import templates
+    from ieeVisualizer.view import Note
+
+    figs = {n: templates.get(n).build_payload(templates.get(n).example())
+            for n in ("funnel", "bar_comparison")}
+    snap = DataSnapshot.from_columns({
+        "Toimipiste": ["Helsinki", "Tampere", "Turku", "Oulu"],
+        "Muutot (kpl)": [128, 64, 41, None],
+        "Liikevaihto (EUR)": [182340.5, 90210.0, 55012.25, None],
+        "Huomio": ["Kaksi autoa huollossa viikolla 41", "Normaali",
+                   "Uusi asiakasvastaava aloitti", "Ei tietoa"]})
+    view = ViewSpec(title="Viikkokatsaus — viikko 42", figures=figs, datasets={"t": snap},
+                    root=Stack([
+                        Text("Tilaukset kasvoivat. Oulun luvut puuttuvat lähteestä."),
+                        Grid([Kpi("Muutot", 233, unit="kpl", source="t", dataset="t"),
+                              Kpi("Kustannus/muutto", None, unit="EUR", source="ei kytketty")],
+                             columns=2),
+                        FigureComponent(figure="funnel", aspect=0.6),
+                        FigureComponent(figure="bar_comparison", aspect=0.6),
+                        Table("t", title="Toimipisteet"),
+                        Note("Oulu: ei toimitettu, ei nolla.")]))
+    check_legible(render_email(view, "email-phone"))

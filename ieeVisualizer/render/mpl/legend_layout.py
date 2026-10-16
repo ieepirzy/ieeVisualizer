@@ -142,7 +142,29 @@ def _outside(ctx: Any, handles: list[Any], labels: list[str], kw: dict[str, Any]
     shift = ScaledTranslation(0.0, -gap, fig.dpi_scale_trans)
     probe = ax.legend(handles, labels, **kw)  # one column: the widest entry sets the width
     column_in = probe.get_window_extent().width / fig.dpi
+    room_in = 0.95 * width_in
+    if ctx.narrow:
+        # a legend wider than the axes it is centred under makes constrained
+        # layout narrow the axes on every pass; long names wrap (every word
+        # kept) so that one column fits the plot's width
+        room_in = frame.width / fig.dpi
+        if column_in > room_in:
+            labels = _wrapped(probe, labels, (column_in - room_in) * 72.0)
+            probe.remove()
+            probe = ax.legend(handles, labels, **kw)
+            column_in = probe.get_window_extent().width / fig.dpi
     probe.remove()
-    ncols = int(max(1, min(len(handles), (0.95 * width_in) // max(column_in, 1e-9))))
+    ncols = int(max(1, min(len(handles), room_in // max(column_in, 1e-9))))
     return ax.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.0),
                      bbox_transform=ax.transAxes + shift, ncols=ncols, **kw)
+
+
+def _wrapped(probe: Any, labels: list[str], over_pt: float) -> list[str]:
+    """``labels`` wrapped at spaces so the widest is ``over_pt`` narrower."""
+    from .legibility import wrap
+
+    texts = probe.get_texts()
+    widest = max(t.get_window_extent().width for t in texts) * 72.0 / probe.figure.dpi
+    size = texts[0].get_fontsize()
+    room = max(widest - over_pt, 4 * size)
+    return [wrap(lab, size, room) for lab in labels]

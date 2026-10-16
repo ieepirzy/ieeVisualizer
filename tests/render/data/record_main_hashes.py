@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 
 from ieeVisualizer import templates
+from ieeVisualizer.network import render_network
 from ieeVisualizer.render import RenderRequest, render
 from ieeVisualizer.view import render_view
 from ieeVisualizer.view.examples import reporting_pipeline, weekly_briefing
@@ -29,6 +30,13 @@ def _template(name, fmt):
 CASES = {f"{name}.{fmt}": _template(name, fmt)
          for name in ("timeseries", "bar_comparison", "funnel", "vector_field_2d")
          for fmt in ("svg", "png")}
+# network templates: org_chart is left out on purpose - its labels moved to
+# places clearly their own node's (docs/MOBILE_AND_EMAIL.md), so its bytes
+# differ from main's by design
+CASES.update({f"{name}.{fmt}": (lambda name=name, fmt=fmt: render_network(
+    templates.get(name).build_payload(templates.get(name).example()),
+    RenderRequest(format=fmt)).content)
+    for name in ("network", "dependency_map") for fmt in ("svg", "png")})
 CASES.update({f"view-{n}.{fmt}": (lambda b=b, fmt=fmt: render_view(b(), fmt).content)
               for n, b in (("briefing", weekly_briefing), ("pipeline", reporting_pipeline))
               for fmt in ("svg", "html", "png")})

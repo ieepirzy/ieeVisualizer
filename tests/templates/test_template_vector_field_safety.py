@@ -21,20 +21,24 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 VF = get("vector_field_2d")
 
 _CHILD = """
-import json, sys, time
+import json, sys
+sys.path.insert(0, "tests")
+from cost import measure
 from ieeVisualizer.templates import TemplateInputError, get
 vf = get("vector_field_2d")
 params = {"u": sys.argv[1], "v": "x", "grid": 3, **json.loads(sys.argv[2])}
-t = time.perf_counter()
-out = {"check": [[i.path, i.code] for i in vf.check(None, **params) if i.severity == "error"]}
-out["check_seconds"] = time.perf_counter() - t
-t = time.perf_counter()
-try:
-    vf.build(None, **params)
-    out["build"] = "built"
-except TemplateInputError as e:
-    out["build"] = [[i.path, i.code] for i in e.issues if i.severity == "error"]
-out["build_seconds"] = time.perf_counter() - t
+# reference seconds (tests/cost.py), not wall-clock: a busy machine does not count
+with measure() as cost:
+    out = {"check": [[i.path, i.code] for i in vf.check(None, **params)
+                     if i.severity == "error"]}
+out["check_seconds"], out["check_cost"] = cost.seconds, repr(cost)
+with measure() as cost:
+    try:
+        vf.build(None, **params)
+        out["build"] = "built"
+    except TemplateInputError as e:
+        out["build"] = [[i.path, i.code] for i in e.issues if i.severity == "error"]
+out["build_seconds"], out["build_cost"] = cost.seconds, repr(cost)
 print(json.dumps(out))
 """
 

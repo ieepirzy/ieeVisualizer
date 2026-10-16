@@ -107,11 +107,23 @@ def fit_value_labels(ctx: Any, rounds: int = 4) -> None:
     old = fig.get_layout_engine()
     if not isinstance(old, ConstrainedLayoutEngine):
         return
+    if ctx.min_pt:  # profile renders: the value axis is widened to hold the labels, so
+        # constrained layout must not also shrink the axes for them (the two
+        # would chase each other and squeeze the bars)
+        for lab in ctx.value_labels:
+            lab.text.set_in_layout(False)
     issued: list = []  # the warnings the latest draw gave
+    start: list = []  # profile renders: the axes' limits before any widening
     polar = ctx.spec.coordinate_system == "polar"
 
     class ValueLabelLayout(ConstrainedLayoutEngine):
         def execute(self, figure: Any) -> Any:
+            if ctx.min_pt:  # profile renders: every draw widens from the spec's limits,
+                # not from what a measuring pass at another layout left behind
+                if not start:
+                    start.extend((ctx.ax.get_xlim(), ctx.ax.get_ylim()))
+                ctx.ax.set_xlim(*start[0])
+                ctx.ax.set_ylim(*start[1])
             out = super().execute(figure)
             if polar:
                 from .polar_notes import place_polar_notes
@@ -134,6 +146,8 @@ def fit_value_labels(ctx: Any, rounds: int = 4) -> None:
                 out = super().execute(figure)
                 if _place_notes(ctx) | _arrange(ctx, status):
                     out = super().execute(figure)
+            if ctx.min_pt and ctx.text_annotations and _clear_texts(ctx):
+                out = super().execute(figure)
             found = [status["omitted"]] if status.get("omitted") else []
             _sync(ctx, issued, found + _unfitted(ctx))
             return out
@@ -254,6 +268,13 @@ def _arrange(ctx: Any, status: dict) -> bool:
     if not culprits:
         culprits = _overlapping(labels)
     status["omitted"] = None
+    ctx.plot_growth.pop("value_labels", None)
+    if culprits and ctx.min_pt and all(lab.ch == "x" for lab in labels) \
+            and not {lab.layer for lab in culprits} & ctx.overlapping_bar_layers:
+        # horizontal bars: a taller plot gives each row room for its label
+        ctx.plot_growth["value_labels"] = max(
+            (_thickness(lab) * min_pt / lab.text.get_fontsize() + gap) / max(r, 1e-9)
+            for lab, r in zip(labels, room)) * 1.04
     if culprits:
         for lab in labels:
             lab.text.set_visible(False)
@@ -402,6 +423,65 @@ def _fit_axis(ctx: Any, ch: str, labels: list[Any], pad: float) -> bool:
     inv = t.inverted()
     lo, hi = (float(v) for v in inv.transform([new_ua, new_ub]))
     (ax.set_xlim if ch == "x" else ax.set_ylim)(lo, hi)
+    return True
+
+
+def _clear_texts(ctx: Any) -> bool:
+    """Profile renders: when a text annotation anchored on a row of
+    horizontal bars (a funnel's rate column) is drawn over a value label,
+    every such annotation moves under its own row's value label, wrapped to
+    the room left of the axes' right edge, and the plot is grown
+    (``plot_growth``) until each row holds both. Returns whether they moved.
+    Words and rows stay; only the position changes."""
+    from matplotlib.text import Annotation
+
+    from .legibility import wrap
+
+    labels = [lab for lab in ctx.value_labels if lab.ch == "x" and lab.text.get_visible()]
+    ctx.plot_growth.pop("annotations", None)
+    rows = []
+    for a in ctx.text_annotations:
+        if not (isinstance(a, Annotation) and a.get_visible() and a.get_text()):
+            continue
+        orig = getattr(a, "_ieev_original", None)
+        if orig is None:
+            orig = a._ieev_original = (a.get_text(), a.xy, tuple(a.xyann), a.get_ha(),
+                                       a.get_va(), a.get_in_layout())
+        else:  # every layout decides again from the annotation as drawn
+            a.set_text(orig[0])
+            a.xy, a.xyann = orig[1], orig[2]
+            a.set_ha(orig[3])
+            a.set_va(orig[4])
+            a.set_in_layout(orig[5])
+        try:
+            y = float(ctx.ax.yaxis.convert_units(orig[1][1]))
+        except (TypeError, ValueError):
+            continue
+        own = [lab for lab in labels if abs(lab.centre - y) < 1e-9]
+        if own:
+            rows.append((a, own[-1], orig[0]))
+    exts = [lab.text.get_window_extent() for lab in labels]
+    right = ctx.ax.get_window_extent().x1
+    if not any(a.get_window_extent().overlaps(e) or a.get_window_extent().x1 > right + 0.5
+               for a, _, _ in rows for e in exts):
+        return False
+    dpi = ctx.fig.dpi
+    need = 1.0
+    for a, lab, text in rows:
+        lext = lab.text.get_window_extent()
+        room_pt = (right - lext.x0) * 72.0 / dpi - VALUE_LABEL_PAD_PT
+        a.set_text(wrap(" ".join(text.split()), a.get_fontsize(),
+                        max(room_pt, 4 * a.get_fontsize())))
+        a.xy = lab.text.xy
+        a.xyann = (lab.text.xyann[0], -lext.height / 2 * 72.0 / dpi - CELL_GAP_PT)
+        a.set_ha("left")
+        a.set_va("top")
+        a.set_in_layout(False)
+        # the label (centred on the bar) and the text under it fit the row
+        need = max(need, 2 * (lext.height / 2 + a.get_window_extent().height
+                              + 2 * CELL_GAP_PT * dpi / 72.0) / max(_cell_px(ctx, lab), 1e-9))
+    if need > 1.0:
+        ctx.plot_growth["annotations"] = need * 1.04
     return True
 
 

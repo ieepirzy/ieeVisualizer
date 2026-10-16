@@ -161,6 +161,10 @@ class FunnelTemplate(ComponentTemplate):
                 "zero_denominator": "rate is null (undefined), never 0 or infinity",
             },
             "label_locale": loc.tag,
+            # the rate texts' x is a column position, not data: a profile
+            # render may move these exact notes (text, x and row must all
+            # match) under their own row's value label
+            "row_notes": [{"text": a.text, "x": a.x, "y": a.y} for a in spec.annotations],
         }
         return spec
 

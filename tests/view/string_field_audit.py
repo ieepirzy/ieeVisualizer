@@ -5,11 +5,16 @@ the view holding a 10 000-character value (one unbroken word, and words) as
 many times as validation allows, renders SVG, HTML and PNG (at the default
 scale, 2) and
 prints name, shape, count, seconds per format tab-separated. A PNG
-refused with view_too_large prints refused <seconds>.
+refused with view_too_large prints refused <seconds>. Seconds are reference
+seconds (tests/cost.py, which the test puts on the path): CPU time scaled by
+a reference workload timed before and after each field, so a busy machine
+does not count against the budget.
 """
 import dataclasses
 import sys
 import time
+
+from cost import reference_cpu, reference_seconds
 
 from ieeVisualizer.render import RenderError
 from ieeVisualizer.spec import DataSnapshot, Provenance
@@ -116,16 +121,22 @@ elif args:
 print("FIELDS", len(FIELDS), len(names), sep="\t", flush=True)
 for name in names:
     build = FIELDS[name]
+    rows = []
+    before = reference_cpu()
     for shape, s in (("word", "x" * 10_000), ("words", ("word " * 2000)[:10_000])):
         k = max_count(build, s)
         v = build(k, s)
         times = []
         for fmt in ("svg", "html", "png") if shape == "word" else ("svg", "html"):
-            t = time.time()
+            t = time.process_time()
             try:
                 render_view(v, fmt)
-                times.append(str(round(time.time() - t, 2)))
+                times.append(("", time.process_time() - t))
             except RenderError as e:
                 assert e.issues[0].code == "view_too_large", e
-                times.append(f"refused {round(time.time() - t, 2)}")
-        print(name, shape, k, *times, sep="\t", flush=True)
+                times.append(("refused ", time.process_time() - t))
+        rows.append((shape, k, times))
+    ref = max(before, reference_cpu())
+    for shape, k, times in rows:
+        print(name, shape, k, *(f"{tag}{round(reference_seconds(cpu, ref), 2)}"
+                                for tag, cpu in times), sep="\t", flush=True)

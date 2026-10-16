@@ -26,6 +26,13 @@ CONFIGS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _no_cjk_fallback(monkeypatch):
+    """These tests use CJK as text the fonts lack: without the CJK fallback
+    a host may have installed (tests/render/test_font_fallback.py covers it)."""
+    monkeypatch.setattr("ieeVisualizer.render.mpl.style.fallback_families", lambda: ())
+
+
 def fig(title: str) -> FigureSpec:
     data = DataSnapshot.from_columns({"x": [0, 1, 2], "y": [1, 2, 3]})
     return FigureSpec(title=title, datasets={"d": data},

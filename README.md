@@ -133,6 +133,8 @@ An `AnimationSpec` is a FigureSpec plus a timeline: a parameter sweep (a
 function-mark or template parameter) or a frame column (e.g. one frame per
 week). It renders to GIF (and MP4 when ffmpeg is installed) with every frame
 drawn by the static renderer, and exports with a poster PNG and a manifest.
+An optional Manim adapter (`pip install -e ".[manim]"`) covers a narrow
+subset and is used only when requested (`AnimationRequest(adapter="manim")`).
 Every render and export runs under an enforced wall-clock deadline (60 s by
 default). See [docs/ANIMATION.md](docs/ANIMATION.md).
 

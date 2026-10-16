@@ -24,6 +24,13 @@ dev = [
     "pyyaml",
     "ruff",
 ]
+# Optional Manim animation adapter (ieeVisualizer.animation.manim_adapter).
+# Needs system Cairo and Pango development files to build manimpango/pycairo
+# (Debian/Ubuntu: libcairo2-dev libpango1.0-dev pkg-config); no LaTeX needed.
+# Tested with manim 0.22.0. CI does not install it.
+manim = [
+    "manim>=0.22",
+]
 
 # Discover subpackages too; a bare ``packages = ["ieeVisualizer"]`` ships only
 # the top-level package and silently drops e.g. ``ieeVisualizer.spec``.

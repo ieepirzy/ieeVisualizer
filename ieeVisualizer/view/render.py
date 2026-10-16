@@ -26,6 +26,7 @@ import xml.etree.ElementTree as ET  # noqa: N817
 from typing import Any
 
 from ..render import RenderError, RenderRequest, RenderResult, RenderWarning, Resolver, render
+from ..render.mpl.style import quiet_fallback_weights
 from ..spec import SpecValidationError, ValidationIssue
 from .draw import Embed, Group, Label, esc, num, to_png, to_svg
 from .layout import NARROW_MIN_SLOT, layout_view
@@ -68,6 +69,23 @@ class FigureRenderer:
                                  for w in result.warnings if w not in self.warnings)
             self.cache[key] = result
         return self.cache[key]
+
+    def fitted_height(self, spec: Any, w: float, h: float) -> float:
+        """The height (CSS px) a profile render of ``spec`` ``w`` px wide
+        takes when its content needs more than ``h`` (whole px, so the
+        render at that height needs no more)."""
+        import math
+
+        from ..render import build_figure
+
+        req = RenderRequest(format="png", width=w / 96, height=h / 96, units="in", dpi=96.0,
+                            profile=self.profile.name, display_width=float(w))
+        try:
+            built = build_figure(spec, req, resolver=self.resolver)
+        except Exception:  # noqa: BLE001 - the real render reports the error
+            return h
+        need = built.figure.get_size_inches()[1] * 96.0
+        return float(math.ceil(need) + 1) if need > h + 0.5 else h
 
     def svg_parts(self, e: Embed) -> tuple[str, str]:
         """``(viewBox, inner markup)`` of the figure's SVG, ids prefixed."""
@@ -158,6 +176,7 @@ def nest_parts(svg: bytes, prefix: str) -> tuple[str, str]:
     return root.get("viewBox", "0 0 100 100"), inner
 
 
+@quiet_fallback_weights()
 def render_view(view: ViewSpec, format: str = "svg", *, width: float | None = None,
                 scale: float | None = None, resolver: Resolver | None = None,
                 profile: str | None = None) -> RenderResult:
@@ -200,7 +219,8 @@ def render_view(view: ViewSpec, format: str = "svg", *, width: float | None = No
 
         content = render_html(view, figs, width).encode("utf-8")
     else:
-        items, height, _ = layout_view(view, width, prof, layout_warnings)
+        items, height, _ = layout_view(view, width, prof, layout_warnings,
+                                       None if prof is None else figs.fitted_height)
         if prof is not None:
             layout_warnings += small_text(items, prof)
         if format == "svg":

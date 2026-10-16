@@ -255,6 +255,57 @@ warnings, library versions and `created_at`.
 `pyproject.toml`; CI runs the same command). They render real animations to
 calibrate the cost estimate; run them with `python -m pytest -m slow`.
 
+## Manim adapter (optional, `pip install -e ".[manim]"`)
+
+Verified here with manim 0.22.0 (Cairo renderer, Python 3.13; CI does not
+install it, its render tests are skipped there). Registered when manim is
+installed (found without importing it; the import is tried, once, only when
+the adapter is asked for, and failing it is unmet `manim is not importable:
+<reason>`) and **never selected automatically**: its frames do not look like
+the Matplotlib frames, so it is used only when named
+(`AnimationRequest(adapter="manim")`). Supported, nothing else:
+
+* a `parameter_sweep` of symbolic one-variable `function` marks in
+  `cartesian2d` with linear axes. Only the target layer's parameter is swept;
+  a curve is cut where it leaves the axis range, never clamped; more than
+  1,000 pieces per frame is `curve_too_fragmented`;
+* a `parameter_sweep` of `vector_field_2d` in expression mode, sweeping
+  `constants.<name>` or `scale`: arrows with the template's `scale`, or ONE
+  length scale for the whole clip, or (`normalize`) one length.
+
+**Support is an allowlist** (`manim_adapter.DRAWN`): any spec field or
+template parameter set away from its default that Manim does not draw, any
+parameter Manim cannot sweep and `axis_limits` other than `fixed` are
+reported by `ManimAdapter().unmet(...)` and refused; `test_anim_manim.py`
+sets every field of every spec class and template parameter and requires
+each to be drawn or unmet, and checks that allowlisting an undrawn parameter
+(`vector_unit`) makes that test fail. Drawn by Matplotlib's rules: the title
+(with exactly the state's label when `label_frames`), the wrapped caption,
+axis titles (x: the variable; y: the layer name or expression; `label
+(unit)` without repeating the unit), the requested limits exactly, the
+theme's background, text, series colours and reference alpha (a reference
+vector field is translucent), `color`/`linewidth` read by the Matplotlib
+style parser, and the same `nonfinite_samples_omitted` /
+`null_values_omitted` warnings.
+
+**Layout.** Text keeps its point size at the request's dpi, as in
+Matplotlib; every text has its own band (a test checks that no text
+bounding box intersects another or the plot, and that every arrow is inside
+the plot); the plot gets the rest. Arrow tails are on the grid points and
+the axes reach past the grid by the longest arrow. A frame that leaves less
+than 1.2 x 0.8 in for the plot is `frame_too_small` (use a larger size or a
+lower dpi). Known differences: axes cross at the origin, only end values are
+tick-labelled.
+
+The render runs in the deadline-killed worker by default; Manim's config is
+process-global, so inline renders are serialized behind `RENDER_LOCK`,
+acquired within the deadline. Manim's camera draws each output frame (a
+held state once), streamed into the Matplotlib adapter's encoders (Pillow
+GIF, ffmpeg MP4; MP4 therefore needs ffmpeg). Manim never writes a movie:
+its threaded encoder gave different frames for the same spec in one
+process, and the lossy round trip blurred GIFs and posters; the poster is
+the drawn frame.
+
 ## Decisions and gaps
 
 * A declarative timeline grammar (sweep / frame column); no hook for

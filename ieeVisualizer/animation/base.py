@@ -181,7 +181,7 @@ def enforce_limits(anim: AnimationSpec, request: AnimationRequest, n_states: int
     (``animation_too_expensive``, an early refusal only: the deadline bounds
     time). ``figure``: the resolved base figure (``None`` for a template
     sweep; default ``anim.figure``). Returns the output frame count."""
-    from .cost import MAX_RENDER_WORK_US, matplotlib_work_us
+    from .cost import MAX_RENDER_WORK_US, manim_work_us, matplotlib_work_us
     from .limits import frame_limit_issues, frame_total
 
     errors = [i for i in frame_limit_issues(anim, n_states) if i.severity == "error"]
@@ -199,9 +199,12 @@ def enforce_limits(anim: AnimationSpec, request: AnimationRequest, n_states: int
                                      f"{n_frames} frames of {w}x{h} px = {w * h * n_frames} "
                                      f"pixels exceed {MAX_TOTAL_PIXELS}; lower the size, dpi, "
                                      "fps, number of values or hold frames.")])
-    work = matplotlib_work_us(anim, (w, h), n_states,
-                              figure if figure is not None else anim.figure, index)
-    unit = f"{n_states} states"
+    if cost_model == "manim":
+        work, unit = manim_work_us(anim, n_frames), f"{n_frames} output frames"
+    else:
+        work = matplotlib_work_us(anim, (w, h), n_states,
+                                  figure if figure is not None else anim.figure, index)
+        unit = f"{n_states} states"
     if work > MAX_RENDER_WORK_US:
         raise AnimationError([_issue("", "animation_too_expensive",
                                      f"{unit} would take an estimated {work / 1e6:.0f} s to render "
@@ -285,9 +288,11 @@ class AnimationRegistry:
         cands = [self.get(request.adapter)] if request.adapter else list(self._adapters.values())
         unmet: dict[str, list[str]] = {}
         for a in cands:
-            missing = a.unmet(anim, request)
             if not request.adapter and not getattr(a.capabilities, "auto_select", True):
-                missing = [*missing, f"automatic selection (request it with adapter={a.name!r})"]
+                # not asked about further: checking may be costly (manim's import)
+                unmet[a.name] = [f"automatic selection (request it with adapter={a.name!r})"]
+                continue
+            missing = a.unmet(anim, request)
             if not missing:
                 return a
             unmet[a.name] = missing
@@ -302,13 +307,17 @@ _DEFAULT: AnimationRegistry | None = None
 
 
 def default_animation_registry() -> AnimationRegistry:
-    """The registry :func:`render_animation` uses: the Matplotlib adapter."""
+    """Matplotlib, then the Manim adapter (never selected automatically; when
+    named without manim installed, its unmet list says so, as a structured
+    ``no_capable_adapter``; registering it never imports manim)."""
     global _DEFAULT
     if _DEFAULT is None:
+        from .manim_adapter import ManimAdapter
         from .mpl import MatplotlibAnimationAdapter
 
         reg = AnimationRegistry()
         reg.register(MatplotlibAnimationAdapter())
+        reg.register(ManimAdapter())
         _DEFAULT = reg
     return _DEFAULT
 
