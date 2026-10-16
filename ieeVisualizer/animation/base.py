@@ -97,6 +97,10 @@ class AnimationResult:
     #: The poster state's FigureSpec, when the adapter drew one (its data is
     #: recorded in an export's manifest for a template sweep).
     poster_spec: FigureSpec | None = None
+    #: Where the render ran: "process" (a killable worker: the deadline is a
+    #: wall-clock bound), "inline" (best effort, with a
+    #: ``deadline_best_effort`` warning) or None (an adapter called directly).
+    isolation: str | None = None
 
     @property
     def sha256(self) -> str:
@@ -317,27 +321,40 @@ def render_animation(anim: AnimationSpec, request: AnimationRequest | None = Non
     :class:`~ieeVisualizer.animation.deadline.Deadline`; default 60 s), in a
     worker process unless ``isolation="inline"`` (see
     :mod:`ieeVisualizer.animation.isolate`). Each reference is resolved once,
-    so the count checked is the count rendered."""
+    so the count checked is the count rendered. ``result.isolation`` says
+    where it ran."""
     from .deadline import Deadline
     from .isolate import isolation_mode, resolved_payload, run_isolated, table_resolver
-    from .validate import validate_animation
 
     request = request or AnimationRequest()
     deadline = Deadline.of(deadline)
     resolver = memoized(resolver)
     mode, notes = isolation_mode(isolation)
-    errors = [i for i in validate_animation(anim, deadline=deadline) if i.severity == "error"]
-    if errors:  # in the caller: an invalid spec does not pay for a worker
-        raise SpecValidationError(errors)
     if mode == "process":
+        # only the cheap caps here; the spec is validated (and hashed) once, in the worker
         table = resolved_payload(anim.figure, resolver, deadline)
-        return run_isolated("render", {"anim": anim, "request": request, "registry": registry,
-                                       "resolver": table_resolver(table) if table else None},
-                            deadline)
-    if notes:
-        res = render_animation(anim, request, resolver=resolver, registry=registry,
-                               deadline=deadline, isolation="inline")
-        return dataclasses.replace(res, warnings=[*res.warnings, *notes])
+        res = run_isolated("render", {"anim": anim, "request": request, "registry": registry,
+                                      "resolver": table_resolver(table) if table else None},
+                           deadline)
+        return dataclasses.replace(res, isolation="process")
+    res = render_inline(anim, request, resolver=resolver, registry=registry, deadline=deadline)
+    return dataclasses.replace(res, warnings=[*res.warnings, *notes], isolation="inline")
+
+
+def render_inline(anim: AnimationSpec, request: AnimationRequest | None = None, *,
+                  resolver=None, registry: AnimationRegistry | None = None,
+                  deadline=None) -> AnimationResult:
+    """The render in the calling thread under cooperative deadline checks
+    (what a worker runs; :func:`render_animation` adds where it ran)."""
+    from .deadline import Deadline
+    from .validate import validate_animation
+
+    request = request or AnimationRequest()
+    deadline = Deadline.of(deadline)
+    resolver = memoized(resolver)
+    errors = [i for i in validate_animation(anim, deadline=deadline) if i.severity == "error"]
+    if errors:
+        raise SpecValidationError(errors)
     adapter = (registry or default_animation_registry()).select(anim, request)
     n_states, figure, index = counted_states(anim, resolver, deadline)
     enforce_limits(anim, request, n_states, figure, index=index,

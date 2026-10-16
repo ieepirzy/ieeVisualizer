@@ -45,7 +45,8 @@ def test_a_worker_render_equals_an_inline_one_and_errors_keep_their_structure():
     resolve = lambda ref: weekly_data()  # noqa: E731 - not picklable: resolved in the caller
     a = render_animation(anim, SMALL, resolver=resolve, isolation="process")
     b = render_animation(anim, SMALL, resolver=resolve, isolation="inline")
-    assert a.content == b.content and a.warnings == b.warnings
+    inline_only = [w for w in b.warnings if w.code != "deadline_best_effort"]
+    assert a.content == b.content and a.warnings == inline_only
     with pytest.raises(SpecValidationError) as e:
         render_animation(sine_anim(poster=99), SMALL, isolation="process")
     assert [(i.path, i.code) for i in e.value.issues] == [("/poster", "invalid_poster")]
@@ -160,8 +161,6 @@ def test_resolved_data_over_the_cap_is_refused_before_any_worker_starts(monkeypa
     with pytest.raises(SpecValidationError) as e:
         render_animation(anim, SMALL, resolver=lambda ref: big, isolation="process")
     assert {i.code for i in e.value.issues} == {"data_too_large"}
-    with pytest.raises(SpecValidationError):  # an invalid spec does not start one either
-        render_animation(sine_anim(poster=99), SMALL, isolation="process")
 
 
 def test_objects_from_main_and_failed_starts_are_structured_errors(monkeypatch):
@@ -264,3 +263,113 @@ def _state(pid):
             return f.read().rsplit(")", 1)[1].split()[0]
     except (OSError, IndexError):
         return "gone"
+
+
+# ------------------------------------------------- review of #22/#24 (round 3)
+
+
+def _big_inline(n=495_000):
+    """About 1 M inline cells (two columns), under the cap."""
+    from ieeVisualizer.spec import FunctionMark
+
+    big = DataSnapshot.from_columns({"u": [float(i) for i in range(n)],
+                                     "w": [float(i % 7) for i in range(n)]})
+    fig = FigureSpec(datasets={"unused": big},
+                     layers=[FunctionMark(expression="a*sin(x)", variables=["x"],
+                                          domain={"x": [0.0, 6.0]}, samples=40,
+                                          parameters={"a": 1.0})])
+    return _sweep(fig, 3)
+
+
+def test_the_caller_does_no_per_cell_work_before_the_worker(monkeypatch):
+    """Hashing and validating 990k inline cells in the caller took 2.57 s
+    against a 1 s deadline (11.8 s under load), and ran again in the worker."""
+    from ieeVisualizer.animation import validate as V
+
+    anim = _big_inline()
+    monkeypatch.setattr(V, "validate_animation",
+                        lambda *a, **k: pytest.fail("validated in the caller"))
+    elapsed, e = _timed(lambda: render_animation(anim, SMALL, deadline=1.0,
+                                                 isolation="process"))
+    assert e.issues[0].code == "render_deadline_exceeded"
+    assert elapsed <= 1.0 + ISOLATION_SLACK_S, elapsed
+
+
+def test_inline_data_over_the_cap_is_refused_before_any_worker_starts(monkeypatch):
+    import subprocess as sp
+
+    monkeypatch.setattr(sp, "Popen", lambda *a, **k: pytest.fail("a worker was started"))
+    with pytest.raises(SpecValidationError) as e:
+        render_animation(_big_inline(500_001), SMALL, isolation="process")
+    assert [i.code for i in e.value.issues] == ["data_too_large"]
+
+
+def test_a_phase_change_is_reported_at_once():
+    """The worker reported at most every 0.1 s, so a deadline expiring while
+    it validated or hashed was reported as 'start worker'."""
+    from ieeVisualizer.animation import validate as V
+    from ieeVisualizer.animation.deadline import Deadline
+
+    t = [0.0]
+    d = Deadline(10.0, clock=lambda: t[0])
+    seen = []
+    d.report = lambda dl: seen.append(dl.phase)
+    d.check("validate")
+    d.check("validate")
+    d.check("prepare")
+    assert seen == ["validate", "prepare"]
+    import ieeVisualizer.animation.spec as S
+
+    phases = []
+
+    real = S.animation_hash
+
+    def spy(anim):
+        phases.append(d.phase)
+        return real(anim)
+
+    S.animation_hash = spy
+    try:
+        d.phase = "start"
+        V.validate_animation(sine_anim(), deadline=d)
+    finally:
+        S.animation_hash = real
+    assert phases == ["validate"]
+
+
+def test_a_bad_worker_count_is_a_structured_error(monkeypatch):
+    from ieeVisualizer.animation import isolate as I
+
+    monkeypatch.setattr(I, "_SLOTS", [])
+    monkeypatch.setenv("IEEVISUALIZER_ANIMATION_WORKERS", "four")
+    with pytest.raises(AnimationError) as e:
+        render_animation(sine_anim(), SMALL, isolation="process")
+    assert e.value.issues[0].code == "invalid_setting"
+
+
+def test_where_a_render_ran_is_recorded_and_inline_always_says_so(monkeypatch):
+    explicit = render_animation(sine_anim(), SMALL, isolation="inline")
+    monkeypatch.setenv("IEEVISUALIZER_ANIMATION_ISOLATION", "inline")
+    env = render_animation(sine_anim(), SMALL)
+    worker = render_animation(sine_anim(), SMALL, isolation="process")
+    for res, how in ((explicit, "isolation='inline'"), (env, "$IEEVISUALIZER_ANIMATION")):
+        assert res.isolation == "inline"
+        assert [w.message[:len(how)] for w in res.warnings
+                if w.code == "deadline_best_effort"] == [how]
+    assert worker.isolation == "process"
+    assert "deadline_best_effort" not in [w.code for w in worker.warnings]
+
+
+def test_a_huge_column_name_is_shortened_in_issue_paths():
+    from ieeVisualizer.animation import validate_animation
+
+    name = "$" + "\\sqrt{" * 300 + "x" + "}" * 300 + "$"
+    ds = DataSnapshot.from_columns({"t": [0, 1], name: [1.0, 2.0]})
+    from ieeVisualizer.animation import AnimationSpec, FrameColumn
+    from ieeVisualizer.spec import LineMark
+
+    anim = AnimationSpec(timeline=FrameColumn(dataset="d", column="t"), fps=2,
+                         figure=FigureSpec(datasets={"d": ds}, layers=[LineMark(
+                             data="d", encoding={"x": "t", "y": name})]))
+    issues = [i for i in validate_animation(anim) if i.code.startswith("text_too")]
+    assert issues and all(len(i.path) < 120 for i in issues)

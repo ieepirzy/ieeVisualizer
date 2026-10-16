@@ -25,7 +25,7 @@ from .base import (
     AnimationRegistry,
     AnimationRequest,
     memoized,
-    render_animation,
+    render_inline,
 )
 from .spec import AnimationSpec, timeline_to_dict, to_json
 
@@ -58,6 +58,8 @@ class AnimationArtifact:
     spec_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     schema_version: str = ANIMATION_MANIFEST_VERSION
+    #: Where the export ran: "process" (killable worker) or "inline".
+    isolation: str | None = None
 
     @property
     def duration_s(self) -> float:
@@ -81,7 +83,7 @@ class AnimationArtifact:
              "datasets": {k: v.to_dict() for k, v in self.datasets.items()},
              "library_versions": dict(self.library_versions), "created_at": self.created_at,
              "metadata": dict(self.metadata)}
-        for k in ("figure_spec_hash", "title", "spec_id"):
+        for k in ("figure_spec_hash", "title", "spec_id", "isolation"):
             if getattr(self, k) is not None:
                 d[k] = getattr(self, k)
         return d
@@ -107,7 +109,6 @@ def export_animation(
     (in a worker process unless ``isolation="inline"``), then write them."""
     from .deadline import Deadline
     from .isolate import isolation_mode, resolved_payload, run_isolated, table_resolver
-    from .validate import validate_animation
 
     if writer is None:
         raise ValueError("export_animation() needs a writer, e.g. LocalDirectoryWriter('out/').")
@@ -123,16 +124,15 @@ def export_animation(
           "registry": registry,
           "created": (clock or (lambda: _dt.datetime.now(_dt.timezone.utc)))()}
     mode, notes = isolation_mode(isolation)
-    errors = [i for i in validate_animation(anim, deadline=deadline) if i.severity == "error"]
-    if errors:  # in the caller: an invalid spec does not pay for a worker
-        raise SpecValidationError(errors)
     if mode == "process":
+        # only the cheap caps here; the spec is validated (and hashed) once, in the worker
         table = resolved_payload(anim.figure, resolver, deadline)
         artifact, blobs = run_isolated("export", {
-            **kw, "resolver": table_resolver(table) if table else None}, deadline)
+            **kw, "resolver": table_resolver(table) if table else None, "mode": mode},
+            deadline)
     else:
         artifact, blobs = build(**kw, resolver=resolver, deadline=deadline,
-                                notes=[w.to_dict() for w in notes])
+                                notes=[w.to_dict() for w in notes], mode=mode)
     deadline.check("write")  # the writer is the caller's code: checked before, not during
     write_all = getattr(writer, "write_artifact", None)
     if callable(write_all):
@@ -143,11 +143,11 @@ def export_animation(
     return artifact
 
 
-def build(anim, fmts, base, name, registry, created, resolver, deadline, isolation=None,
-          notes=()):
+def build(anim, fmts, base, name, registry, created, resolver, deadline, notes=(), mode=None):
     """``(artifact, blobs)`` of an export, everything but the writing.
     ``notes``: warnings (dicts) recorded on every variant, e.g.
-    ``deadline_best_effort``."""
+    ``deadline_best_effort``; ``mode``: where it runs, recorded as
+    ``isolation`` in the manifest."""
     import hashlib
 
     from ..render.prepare import bound_refs
@@ -165,9 +165,9 @@ def build(anim, fmts, base, name, registry, created, resolver, deadline, isolati
         by_fmt = adapter.render_formats(anim, base, fmts, resolver=resolver, deadline=deadline)
         results = [by_fmt[f] for f in fmts]
     else:
-        results = [render_animation(anim, dataclasses.replace(base, format=f, adapter=adapter.name),
-                                    resolver=resolver, registry=registry, deadline=deadline,
-                                    isolation="inline") for f in fmts]
+        results = [render_inline(anim, dataclasses.replace(base, format=f, adapter=adapter.name),
+                                 resolver=resolver, registry=registry, deadline=deadline)
+                   for f in fmts]
     outputs = []
     for fmt, res in zip(fmts, results):
         req = dataclasses.replace(base, format=fmt)
@@ -232,7 +232,7 @@ def build(anim, fmts, base, name, registry, created, resolver, deadline, isolati
         datasets=records, library_versions=versions, created_at=created.isoformat(),
         figure_spec_hash=fig_hash, title=anim.title or (anim.figure.title if anim.figure
                                                          else None),
-        spec_id=anim.id, metadata=dict(anim.metadata))
+        spec_id=anim.id, metadata=dict(anim.metadata), isolation=mode)
     blobs = [(f, c, mt) for f, c, mt, _ in outputs]
     blobs += [(POSTER_NAME, poster_bytes, "image/png"),
               (SPEC_NAME, spec_bytes, "application/json"),

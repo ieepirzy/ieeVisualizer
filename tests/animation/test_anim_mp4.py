@@ -215,3 +215,28 @@ def test_the_exported_poster_of_a_no_data_frame_uses_the_theme():
     art = export_animation(weekly_anim("current", poster=2), "gif", w,
                            request=dataclasses.replace(SMALL, theme=dark.name))
     assert tuple(png_pixels(w.files[(art.artifact_id, "poster.png")])[2, 2]) == want
+
+
+def test_an_export_records_where_it_ran_and_does_no_per_cell_work_in_the_caller(monkeypatch):
+    import json
+
+    from test_anim_isolation import _big_inline
+
+    from ieeVisualizer.animation import validate as V
+
+    for mode in ("inline", "process"):
+        w = MemoryWriter()
+        art = export_animation(sine_anim(), "gif", w, request=SMALL, isolation=mode)
+        files = {name: c for (aid, name), c in w.files.items() if aid == art.artifact_id}
+        assert art.isolation == mode and json.loads(files["manifest.json"])["isolation"] == mode
+        notes = [x["code"] for x in art.variants[0].warnings if x["code"] ==
+                 "deadline_best_effort"]
+        assert notes == (["deadline_best_effort"] if mode == "inline" else [])
+    monkeypatch.setattr(V, "validate_animation",
+                        lambda *a, **k: pytest.fail("validated in the caller"))
+    big = _big_inline()
+    elapsed, e = _timed(lambda: export_animation(big, "gif", MemoryWriter(),
+                                                 request=SMALL, deadline=1.0,
+                                                 isolation="process"))
+    assert e.issues[0].code == "render_deadline_exceeded"
+    assert elapsed <= 1.0 + ISOLATION_SLACK_S, elapsed
