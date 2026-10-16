@@ -61,11 +61,11 @@ def segments(artists):
 
 
 @pytest.mark.parametrize("layers, text", [
-    ([BAND], "95 % prediction interval"),
-    ([on("line")], "90 % confidence interval"),
-    ([on("scatter")], "90 % confidence interval"),
-    ([on("bar")], "90 % confidence interval"),
-    ([on("errorbar")], "90 % confidence interval"),
+    ([BAND], "95\u00a0% prediction interval"),
+    ([on("line")], "90\u00a0% confidence interval"),
+    ([on("scatter")], "90\u00a0% confidence interval"),
+    ([on("bar")], "90\u00a0% confidence interval"),
+    ([on("errorbar")], "90\u00a0% confidence interval"),
     ([dict(BAND, interval_kind="min-max", interval_level=None)], "min-max range"),
     ([dict(on("errorbar"), interval_kind="standard-error", interval_level=None,
            interval_multiplier=1)], "±1 standard error"),
@@ -77,18 +77,18 @@ def test_legend_states_kind_and_level(layers, text):
 
 def test_a_lone_band_still_gets_its_legend_and_a_forecast_says_so():
     built = build_figure(spec([dict(BAND, role="forecast")]))
-    assert legend_texts(built) == ["95 % prediction interval (forecast)"]
+    assert legend_texts(built) == ["95\u00a0% prediction interval (forecast)"]
 
 
 def test_hidden_legend_moves_the_statement_to_the_caption():
     built = build_figure(spec([BAND], caption="Model v3.", legend={"show": False}))
     assert built.axes.get_legend() is None
-    assert built.caption.get_text() == "Model v3.\nIntervals: 95 % prediction interval."
+    assert built.caption.get_text() == "Model v3.\nIntervals: 95\u00a0% prediction interval."
 
 
 def test_decimal_separator_follows_the_theme_locale():
     built = build_figure(spec([dict(BAND, interval_level=0.975)], theme="report-light"))
-    assert "97,5 % prediction interval" in legend_texts(built)
+    assert "97,5\u00a0% prediction interval" in legend_texts(built)
 
 
 def test_band_polygon_is_exactly_the_data():
@@ -134,7 +134,7 @@ def test_line_interval_is_a_band_in_the_line_colour():
     assert np.allclose(band.get_facecolor()[0][:3], to_rgb(line.get_color()))
     assert {(float(x), float(y)) for x, y in poly} == (
         set(zip(T, LO)) | set(zip(T, HI)))
-    assert "mean: 90 % confidence interval" in legend_texts(built)
+    assert "mean: 90\u00a0% confidence interval" in legend_texts(built)
 
 
 @pytest.mark.parametrize("mark", ["errorbar", "scatter", "bar"])

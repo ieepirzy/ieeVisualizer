@@ -19,5 +19,5 @@ def test_band_bounds_are_in_the_text_alternative():
     text = figure_summary(spec)
     assert "min-max range (forecast), lower bound: 2 values from 4 to 6 count" in text
     assert "min-max range (forecast), upper bound: 2 values from 6 to 9 count" in text
-    assert "Orders: 90 % confidence interval, lower bound: 2 values from 4 to 6 count" in text
+    assert "Orders: 90\u00a0% confidence interval, lower bound: 2 values from 4 to 6 count" in text
     assert "Orders: 3 values from 5 to 7 count" in text

@@ -130,13 +130,18 @@ layer states:
 | `interval_multiplier` | How many standard errors / deviations the bar spans on each side (`1`, `1.96`). Required for standard-error and standard-deviation; refused for the others. A ±k bar claims value ± one half-width: bounds that are not symmetric about the value are drawn as given, with a warning and "(bounds not symmetric)" in the legend. |
 
 Renderers state it in words where the reader sees it: the legend entry
-("95 % prediction interval", "10th–90th percentile (80 % central)",
-"5th–75th percentile", "±1 standard error", "min-max range";
+("95 % prediction interval", "80 % central interval (P10–P90)",
+"quantile interval P5–P75", "±1 standard error", "min-max range";
+percentiles in P-notation, so locale decimals need no ordinal: "P2,5";
 `interval_label(kind, level, multiplier, quantiles=...)`), or the caption,
 each statement prefixed with its series as the legend would name it, when
 the legend is hidden. Levels and multipliers are written exactly (up to 4
-decimals of a percent; more only so a value never reads as a whole number
-it is not, e.g. 99.99999 % rather than 100 %). The bounds are data: drawn as given, never computed, widened,
+decimals of a percent; more, up to 12, only so a value never reads as a
+whole number it is not, e.g. 99.99999 % rather than 100 %). A level (or
+quantile) that cannot be written distinctly from 0 % / 100 % (P0 / P100)
+within 12 decimals, such as `1 - 1e-15`, is refused (`invalid_interval_level`
+/ `invalid_interval_quantiles`). "%" follows a no-break space, so a wrapped
+legend or caption never separates "95" from "%". The bounds are data: drawn as given, never computed, widened,
 symmetrised or smoothed. A null bound is a gap in the interval, never zero.
 Several bands of one series at different levels make a fan chart.
 
@@ -156,7 +161,11 @@ for intervals on a horizontal bar or outside `cartesian2d`;
 `log_scale_nonpositive` for a bound <= 0 on a log axis; and the warnings
 `value_outside_interval` for a point estimate outside its own interval and
 `interval_not_symmetric` for a ±k SE/SD bar whose value is not midway
-between its bounds (relative tolerance 1e-6).
+between its bounds: the two half-widths differ by more than 1e-6 times the
+larger one (`SYMMETRY_TOLERANCE`), loose enough for float rounding of
+computed bounds and tight enough that any visible asymmetry is reported.
+Bounds rounded to fewer digits than the value (10.3 ± 1.96 SE written as 8.4
+and 12.3) are reported too: what is drawn is not symmetric.
 
 The interval fields exist only on line, scatter, bar, band and errorbar
 marks and are written to the JSON only when set, so a spec without

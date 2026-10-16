@@ -41,7 +41,7 @@ def band(**kw) -> dict:
 
 
 def on(mark: str, **kw) -> dict:
-    """A line/scatter/bar/errorbar layer with a 95 % confidence interval."""
+    """A line/scatter/bar/errorbar layer with a 95\u00a0% confidence interval."""
     return dict({"type": mark, "encoding": {"x": "t", "y": "y", "y_lower": "lo", "y_upper": "hi"},
                  "interval_kind": "confidence", "interval_level": 0.95}, **kw)
 
@@ -117,11 +117,11 @@ def test_interval_problems_are_structured_errors(layer, path, code):
 
 
 @pytest.mark.parametrize("kind, level, mult, text", [
-    ("confidence", 0.95, None, "95 % confidence interval"),
-    ("credible", 0.9, None, "90 % credible interval"),
-    ("prediction", 0.8, None, "80 % prediction interval"),
-    ("quantile", 0.5, None, "25th–75th percentile (50 % central)"),
-    ("quantile", 0.975, None, "1.25th–98.75th percentile (97.5 % central)"),
+    ("confidence", 0.95, None, "95\u00a0% confidence interval"),
+    ("credible", 0.9, None, "90\u00a0% credible interval"),
+    ("prediction", 0.8, None, "80\u00a0% prediction interval"),
+    ("quantile", 0.5, None, "50\u00a0% central interval (P25–P75)"),
+    ("quantile", 0.975, None, "97.5\u00a0% central interval (P1.25–P98.75)"),
     ("min-max", None, None, "min-max range"),
     ("standard-error", None, 1, "±1 standard error"),
     ("standard-deviation", None, 1.96, "±1.96 standard deviations"),
@@ -133,7 +133,7 @@ def test_every_kind_is_stated_in_words(kind, level, mult, text):
     assert errors(spec_dict(layer)) == []
     assert interval_label(kind, level, mult) == text
     assert interval_label("quantile", 0.975, None, decimal=",") == \
-        "1,25th–98,75th percentile (97,5 % central)"
+        "97,5\u00a0% central interval (P1,25–P98,75)"
 
 
 def test_inverted_row_is_an_error_at_the_value():
@@ -244,10 +244,10 @@ def test_json_schema_requires_the_statement():
 
 
 @pytest.mark.parametrize("level, text", [
-    (0.9999999, "99.99999 % confidence interval"),   # never rounded up to 100 %
-    (1e-7, "0.00001 % confidence interval"),         # never 0 % nor "1e-05 %"
-    (0.123456, "12.3456 % confidence interval"),
-    (0.95, "95 % confidence interval"),
+    (0.9999999, "99.99999\u00a0% confidence interval"),   # never rounded up to 100 %
+    (1e-7, "0.00001\u00a0% confidence interval"),         # never 0 % nor "1e-05 %"
+    (0.123456, "12.3456\u00a0% confidence interval"),
+    (0.95, "95\u00a0% confidence interval"),
 ])
 def test_levels_are_shown_exactly_never_as_a_false_round_number(level, text):
     from ieeVisualizer.spec import interval_label
@@ -265,8 +265,8 @@ def test_multiplier_is_shown_exactly_and_pluralised_from_what_is_shown():
 def test_quantile_level_is_central_and_says_so():
     from ieeVisualizer.spec import interval_label
 
-    assert interval_label("quantile", 0.8) == "10th–90th percentile (80 % central)"
-    assert interval_label("quantile", 0.95) == "2.5th–97.5th percentile (95 % central)"
+    assert interval_label("quantile", 0.8) == "80\u00a0% central interval (P10–P90)"
+    assert interval_label("quantile", 0.95) == "95\u00a0% central interval (P2.5–P97.5)"
 
 
 def test_explicit_quantile_pair_for_an_asymmetric_band():
@@ -276,8 +276,9 @@ def test_explicit_quantile_pair_for_an_asymmetric_band():
     spec = from_dict(spec_dict(layer))
     assert validate(spec) == []
     assert to_dict(spec)["layers"][0]["interval_quantiles"] == [0.05, 0.75]
-    assert interval_label("quantile", quantiles=[0.05, 0.75]) == "5th–75th percentile"
-    assert interval_label("quantile", quantiles=[0.01, 0.22]) == "1st–22nd percentile"
+    assert interval_label("quantile", quantiles=[0.05, 0.75]) == "quantile interval P5–P75"
+    assert interval_label("quantile", quantiles=[0.025, 0.5], decimal=",") == \
+        "quantile interval P2,5–P50"
 
 
 @pytest.mark.parametrize("over, code", [
@@ -317,3 +318,26 @@ def test_asymmetric_standard_error_bar_is_a_warning():
     assert [(i.path, i.code, i.severity) for i in issues] == [
         ("/datasets/d/columns/hi/values/1", "interval_not_symmetric", "warning")]
     assert validate(from_dict(spec_dict(layer))) == []  # symmetric bounds: no warning
+
+
+def test_a_quantile_pair_with_a_multiplier_is_refused_by_both_checks():
+    jsonschema = pytest.importorskip("jsonschema")
+    layer = band(interval_kind="quantile", interval_level=None, interval_quantiles=[0.1, 0.9],
+                 interval_multiplier=2)
+    assert ("/layers/0/interval_multiplier", "unexpected_interval_multiplier") in errors(
+        spec_dict(layer))
+    v = jsonschema.Draft7Validator(json_schema())
+    assert list(v.iter_errors(spec_dict(layer)))
+
+
+@pytest.mark.parametrize("level", [1 - 1e-15, 1e-15, 1 - 1e-14])
+def test_a_level_that_cannot_be_shown_distinctly_is_refused(level):
+    kind = "quantile" if level == 1 - 1e-14 else "confidence"
+    assert ("/layers/0/interval_level", "invalid_interval_level") in errors(
+        spec_dict(band(interval_kind=kind, interval_level=level)))
+
+
+def test_plural_follows_the_displayed_multiplier():
+    from ieeVisualizer.spec import interval_label
+
+    assert interval_label("standard-error", None, 1 + 1e-15) == "±1 standard error"

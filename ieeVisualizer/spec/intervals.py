@@ -34,54 +34,75 @@ _SPREAD_TEXT = {"standard-error": "standard error", "standard-deviation": "stand
 _NUMERIC = ("float", "int")
 
 
-def _number(v: float, decimal: str = ".") -> str:
-    """``v`` as a plain decimal: exact when it has at most 4 decimals (the
-    shortest decimal of the float, never scientific notation), else rounded
-    to 4 decimals -- but never onto a whole number it is not (99.99999 % does
-    not read as 100 %, 0.00001 % as 0 % or a multiplier of 1.00001 as 1):
-    more decimals are used instead, up to float precision."""
+#: Between a number and "%" (and after "±"): a no-break space, so a caption
+#: or legend is never wrapped between "95" and "%".
+NBSP = "\u00a0"
+#: Most decimals a number in a label is written with (beyond float noise).
+MAX_PLACES = 12
+
+
+def _shown(v: float) -> tuple[Decimal, Decimal]:
+    """(exact decimal of ``v``, what a label shows): exact when it has at
+    most 4 decimals, else rounded to 4 -- but never onto a whole number it is
+    not (99.99999 % does not read as 100 %, a multiplier of 1.00001 as 1):
+    more decimals are used instead, up to :data:`MAX_PLACES`."""
     exact = Decimal(repr(float(v)))
     places = 4
     while True:
         shown = exact.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_EVEN)
-        if exact == shown or places >= 12 or shown != shown.to_integral_value():
-            break
+        if exact == shown or places >= MAX_PLACES or shown != shown.to_integral_value():
+            return exact, shown
         places += 1
-    text = format(shown.normalize(), "f")
+
+
+def _number(v: float, decimal: str = ".") -> str:
+    """``v`` as :func:`_shown` writes it, plain decimal (never scientific)."""
+    text = format(_shown(v)[1].normalize(), "f")
     if "." in text:
         text = text.rstrip("0").rstrip(".")
     return text.replace(".", decimal) if decimal != "." else text
 
 
+def _percent_value(fraction: float) -> float:
+    return float(Decimal(repr(float(fraction))) * 100)
+
+
 def _percent(fraction: float, decimal: str) -> str:
-    return _number(float(Decimal(repr(float(fraction))) * 100), decimal)
+    return _number(_percent_value(fraction), decimal)
 
 
-def _ordinal(fraction: float, decimal: str) -> str:
-    text = _percent(fraction, decimal)
-    if not text.isdigit():
-        return f"{text}th"
-    n = int(text)
-    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
-    return f"{text}{suffix}"
+def _pct(fraction: float, decimal: str) -> str:
+    """A quantile in percentile notation: 0.025 -> ``P2.5``."""
+    return f"P{_percent(fraction, decimal)}"
+
+
+def indistinct_percent(fraction: float) -> bool:
+    """A fraction in (0, 1) whose percentage cannot be written distinctly
+    from 0 % or 100 % (within :data:`MAX_PLACES` decimals)."""
+    exact, shown = _shown(_percent_value(fraction))
+    return exact != shown and shown in (Decimal(0), Decimal(100))
 
 
 def interval_label(kind: str, level: float | None = None, multiplier: float | None = None,
                    decimal: str = ".", quantiles: list[float] | None = None) -> str:
     """What an interval is, in words: ``"95 % prediction interval"``,
-    ``"10th-90th percentile (80 % central)"``, ``"5th-75th percentile"``,
-    ``"min-max range"``, ``"±1 standard error"``. ``decimal`` is the decimal
-    separator (``","`` writes ``"97,5 %"``). Numbers are shown exactly (up to
-    4 decimals of a percent, more only to avoid reading as 0 % or 100 %)."""
+    ``"80 % central interval (P10–P90)"`` (a quantile interval with a level:
+    equal-tailed), ``"quantile interval P5–P75"``, ``"min-max range"``,
+    ``"±1 standard error"``. ``decimal`` is the decimal separator (``","``
+    writes ``"97,5 %"``); "%" follows a no-break space. Numbers are written
+    exactly up to 4 decimals, rounded beyond that but never onto a whole
+    number they are not (levels that would need more than
+    :data:`MAX_PLACES` decimals for that are refused by validation)."""
+    pct = f"{NBSP}%"
     if kind == "quantile":
         if quantiles is not None:
             lo, hi = quantiles
-            return f"{_ordinal(lo, decimal)}–{_ordinal(hi, decimal)} percentile"
+            return f"quantile interval {_pct(lo, decimal)}–{_pct(hi, decimal)}"
         tail = (Decimal(1) - Decimal(repr(float(level)))) / 2  # equal-tailed (central)
-        return (f"{_ordinal(float(tail), decimal)}–{_ordinal(float(1 - tail), decimal)} "
-                f"percentile ({_percent(level, decimal)} % central)")
+        return (f"{_percent(level, decimal)}{pct} central interval "
+                f"({_pct(float(tail), decimal)}–{_pct(float(1 - tail), decimal)})")
     if kind in LEVEL_KINDS:
-        return f"{_percent(level, decimal)} % {_KIND_TEXT[kind]}"
+        return f"{_percent(level, decimal)}{pct} {_KIND_TEXT[kind]}"
     if kind in MULTIPLIER_KINDS:
         text = _number(multiplier, decimal)
         return f"±{text} {_SPREAD_TEXT[kind]}{'' if text == '1' else 's'}"
@@ -185,9 +206,11 @@ def metadata_problems(kind: Any, level: Any, multiplier: Any,
             out.append(("quantiles", "invalid_interval_quantiles",
                         f"interval quantiles must be [lower, upper] with 0 < lower < upper < 1 "
                         f"(e.g. [0.05, 0.75]), got {quantiles!r}."))
-        if kind == "quantile":
-            return out
-    if kind in LEVEL_KINDS:
+        elif any(indistinct_percent(q) for q in quantiles):
+            out.append(("quantiles", "invalid_interval_quantiles",
+                        f"interval quantiles {quantiles!r} cannot be written distinctly from "
+                        "P0/P100; a figure would claim the extreme. Round them upstream."))
+    if kind in LEVEL_KINDS and not (kind == "quantile" and quantiles is not None):
         if level is None:
             out.append(("level", "missing_interval_level",
                         f"a {kind} interval needs its coverage level, as a fraction: e.g. 0.95 "
@@ -198,7 +221,13 @@ def metadata_problems(kind: Any, level: Any, multiplier: Any,
             out.append(("level", "invalid_interval_level",
                         f"interval level {level!r} is not a probability strictly between 0 and "
                         "1; give it as a fraction (0.95 for a 95 % interval)."))
-    elif level is not None:
+        elif indistinct_percent(level) or (kind == "quantile" and indistinct_percent(
+                float((Decimal(1) - Decimal(repr(float(level)))) / 2))):
+            out.append(("level", "invalid_interval_level",
+                        f"interval level {level!r} cannot be written distinctly from 0 % or "
+                        "100 % (or its tails from P0/P100); a figure would claim the extreme. "
+                        "Round it upstream."))
+    elif level is not None and kind not in LEVEL_KINDS:
         out.append(("level", "unexpected_interval_level",
                     f"a {kind} interval has no coverage level; remove the level"
                     + (" and give the multiplier (e.g. 1 for +-1 SE)." if kind in MULTIPLIER_KINDS

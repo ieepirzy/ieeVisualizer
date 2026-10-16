@@ -687,7 +687,7 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
                  "the axis labels, so they were not drawn. Read the values from the axis.",
                  f"/layers/{i}/style/value_labels")
     artists = []
-    with_interval: list[tuple[Any, np.ndarray, Any]] = []
+    with_interval: list[tuple[Any, np.ndarray, Any, Any]] = []
     for g, (group, idx) in enumerate(grp):
         p, v = pos[idx], val[idx]
         valid = _mask(p, v)
@@ -710,7 +710,7 @@ def draw_bar(ctx: DrawContext, i: int, m: Mark) -> list[Any]:
             ctx.dodged_horizontal.add(id(artists[-1]))
         _record_centres(ctx, val_ch, pp)
         if "y_lower" in m.encoding:
-            with_interval.append((pp, idx[valid], kw["label"]))
+            with_interval.append((pp, idx[valid], kw["label"], group))
             _iv.values_missing(ctx, i, m, idx[~np.ma.getmaskarray(p) & np.ma.getmaskarray(v)])
         if labelled:
             labels = _value_labels(ctx, m, val_ch, pp, vv, horizontal)

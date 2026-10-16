@@ -140,10 +140,15 @@ counts them; a bar row with both bounds but no value keeps its "no data"
 slot, its interval is not drawn alone, and `interval_without_value` counts
 it (an errorbar mark draws an interval without a point). A bar layer's
 error bars share one ink, so a layer with several series groups has one
-legend entry, "95 % ... (all series)", listed after its bars. Nested bands
+legend entry, listed after its bars, that names the series with an interval
+when not all have one ("95 % confidence interval (Treatment)"). The
+"(bounds not symmetric)" note of a ±k SE/SD entry is decided on the rows
+that entry draws (for grouped bars it names the series: "(bounds not
+symmetric: Treatment)"). Nested bands
 of one colour (a fan chart) get legend swatches of the composited opacity
-1 - prod(1 - alpha) of every band containing them, so each swatch is the
-colour of the region it names. Each interval's legend entry states its kind and level ("95 %
+1 - prod(1 - alpha) of every band containing them on most of their rows (a
+row overshooting does not change it), so each swatch is the colour of the
+bulk of the region it names. Each interval's legend entry states its kind and level ("95 %
 prediction interval", with the theme's decimal separator: "97,5 %"), and a
 figure with an interval always has a legend; with `legend.show` false the
 caption gains "Intervals: A: 95 % confidence interval; B: ..." instead,

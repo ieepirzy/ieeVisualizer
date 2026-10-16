@@ -55,8 +55,8 @@ def test_fan_chart_bands_widest_first_before_the_line_and_forecast_styled():
     assert meta["version"] == "2.0.0"
     assert [(b["interval"], b["layer"]) for b in meta["intervals"]] == [(1, 1), (0, 2)]
     labels = [t.get_text() for t in build_figure(spec).axes.get_legend().get_texts()]
-    assert "80 % prediction interval (forecast)" in labels
-    assert "50 % prediction interval (forecast)" in labels
+    assert "80\u00a0% prediction interval (forecast)" in labels
+    assert "50\u00a0% prediction interval (forecast)" in labels
 
 
 def test_bounds_are_copied_never_computed():
@@ -118,7 +118,7 @@ def test_estimate_comparison_example_draws_error_bars_with_their_statement():
     assert spec.axes["x"].scale == "category"
     built = build_figure(spec)
     labels = [x.get_text() for x in built.axes.get_legend().get_texts()]
-    assert labels == ["95 % confidence interval", "No difference"]
+    assert labels == ["95\u00a0% confidence interval", "No difference"]
 
 
 ARMS = {"arm": ["B", "C"], "d": [1.0, 0.5], "lo": [0.2, -0.4], "hi": [1.8, 1.3]}

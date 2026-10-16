@@ -37,7 +37,7 @@ def test_hidden_legend_caption_names_the_series_of_each_interval():
         legend={"show": False}, caption="Cap.")
     built = build_figure(s)
     assert built.caption.get_text() == (
-        "Cap.\nIntervals: A: 95 % confidence interval; B: ±1 standard error.")
+        "Cap.\nIntervals: A: 95\u00a0% confidence interval; B: ±1 standard error.")
 
 
 FAN = {"t": {"values": [0.0, 1.0, 2.0, 3.0]}, "m": {"values": [5.0, 5.0, 5.0, 5.0]},
@@ -78,8 +78,8 @@ def test_fan_legend_swatch_is_the_colour_of_the_region_it_names():
     labels = [t.get_text() for t in lg.get_texts()]
     handles = lg.legend_handles if hasattr(lg, "legend_handles") else lg.legendHandles
     a = 0.25
-    outer = handles[labels.index("90 % prediction interval")]
-    inner = handles[labels.index("50 % prediction interval")]
+    outer = handles[labels.index("90\u00a0% prediction interval")]
+    inner = handles[labels.index("50\u00a0% prediction interval")]
     assert _alpha(outer) == pytest.approx(a)
     assert _alpha(inner) == pytest.approx(1 - (1 - a) ** 2)
     # Read back the pixels: each swatch equals the plotted region it names.
@@ -122,4 +122,88 @@ def test_grouped_bars_list_one_interval_entry_after_their_bars():
     built = build_figure(spec(cols, [{"type": "bar", "encoding": {
         "x": "g", "y": "y", "y_lower": "lo", "y_upper": "hi", "series": "arm"},
         "interval_kind": "confidence", "interval_level": 0.95}]))
-    assert legend(built) == ["x", "y", "95 % confidence interval (all series)"]
+    assert legend(built) == ["x", "y", "95\u00a0% confidence interval"]
+
+
+# --------------------------------------------------------------------------
+# Review round 2
+# --------------------------------------------------------------------------
+
+ARMS = {"g": {"values": ["North", "North", "South", "South"]},
+        "arm": {"values": ["Control", "Treatment", "Control", "Treatment"]},
+        "y": {"values": [1.0, 2.0, 3.0, 4.0]},
+        "lo": {"values": [0.5, 1.5, 2.5, 3.5]},
+        "hi": {"values": [1.5, 2.5, 3.5, 5.0]}}  # only South/Treatment is asymmetric
+SE = {"interval_kind": "standard-error", "interval_multiplier": 1.96}
+
+
+def test_asymmetry_note_belongs_to_the_series_that_has_it():
+    enc = {"x": "g", "y": "y", "y_lower": "lo", "y_upper": "hi", "series": "arm"}
+    built = build_figure(spec(ARMS, [dict({"type": "errorbar", "encoding": enc}, **SE)]))
+    assert legend(built) == ["Control: ±1.96 standard errors",
+                             "Treatment: ±1.96 standard errors (bounds not symmetric)"]
+    built = build_figure(spec(ARMS, [dict({"type": "bar", "encoding": enc}, **SE)]))
+    assert legend(built)[-1] == "±1.96 standard errors (bounds not symmetric: Treatment)"
+
+
+def test_grouped_bar_entry_names_only_the_series_with_an_interval():
+    cols = dict(ARMS, lo={"values": [None, 1.5, None, 3.5]}, hi={"values": [None, 2.5, None, 4.5]})
+    enc = {"x": "g", "y": "y", "y_lower": "lo", "y_upper": "hi", "series": "arm"}
+    built = build_figure(spec(cols, [{"type": "bar", "encoding": enc,
+                                      "interval_kind": "confidence", "interval_level": 0.95}]))
+    assert legend(built) == ["Control", "Treatment", "95 % confidence interval (Treatment)"]
+
+
+def test_fan_swatches_stay_distinct_when_one_row_overshoots():
+    cols = dict(FAN, q75={"values": [6.0, 6.0, 6.0, 9.5]})  # the last row leaves the outer band
+    built = build_figure(spec(cols, [
+        {"type": "band", "interval_kind": "prediction", "interval_level": 0.9,
+         "style": {"color_of": "m"}, "encoding": {"x": "t", "y_lower": "q05", "y_upper": "q95"}},
+        {"type": "band", "interval_kind": "prediction", "interval_level": 0.5,
+         "style": {"color_of": "m"}, "encoding": {"x": "t", "y_lower": "q25", "y_upper": "q75"}},
+        {"type": "line", "name": "m", "encoding": {"x": "t", "y": "m"}}]))
+    lg = built.axes.get_legend()
+    handles = lg.legend_handles if hasattr(lg, "legend_handles") else lg.legendHandles
+    labels = [t.get_text() for t in lg.get_texts()]
+    inner = handles[labels.index("50 % prediction interval")]
+    assert _alpha(inner) == pytest.approx(1 - 0.75 ** 2)
+
+
+@pytest.mark.parametrize("level", [0.95, 0.8])
+@pytest.mark.parametrize("name", [None, "Rate"])
+def test_quantile_bars_pass_the_phone_gate(level, name):
+    from ieeVisualizer.render import check_legible, get_profile, render
+
+    enc = {"x": "g", "y": "y", "y_lower": "lo", "y_upper": "hi", "series": "arm"}
+    layer = {"type": "bar", "encoding": enc, "interval_kind": "quantile", "interval_level": level}
+    if name:
+        layer["name"] = name
+    s = spec(dict(ARMS, hi={"values": [1.5, 2.5, 3.5, 4.5]}), [layer], title="Conversion")
+    check_legible(render(s, get_profile("email-phone").figure_request("png")))
+
+
+def test_quantile_timeseries_passes_the_phone_gate():
+    from ieeVisualizer import templates
+    from ieeVisualizer.render import check_legible, get_profile, render
+
+    t = templates.get("timeseries")
+    payload = t.example()
+    payload["params"]["intervals"] = [
+        {"lower": "p10", "upper": "p90", "kind": "quantile", "level": 0.8},
+        {"lower": "p25", "upper": "p75", "kind": "quantile", "level": 0.5}]
+    s = t.build_payload(payload)
+    check_legible(render(s, get_profile("email-phone").figure_request("png")))
+
+
+def test_percent_never_wraps_away_from_its_number():
+    s = spec(T3, [{"type": "line", "name": "A", "encoding": {
+        "x": "t", "y": "y", "y_lower": "lo", "y_upper": "hi"},
+        "interval_kind": "confidence", "interval_level": 0.95}],
+        legend={"show": False}, caption="x " * 41)  # pushes the statement to a line end
+    from ieeVisualizer.render import RenderRequest
+
+    for width in (2.0, 2.5, 3.0, 3.5, 4.0):
+        built = build_figure(s, RenderRequest(width=width, height=3.0))
+        lines = built.caption.get_text().split("\n")
+        assert not any(line.rstrip().endswith("95") for line in lines), lines
+        assert "95 %" in built.caption.get_text()

@@ -40,18 +40,28 @@ DODGE_SPAN = 0.5
 ASYMMETRIC_NOTE = " (bounds not symmetric)"
 
 
-def interval_text(ctx: Any, m: Any) -> str:
+def interval_text(ctx: Any, m: Any, rows: Any = None) -> str:
     """What the layer's interval is, with the theme's decimal separator; a
     ±k SE/SD statement says so when the data's bounds are not symmetric
-    about the value (validate warns ``interval_not_symmetric``)."""
+    about the value in ``rows`` (the rows that entry draws; default all)
+    -- validate warns ``interval_not_symmetric``."""
     decimal = ctx.locale.decimal if ctx.locale is not None else "."
     text = mark_interval_label(m, decimal)
-    if m.interval_kind in MULTIPLIER_KINDS and "y" in m.encoding:
-        cols = _m._snapshot(ctx, m).columns
-        y, lo, hi = (cols[m.encoding[ch].field].values for ch in ("y", "y_lower", "y_upper"))
-        if asymmetric_rows(y, lo, hi):
-            text += ASYMMETRIC_NOTE
+    if asymmetric(ctx, m, rows):
+        text += ASYMMETRIC_NOTE
     return text
+
+
+def asymmetric(ctx: Any, m: Any, rows: Any = None) -> bool:
+    """A ±k SE/SD layer whose bounds are not symmetric in ``rows``."""
+    if m.interval_kind not in MULTIPLIER_KINDS or "y" not in m.encoding:
+        return False
+    cols = _m._snapshot(ctx, m).columns
+    y, lo, hi = (cols[m.encoding[ch].field].values for ch in ("y", "y_lower", "y_upper"))
+    if rows is not None:
+        keep = [int(r) for r in rows]
+        y, lo, hi = ([v[r] for r in keep] for v in (y, lo, hi))
+    return bool(asymmetric_rows(y, lo, hi))
 
 
 def record(ctx: Any, label: str | None) -> str | None:
@@ -148,24 +158,33 @@ def point_intervals(ctx: Any, i: int, m: Any, xs: Any, rows: np.ndarray, color: 
     if not ok.any():
         return []
     if qualify:
-        label = _qualified(label, interval_text(ctx, m))
+        label = _qualified(label, interval_text(ctx, m, np.asarray(rows)[ok]))
     return error_segments(ctx, np.asarray(xs[ok]), np.asarray(lo[ok]), np.asarray(hi[ok]),
                           color, m.role, label, style)
 
 
-def bar_intervals(ctx: Any, i: int, m: Any, drawn: list[tuple[Any, np.ndarray, Any]],
+def bar_intervals(ctx: Any, i: int, m: Any, drawn: list[tuple[Any, np.ndarray, Any, Any]],
                   ink: Any) -> list[Any]:
     """Error bars of a bar layer, drawn after all of its bars so the legend
     lists the interval after them. ``drawn`` holds each group's (bar
-    centres, rows, bar label). Every group's bars are in one ink, so one
-    legend entry covers them: ``"<name>: 95 % ... (all series)"``."""
-    text = interval_text(ctx, m)
-    if len(drawn) > 1:
-        first = _qualified(m.name, text) + " (all series)"
-    else:
-        first = _qualified(drawn[0][2] if drawn else None, text)
+    centres, rows, bar label, group). Every group's bars are in one ink, so
+    one legend entry covers them, naming the groups that have an interval
+    when not all do, and which groups' bounds are not symmetric."""
+    lo, hi = bounds(ctx, m)
+    with_iv = [d for d in drawn if _m._mask(lo[d[1]], hi[d[1]]).any()]
+    if not with_iv:
+        return []
+    grouped = len(drawn) > 1
+    text = mark_interval_label(m, ctx.locale.decimal if ctx.locale is not None else ".")
+    first = _qualified(m.name if grouped else drawn[0][2], text)
+    if grouped and len(with_iv) < len(drawn):  # name the series that have one
+        first += f" ({', '.join(str(d[3]) for d in with_iv)})"
+    asym = [d[3] for d in with_iv if asymmetric(ctx, m, d[1])]
+    if asym:
+        first += ASYMMETRIC_NOTE if not grouped or len(asym) == len(with_iv) else \
+            f" (bounds not symmetric: {', '.join(str(g) for g in asym)})"
     out: list[Any] = []
-    for pp, rows, _ in drawn:
+    for pp, rows, _, _ in with_iv:
         got = point_intervals(ctx, i, m, pp, rows, ink, first, {}, qualify=False)
         if got and first != "_nolegend_":
             ctx.listed_after[id(got[0])] = i  # legend: after the layer's bars
@@ -195,7 +214,7 @@ def line_band(ctx: Any, i: int, m: Any, x: Any, idx: np.ndarray, color: Any,
     _missing(ctx, i, ~np.ma.getmaskarray(sub[0]), sub[1], sub[2])
     if not _m._mask(*sub).any():
         return []
-    text = interval_text(ctx, m)
+    text = interval_text(ctx, m, idx[_m._mask(*sub)])
     band_style = {k: v for k, v in style.items() if k != "opacity"}
     return fill_band(ctx, *sub, color, m.role, _qualified(label, text), band_style)
 
@@ -235,7 +254,6 @@ def draw_errorbar(ctx: Any, i: int, m: Any) -> list[Any]:
     y = _m._pos(ctx, m, "y") if "y" in m.encoding else None
     _m._report_nulls(ctx, i, ~np.ma.getmaskarray(x), "left out")
     _missing(ctx, i, ~np.ma.getmaskarray(x), lo, hi)
-    text = interval_text(ctx, m)
     grp = _m._groups(ctx, i, m, len(x))
     step = 0.0
     if ctx.axes["x"].kind == "category":
@@ -251,7 +269,8 @@ def draw_errorbar(ctx: Any, i: int, m: Any) -> list[Any]:
         _m._require(ok, i, m, group)
         dx = (g - (len(grp) - 1) / 2.0) * step
         color = _series_colour(ctx, i, m, group, style)
-        label = legend_label(_qualified(_base_label(m, group), text), None, m.role)
+        label = legend_label(_qualified(_base_label(m, group), interval_text(ctx, m, idx[ok])),
+                             None, m.role)
         xs = np.asarray(sub[0][ok], dtype=float) + dx
         artists += error_segments(ctx, xs, np.asarray(sub[1][ok]), np.asarray(sub[2][ok]),
                                   color, m.role, label, style)
@@ -282,14 +301,17 @@ class BandRecord:
     hi: np.ndarray
 
     def inside(self, other: BandRecord) -> bool:
-        """Every row of this band lies within ``other`` at the same x."""
+        """Most rows of this band lie within ``other`` at the same x (so a
+        row or two overshooting an outer band does not change what the
+        swatch of the bulk of the region should look like)."""
         if self.rgb != other.rgb or not self.x.size:
             return False
         pos = {float(x): k for k, x in enumerate(other.x)}
-        rows = [pos.get(float(x)) for x in self.x]
-        if None in rows:
-            return False
-        return bool(np.all(other.lo[rows] <= self.lo) and np.all(self.hi <= other.hi[rows]))
+        within = 0
+        for x, lo, hi in zip(self.x, self.lo, self.hi):
+            k = pos.get(float(x))
+            within += k is not None and other.lo[k] <= lo and hi <= other.hi[k]
+        return within * 2 > self.x.size
 
 
 def legend_order(ctx: Any, handles: list[Any], labels: list[str]) -> tuple[list, list]:
