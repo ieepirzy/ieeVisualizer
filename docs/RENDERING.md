@@ -61,7 +61,15 @@ column/axis unit is `deg`). Axis labels are `"Label (unit)"`, from the axis' own
 and unit or else the first bound column's title/name and unit. Datetime
 columns are drawn as dates; timestamps with UTC offsets are placed at their
 true instant and labelled in the datasets' `provenance.timezone` (or in UTC,
-with a warning). String/bool columns, or `scale: "category"`, make a
+with a warning). The date offset under the ticks states only what is true of
+the whole visible axis: its day (`2026-Oct-14`) or month (`2026-Oct`) when it
+lies within one, else its year (`2026`) or two years (`2025–2026`), and none
+for three or more years, whose ticks name them. When the offset is coarser
+than the ticks, the first tick says its month or day (`Sep 08`,
+`Oct-14 06:00`) unless its label already does (`14.09.` in fi-FI). It is
+taken from the axis limits, not the ticks, so it reads the same at every
+profile. (matplotlib's own offset is the last tick's month: weekly ticks
+from September to November read as if all were in November.) String/bool columns, or `scale: "category"`, make a
 category axis ordered by first appearance; mixing kinds on one axis is an
 error.
 

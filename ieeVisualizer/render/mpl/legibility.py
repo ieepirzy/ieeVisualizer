@@ -120,7 +120,7 @@ def wrap_labels(ctx: Any) -> None:
     x_room = 0.94 * w_pt
     info = ctx.axes.get("x")
     if info is not None and info.kind == "time" and ax.xaxis.label.get_text():
-        # the date offset ("2026-Oct") sits at the right end under the ticks:
+        # the date offset ("2026") sits at the right end under the ticks:
         # keep the axis label left of it
         ax.set_xlabel(ax.xaxis.label.get_text(), loc="left")
         x_room = 0.6 * w_pt
