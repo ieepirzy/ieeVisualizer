@@ -16,21 +16,31 @@ camera:
 
 Support is an allowlist (:data:`DRAWN`): every field of the spec, and every
 template parameter, set to a value other than its default and not drawn here
-is reported unmet by :meth:`ManimAdapter.unmet`, as is a swept parameter
-Manim cannot sweep and ``axis_limits`` other than ``fixed``. Drawn besides
+is reported unmet by :meth:`ManimAdapter.unmet`, as are a swept parameter
+Manim cannot sweep, ``axis_limits`` other than ``fixed``, a legend (several
+layers with ``legend.show``: Manim draws none), layer names of several layers
+(only a legend would show them) and math text (``$...$``: Manim's ``Text``
+draws it literally). A state where a layer has no finite sample is refused
+(``empty_series``), as Matplotlib refuses it. Drawn besides
 the curves and arrows, by Matplotlib's rules: the title (with the state's
 label, exactly the result's ``states[i].label``, when ``label_frames``), the
 caption (wrapped), axis titles (the variable for x, the layer name or
-expression for y; ``label (unit)``, the unit not repeated), the requested
-axis limits exactly, the theme's background, text and series colours,
+expression for y when there is one layer, none from a layer's text for
+several; ``label (unit)``, the unit not repeated; an axis spanning less than
+1e-3 is drawn in units of its own power of ten, ``x (x1e-7)``), the requested
+axis limits exactly, the theme's background, text and series colours
+(Matplotlib's assignment: a series by name, else expression, shares one
+colour; an explicit colour takes none from the cycle; alpha kept),
 ``color``/``linewidth`` read by the Matplotlib style parser, and the same
 ``nonfinite_samples_omitted`` / ``null_values_omitted`` warnings. Text uses
 ``Text`` (Pango, a sans font), never ``MathTex``: no LaTeX.
 
 Layout: text keeps its point size at the request's dpi (as in Matplotlib);
-each text has its own band, so none overlaps another or the plot; the plot
-gets the rest, and a frame that leaves less than :data:`MIN_PLOT_IN` for it
-is ``frame_too_small``. Known differences from Matplotlib: Manim's axes
+each text has its own band, so none overlaps another, the plot or the axes
+(axis titles are never longer than the plot); the plot gets the rest, and a
+frame that leaves less than :data:`MIN_PLOT_IN` for it is
+``frame_too_small``. A vector field's axes are the box of its grid and every
+arrow tip, and are tick-labelled at their ends. Known differences from Matplotlib: Manim's axes
 cross at the origin inside the box and only the end values are
 tick-labelled.
 
@@ -177,6 +187,10 @@ def unmet_fields(anim: AnimationSpec) -> list[str]:
             out += _not_drawn(a, "axis", f"/figure/axes/{k}")
             if a.scale not in (None, "linear"):
                 out.append(f"axis {k} scale {a.scale!r} (linear axes only)")
+        several = len(fig.layers) > 1
+        if several and fig.legend.show:
+            out.append("/figure/legend (several layers need a legend, which manim does not "
+                       "draw; set legend.show to false)")
         for i, m in enumerate(fig.layers):
             p = f"/figure/layers/{i}"
             if not isinstance(m, FunctionMark) or m.expression is None \
@@ -184,6 +198,8 @@ def unmet_fields(anim: AnimationSpec) -> list[str]:
                 out.append(f"layer {i}: only symbolic one-variable function marks")
                 continue
             out += _not_drawn(m, "function", p)
+            if several and m.name:  # one layer's name titles the y axis; several: a legend
+                out.append(f"{p}/name (not drawn by manim: no legend)")
             if m.role != "observed":
                 out.append(f"{p}/role {m.role!r} (not drawn by manim)")
             out += [f"{p}/style/{k} (not drawn by manim)" for k in m.style
@@ -202,7 +218,27 @@ def unmet_fields(anim: AnimationSpec) -> list[str]:
                 if k not in drawn and v != params.get(k)]
         if tl.parameter.partition(".")[0] not in SWEPT.get(t.name, set()):
             out.append(f"manim cannot sweep {tl.parameter!r}")
+    out += [f"{p} (math text $...$: manim draws text literally)" for p, text in _texts(anim)
+            if isinstance(text, str) and text.count("$") >= 2]
     return out
+
+
+def _texts(anim: AnimationSpec):
+    """``(path, text)`` of every text this adapter draws."""
+    yield "/title", anim.title
+    fig = anim.figure
+    if fig is not None:
+        yield "/figure/title", fig.title
+        yield "/figure/caption", fig.caption
+        for k, a in fig.axes.items():
+            yield f"/figure/axes/{k}/label", a.label
+            yield f"/figure/axes/{k}/unit", a.unit
+        for i, m in enumerate(fig.layers):
+            yield f"/figure/layers/{i}/name", getattr(m, "name", None)
+    tl = anim.timeline
+    if isinstance(tl, ParameterSweep) and isinstance(tl.target, TemplateTarget):
+        for k in ("title", "caption", "x_label", "y_label", "x_unit", "y_unit"):
+            yield f"/timeline/target/params/{k}", (tl.target.params or {}).get(k)
 
 
 class ManimAdapter:
@@ -425,17 +461,54 @@ def _theme(name, warnings) -> tuple[str, str, list[str], float | None]:
             [colors.to_hex(c) for c in palette], roles_for(theme).reference_alpha)
 
 
-def _style(m, k: int, palette: list[str], path: str, warnings) -> tuple[str, float]:
-    """``(hex colour, stroke width)`` of a layer, read by the Matplotlib
-    renderer's own style parser: the same values are accepted, and an
-    invalid one warns (``invalid_style_value``) and falls back the same way."""
+def _styles(layers, palette: list[str], warnings) -> list[tuple[str, float, float]]:
+    """``(hex colour, opacity, stroke width)`` of each function layer, as the
+    Matplotlib renderer assigns them: styles read by its own parser (the same
+    values accepted, the same ``invalid_style_value`` fallback, a colour's
+    alpha kept); a series is identified by its name, else its expression,
+    and layers of one series share a colour; an explicit colour takes no
+    colour from the cycle; a wrapped cycle is reported (``colour_cycle_wrapped``)."""
     from matplotlib import colors
 
     from ..render.mpl.style import parse_style
 
-    style = parse_style(m.style, DRAWN["style"], f"{path}/style", "a function mark", warnings)
-    return (colors.to_hex(style.get("color", palette[k % len(palette)])),
-            float(style.get("linewidth", 2.0)) * 2)
+    out, seen, nxt = [], {}, 0
+    for k, m in enumerate(layers):
+        path = f"/figure/layers/{k}"
+        style = parse_style(m.style, DRAWN["style"], f"{path}/style", "a function mark", warnings)
+        ident = m.name or f"function|{m.expression}"
+        if "color" in style:
+            color = style["color"]
+        elif ident in seen:
+            color = seen[ident]
+        else:
+            if nxt == len(palette):
+                warnings.append(RenderWarning(
+                    "colour_cycle_wrapped", f"the figure has more than {len(palette)} series, "
+                    "so series colours repeat.", path))
+            color = palette[nxt % len(palette)]
+            nxt += 1
+        seen.setdefault(ident, color)
+        r, g, b, a = colors.to_rgba(color)
+        out.append((colors.to_hex((r, g, b)), a, float(style.get("linewidth", 2.0)) * 2))
+    return out
+
+
+def _exponent(lo: float, hi: float) -> int:
+    """The power of ten an axis is drawn in: 0, unless its span is below
+    1e-3 (Manim places ticks with an absolute 1e-6 tolerance: at 1e-7 the axis
+    ran off the frame, at 1e-9 it drew 2,006 ticks); then the span's own, and
+    the axis title says so (``x (x 1e-7)``)."""
+    span = hi - lo
+    if not (math.isfinite(span) and span > 0) or span >= 1e-3:
+        return 0
+    return math.floor(math.log10(span))
+
+
+def _scaled_label(label: str | None, e: int) -> str | None:
+    if not e:
+        return label
+    return f"{label} (\u00d71e{e})" if label else f"\u00d71e{e}"
 
 
 def _nice_range(lo: float, hi: float, keep: tuple[bool, bool] = (False, False)) -> list[float]:
@@ -510,9 +583,6 @@ def _function_plot(anim: AnimationSpec, tl: ParameterSweep, values, warnings, th
                        f"/figure/layers/{i}")
         xs = np.linspace(*m.domain[var], m.samples)
         layers.append((m, swept, fn, xs))
-    if fig.legend.show and len(fig.layers) > 1:
-        warnings.append(RenderWarning("legend_not_drawn", "the manim adapter draws no legend.",
-                                      "/legend"))
 
     def ys(layer, p):
         m, swept, fn, xs = layer
@@ -524,6 +594,10 @@ def _function_plot(anim: AnimationSpec, tl: ParameterSweep, values, warnings, th
     for s, p in enumerate(values):  # the warning Matplotlib's sampler gives
         for i, layer in enumerate(layers):
             bad = int((~np.isfinite(ys(layer, p))).sum())
+            if bad == layer[3].size:  # Matplotlib refuses such a state; so does this
+                raise AnimationError([issue(f"/figure/layers/{i}", "empty_series",
+                                            f"at {tl.parameter} = {p:g} layer {i} has no finite "
+                                            "value on its domain; nothing to plot.")])
             if bad:
                 omitted.setdefault(("nonfinite_samples_omitted",
                                     f"{bad} of {layer[3].size} sampled points are non-finite "
@@ -532,9 +606,6 @@ def _function_plot(anim: AnimationSpec, tl: ParameterSweep, values, warnings, th
     warnings.extend(_per_state(omitted, len(values)))
     all_y = np.concatenate([ys(layer, p) for layer in layers for p in values])
     all_y = all_y[np.isfinite(all_y)]
-    if all_y.size == 0:
-        raise AnimationError([issue("/figure/layers", "empty_series",
-                                    "no layer has a finite value at any sweep value.")])
     x_lo = min(float(layer[3][0]) for layer in layers)
     x_hi = max(float(layer[3][-1]) for layer in layers)
     limits_x = fig.axes.get("x").limits if fig.axes.get("x") else None
@@ -545,17 +616,22 @@ def _function_plot(anim: AnimationSpec, tl: ParameterSweep, values, warnings, th
     if limits_x:
         x_lo = limits_x[0] if limits_x[0] is not None else x_lo
         x_hi = limits_x[1] if limits_x[1] is not None else x_hi
-    xr = _nice_range(x_lo, x_hi, tuple(bool(limits_x) and v is not None
-                                       for v in (limits_x or [None, None])))
-    yr = _nice_range(y_lo, y_hi, tuple(bool(limits_y) and v is not None
-                                       for v in (limits_y or [None, None])))
+    _nice_range(x_lo, x_hi), _nice_range(y_lo, y_hi)  # refuses undrawable ranges
+    ex, ey = _exponent(x_lo, x_hi), _exponent(y_lo, y_hi)
+    fx, fy = 10.0 ** ex, 10.0 ** ey  # drawn in these units (1 unless the span is tiny)
+    xr = _nice_range(x_lo / fx, x_hi / fx, tuple(bool(limits_x) and v is not None
+                                                 for v in (limits_x or [None, None])))
+    yr = _nice_range(y_lo / fy, y_hi / fy, tuple(bool(limits_y) and v is not None
+                                                 for v in (limits_y or [None, None])))
     first = layers[0][0]
-    # Matplotlib's defaults: the variable for x, the layer name or expression for y
-    labels = (_axis_label(fig, "x", first.variables[0]),
-              _axis_label(fig, "y", first.name or first.expression))
+    # Matplotlib's defaults: the variable for x; for y the layer name or
+    # expression, but only for one layer (several are never titled by one)
+    y_default = (first.name or first.expression) if len(layers) == 1 else None
+    labels = (_scaled_label(_axis_label(fig, "x", first.variables[0]), ex),
+              _scaled_label(_axis_label(fig, "y", y_default), ey))
 
     def pieces(layer, p):  # what one frame draws: the same function counts and draws
-        return [piece for run in _finite_runs(layer[3], ys(layer, p))
+        return [piece for run in _finite_runs(layer[3] / fx, ys(layer, p) / fy)
                 for piece in _clip(run, xr, yr)]
 
     for p in values:  # before manim starts
@@ -567,17 +643,16 @@ def _function_plot(anim: AnimationSpec, tl: ParameterSweep, values, warnings, th
                                         f"Python per frame and accepts at most "
                                         f"{MAX_CURVE_PIECES}. Use fewer samples or wider "
                                         "limits.")])
-    styles = [_style(m, k, theme[2], f"/figure/layers/{k}", warnings)
-              for k, (m, *_) in enumerate(layers)]
+    styles = _styles([m for m, *_ in layers], theme[2], warnings)
 
     def draw(scene, M, ax, state):
         for k, layer in enumerate(layers):
-            color, width = styles[k]
+            color, alpha, width = styles[k]
 
-            def curve(layer=layer, color=color, width=width):
+            def curve(layer=layer, color=color, alpha=alpha, width=width):
                 # ONE mobject per curve; each piece inside the axes is a
                 # subpath; the bezier points are built in one array
-                path = M.VMobject(stroke_color=color, stroke_width=width)
+                path = M.VMobject(stroke_color=color, stroke_width=width, stroke_opacity=alpha)
                 pts = _corners([np.asarray(ax.coords_to_point(*np.array(piece).T)).T
                                 for piece in pieces(layer, values[state()])])
                 if len(pts):
@@ -637,23 +712,35 @@ def _vector_field_plot(anim: AnimationSpec, tl: ParameterSweep, values, theme,
         return mag * (scale if scale is not None else 0.9 * cell / max_mag)
 
     # an arrow's tail is on its grid point (as Matplotlib's quiver): the axes
-    # reach the longest arrow (at least half a cell) past the grid on every
-    # side, so every arrow is inside the plot whatever its direction
-    half = max([0.5 * cell] + [length(k, float(m[np.isfinite(m)].max()))
-                               for k, m in enumerate(mags) if np.isfinite(m).any()])
-    box = (x0 - half, x1 + half, y0 - half, y1 + half)
-    labels = tuple(_label(p0.get(a + "_label") or a, p0.get(a + "_unit")) for a in ("x", "y"))
+    # are the box holding every grid point and every arrow tip of every state
+    # (not the longest arrow on every side: a short axis then grew by the
+    # length of arrows along the long one)
+    xs, ys_ = [gx.ravel()], [gy.ravel()]
+    for k, ((u, v), m) in enumerate(zip(uv, mags)):
+        ok = np.isfinite(m) & (m > 0)
+        if ok.any():
+            lens = np.array([length(k, float(q)) for q in m[ok]])
+            xs.append(gx[ok] + u[ok] / m[ok] * lens)
+            ys_.append(gy[ok] + v[ok] / m[ok] * lens)
+    bx = (float(np.min(np.concatenate(xs))), float(np.max(np.concatenate(xs))))
+    by = (float(np.min(np.concatenate(ys_))), float(np.max(np.concatenate(ys_))))
+    pad = 0.05 * cell  # an arrow head's width
+    e = _exponent(min(bx[0], by[0]), min(bx[0], by[0]) + max(bx[1] - bx[0], by[1] - by[0]))
+    f = 10.0 ** e  # one unit for both axes (equal aspect); 1 unless the field is tiny
+    box = ((bx[0] - pad) / f, (bx[1] + pad) / f, (by[0] - pad) / f, (by[1] + pad) / f)
+    labels = tuple(_scaled_label(_label(p0.get(a + "_label") or a, p0.get(a + "_unit")), e)
+                   for a in ("x", "y"))
     role = p0.get("role") or "reference"  # the template's default for expressions
     alpha = theme[3] if role == "reference" else None
 
     def draw(scene, M, ax, state):
-        (sx0, sy0), (sx1, sy1) = ax.c2p(x0, y0)[:2], ax.c2p(x1, y1)[:2]
+        (sx0, sy0), (sx1, sy1) = ax.c2p(x0 / f, y0 / f)[:2], ax.c2p(x1 / f, y1 / f)[:2]
         dx = (sx1 - sx0) / max(grid[0] - 1, 1)
         dy = (sy1 - sy0) / max(grid[1] - 1, 1)
-        per_unit = (ax.c2p(1, 0)[0] - ax.c2p(0, 0)[0])  # scene units per data unit
+        per_unit = (ax.c2p(1, 0)[0] - ax.c2p(0, 0)[0]) / f  # scene units per data unit
 
         def field_at(pt, k):
-            x, y = ax.p2c(pt)[:2]
+            x, y = (c * f for c in ax.p2c(pt)[:2])
             with np.errstate(all="ignore"):
                 u, v = float(fu(x, y, values[k])), float(fv(x, y, values[k]))
             if not (math.isfinite(u) and math.isfinite(v)):
@@ -665,24 +752,26 @@ def _vector_field_plot(anim: AnimationSpec, tl: ParameterSweep, values, theme,
 
         def field():
             k = state()
-            f = M.ArrowVectorField(
+            return M.ArrowVectorField(
                 lambda pt: field_at(pt, k), color=theme[2][0],
                 # ArrowVectorField adds one step to the end (inclusive range);
                 # ending half a step early gives exactly the template's grid.
-                x_range=[sx0, sx1 - dx / 2, dx], y_range=[sy0, sy1 - dy / 2, dy],
+                x_range=[sx0, sx1 - dx / 2, dx] if grid[0] > 1 else [sx0, sx0 + 0.5, 1.0],
+                y_range=[sy0, sy1 - dy / 2, dy] if grid[1] > 1 else [sy0, sy0 + 0.5, 1.0],
                 # a reference layer is translucent, as in Matplotlib
                 length_func=lambda norm: norm, opacity=1.0 if alpha is None else alpha)
-            return f
 
         scene.add(M.always_redraw(field))
 
+    # tick labels at the axes' ends: the grid's ends could be closer than
+    # their labels are wide (x +-300, y +-0.001)
     return _Plot(box=box, steps=(_nice_range(*box[:2])[2], _nice_range(*box[2:])[2]),
-                 ticks=([x0, x1], [y0, y1]), labels=labels, draw=draw,
+                 ticks=([box[0], box[1]], [box[2], box[3]]), labels=labels, draw=draw,
                  title=p0.get("title") or anim.title, caption=p0.get("caption"),
                  equal_aspect=True)
 
 
-def _axis_label(fig, key: str, default: str) -> str:
+def _axis_label(fig, key: str, default: str | None) -> str | None:
     a = fig.axes.get(key)
     return _label(a.label if a and a.label else default, a.unit if a else None)
 
@@ -723,26 +812,38 @@ def _wrap(text: str, width_units: float, pt: float) -> str:
     return "\n".join(textwrap.fill(line, chars) for line in text.splitlines() or [""])
 
 
-def _compose(scene, M, plot: _Plot, fw: float, fh: float, state):
+def _compose(scene, M, plot: _Plot, fw: float, fh: float, state, deadline=None):
     """Lay out ``plot`` in a ``fw`` x ``fh`` scene and add everything to it.
-    Returns the Axes."""
+    Returns the Axes. ``deadline`` is checked between the steps (each text
+    is a Pango layout)."""
+
+    def check():
+        if deadline is not None:
+            deadline.check("layout")
+
+    check()
     left_edge, bottom_edge, top_edge = -fw / 2, -fh / 2, fh / 2
     fmt = [[f"{v:g}" for v in vs] for vs in plot.ticks]
     xt = [_text(M, s, "tick") for s in fmt[0]]
     yt = [_text(M, s, "tick") for s in fmt[1]]
-    xtitle = _text(M, plot.labels[0], "label", fw - 2 * GAP)
-    ytitle = _text(M, plot.labels[1], "label", fh - 2 * GAP).rotate(math.pi / 2)
+    xtitle = _text(M, plot.labels[0], "label") if plot.labels[0] else None
+    ytitle = _text(M, plot.labels[1], "label").rotate(math.pi / 2) if plot.labels[1] else None
     caption = (_text(M, _wrap(plot.caption, fw - 2 * GAP, TEXT_PT["caption"]), "caption",
                      fw - 2 * GAP) if plot.caption else None)
     titled = [t for t in plot.titles if t]
     # one text measured (the longest; the font gives every title one height)
-    title_h = _text(M, max(titled, key=len), "title").height if titled else 0.0
+    title_h = _text(M, max(titled, key=len), "title", fw - 2 * GAP).height if titled else 0.0
+    check()
     top = GAP + (title_h + GAP if titled else 0.0)
-    bottom = GAP + (caption.height + GAP if caption else 0.0) + xtitle.height + GAP \
-        + max(t.height for t in xt) + GAP
-    left = GAP + ytitle.width + GAP + max(t.width for t in yt) + GAP
-    right = GAP
-    bw, bh = fw - left - right, fh - top - bottom
+    bottom = GAP + (caption.height + GAP if caption else 0.0) \
+        + (xtitle.height + GAP if xtitle else 0.0) + max(t.height for t in xt) + GAP
+    bh = fh - top - bottom
+    if ytitle is not None and ytitle.height > bh:  # never longer than the plot is tall
+        ytitle.scale_to_fit_height(max(bh, 1e-3))
+    left = GAP + (ytitle.width + GAP if ytitle else 0.0) + max(t.width for t in yt) + GAP
+    bw = fw - left - GAP
+    if xtitle is not None and xtitle.width > bw:  # never wider than the plot
+        xtitle.scale_to_fit_width(max(bw, 1e-3))
     if bw < MIN_PLOT_IN[0] * UNITS_PER_IN or bh < MIN_PLOT_IN[1] * UNITS_PER_IN:
         raise AnimationError([issue("", "frame_too_small",
                                     f"the frame leaves {bw / UNITS_PER_IN:.2f} x "
@@ -756,8 +857,11 @@ def _compose(scene, M, plot: _Plot, fw: float, fh: float, state):
         w, h = (x1 - x0) * s, (y1 - y0) * s
     else:
         w, h = bw, bh
+    # short tick marks: where the axes cross at the box's edge (data away from
+    # 0) they stay clear of the tick labels
     ax = M.Axes(x_range=[x0, x1, plot.steps[0]], y_range=[y0, y1, plot.steps[1]],
-                x_length=w, y_length=h, tips=False)
+                x_length=w, y_length=h, tips=False, axis_config={"tick_size": GAP / 3})
+    check()
     centre = np.array([left_edge + left + bw / 2, bottom_edge + bottom + bh / 2, 0.0])
     lo, hi = ax.c2p(x0, y0), ax.c2p(x1, y1)
     ax.shift(centre - (lo + hi) / 2)
@@ -768,11 +872,15 @@ def _compose(scene, M, plot: _Plot, fw: float, fh: float, state):
     for t, v in zip(yt, plot.ticks[1]):  # inside the plot's y extent, left of it
         y = min(max(ax.c2p(x0, v)[1], ry0 + t.height / 2), ry1 - t.height / 2)
         t.move_to([rx0 - GAP - t.width / 2, y, 0])
-    xtitle.move_to([(rx0 + rx1) / 2, min(t.get_bottom()[1] for t in xt) - GAP
-                    - xtitle.height / 2, 0])
-    ytitle.move_to([min(t.get_left()[0] for t in yt) - GAP - ytitle.width / 2,
-                    (ry0 + ry1) / 2, 0])
-    scene.add(ax, *xt, *yt, xtitle, ytitle)
+    scene.add(ax, *xt, *yt)
+    if xtitle is not None:
+        xtitle.move_to([(rx0 + rx1) / 2, min(t.get_bottom()[1] for t in xt) - GAP
+                        - xtitle.height / 2, 0])
+        scene.add(xtitle)
+    if ytitle is not None:
+        ytitle.move_to([min(t.get_left()[0] for t in yt) - GAP - ytitle.width / 2,
+                        (ry0 + ry1) / 2, 0])
+        scene.add(ytitle)
     if caption is not None:
         caption.move_to([left_edge + GAP + caption.width / 2,
                          bottom_edge + GAP + caption.height / 2, 0])
@@ -786,11 +894,12 @@ def _compose(scene, M, plot: _Plot, fw: float, fh: float, state):
             return mob.move_to([0, top_edge - GAP - title_h / 2, 0])
 
         scene.add(M.always_redraw(title))
+    check()
     plot.draw(scene, M, ax, state)
     return ax
 
 
-def _scene(plot: _Plot, request: AnimationRequest, theme):
+def _scene(plot: _Plot, request: AnimationRequest, theme, deadline=None):
     """``(scene, set_state)``: the composed scene, inside ``manim.tempconfig``."""
     import manim as M
 
@@ -806,7 +915,7 @@ def _scene(plot: _Plot, request: AnimationRequest, theme):
 
     class _Scene(M.Scene):
         def construct(self):
-            _compose(self, M, plot, fw, fh, state)
+            _compose(self, M, plot, fw, fh, state, deadline)
 
     scene = _Scene()
     scene.setup()
@@ -843,7 +952,7 @@ def _run(plot: _Plot, frames: list[int], poster: int, request: AnimationRequest,
         M.VMobject.set_default(color=theme[1])
         M.Text.set_default(color=theme[1])
         try:
-            scene, set_state = _scene(plot, request, theme)
+            scene, set_state = _scene(plot, request, theme, deadline)
 
             def stream():
                 last_state, frame = None, None

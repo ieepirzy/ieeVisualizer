@@ -14,6 +14,7 @@ import sys
 
 import numpy as np
 import pytest
+from cost import within
 
 from ieeVisualizer.render import RenderError, build_figure
 from ieeVisualizer.render.mpl.function import parse
@@ -38,7 +39,7 @@ with measure() as cost:
         out = {"issues": [[i.path, i.code] for i in e.issues]}
     except Exception as e:
         out = {"raised": type(e).__name__}
-out["seconds"], out["cost"] = cost.seconds, repr(cost)  # reference seconds: tests/cost.py
+out.update(seconds=cost.seconds, wall=cost.wall, cost=repr(cost))  # see tests/cost.py
 print(json.dumps(out))
 """
 
@@ -68,7 +69,7 @@ def _parse_in_child(expression: str, parameters: dict | None = None) -> dict:
 def test_explosive_expression_is_refused_fast(expression, parameters):
     out = _parse_in_child(expression, parameters)
     assert out.get("issues") == [["/layers/0/expression", "expression_too_large"]], out
-    assert out["seconds"] < 2.0, out
+    assert within(2.0, out["seconds"], out["wall"]), out
 
 
 @pytest.mark.parametrize("expression", ["x,x", "(x, x)"])

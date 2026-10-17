@@ -209,12 +209,13 @@ def test_manim_budget_is_per_output_frame_and_checked_before_starting():
 
 def _two_layers():
     from ieeVisualizer.animation import AnimationSpec, ParameterSweep
+    from ieeVisualizer.spec import Legend
 
     fig = FigureSpec(layers=[
         FunctionMark(expression="a*sin(x)", variables=["x"], domain={"x": [0, 6]},
                      parameters={"a": 1.0}),
         FunctionMark(expression="a*cos(x)", variables=["x"], domain={"x": [0, 6]},
-                     parameters={"a": 0.5})])
+                     parameters={"a": 0.5})], legend=Legend(show=False))
     return AnimationSpec(timeline=ParameterSweep(parameter="a", values=[1.0, 2.0]), figure=fig,
                          fps=10)
 
@@ -384,15 +385,18 @@ def test_waiting_for_another_manim_render_is_bounded_by_the_deadline():
 
 
 @needs_manim
-@pytest.mark.parametrize("expr,dom,limits", [("1.7e308*a*x", (-1.0, 1.0), None),
-                                             ("a*x", (-1.0, 1.0), [0.0, 5e-324]),
-                                             ("a", (-1e308, 1e308), None)])
-def test_unrenderable_axis_ranges_are_structured_errors(expr, dom, limits):
+@pytest.mark.parametrize("expr,dom,limits,code", [
+    # at a = 2 every sample overflows (inf, or inf * 0 = nan): that state is
+    # refused as Matplotlib refuses it
+    ("1.7e308*a*x", (-1.0, 1.0), None, "empty_series"),
+    ("a*x", (-1.0, 1.0), [0.0, 5e-324], "axis_range_unrenderable"),
+    ("a", (-1e308, 1e308), None, "axis_range_unrenderable")])
+def test_unrenderable_axis_ranges_are_structured_errors(expr, dom, limits, code):
     from ieeVisualizer.spec import Axis
 
     with pytest.raises(AnimationError) as e:
         ManimAdapter().render(_fm(expr, dom, {"y": Axis(limits=limits)} if limits else None), GIF)
-    assert e.value.issues[0].code == "axis_range_unrenderable"
+    assert e.value.issues[0].code == code
     with pytest.raises(AnimationError) as e:
         ManimAdapter().render(vector_field_anim(params={"x_range": [0.0, 1e-320]}), GIF)
     assert e.value.issues[0].code == "axis_range_unrenderable"
@@ -440,6 +444,18 @@ def _base():
                          fps=4)
 
 
+def _base2():
+    """Two layers (the legend hidden: Manim draws none)."""
+    from ieeVisualizer.spec import Legend
+
+    anim = _base()
+    anim.figure.layers.append(FunctionMark(expression="b*cos(x)", variables=["x"],
+                                           domain={"x": [0.0, 6.0]}, samples=40,
+                                           parameters={"a": 1.0, "b": 0.5}))
+    anim.figure.legend = Legend(show=False)
+    return anim
+
+
 def _dark():
     from ieeVisualizer import themes
 
@@ -455,17 +471,22 @@ NOT_VISUAL = {"animation": {"timeline", "figure", "id", "metadata", "schema_vers
               "function": {"type", "data", "encoding", "variables", "parameters"}}
 
 
-def _variants():
+def _variants(at: int = 0):
     """``(kind, field, edit)``: each field of each spec class set to a value
-    other than its default; asserted to cover every field."""
+    other than its default (a layer field on layer ``at``); asserted to
+    cover every field."""
     from ieeVisualizer.spec import Axis, Legend, TextAnnotation
 
     def fig(**kw):
         return lambda a: dataclasses.replace(a, figure=dataclasses.replace(a.figure, **kw))
 
     def layer(**kw):
-        return lambda a: dataclasses.replace(a, figure=dataclasses.replace(
-            a.figure, layers=[dataclasses.replace(a.figure.layers[0], **kw)]))
+        def edit(a):
+            layers = list(a.figure.layers)
+            layers[at] = dataclasses.replace(layers[at], **kw)
+            return dataclasses.replace(a, figure=dataclasses.replace(a.figure, layers=layers))
+
+        return edit
 
     out = {
         "animation": {"fps": lambda a: dataclasses.replace(a, fps=5),
@@ -515,7 +536,7 @@ def _picture(res):
             res.frame_count, sorted(w.code for w in res.warnings))
 
 
-def _silent(adapter, spec_fields=True) -> list[str]:
+def _silent(adapter, spec_fields=True, base=_base, at=0, vector_field=True) -> list[str]:
     """Fields set away from their default that are neither unmet nor change
     the clip. Each variant is compared with its base rendered right before
     it (renders are deterministic: test_renders_are_deterministic)."""
@@ -527,17 +548,17 @@ def _silent(adapter, spec_fields=True) -> list[str]:
     if spec_fields:
         classes = {"animation": AnimationSpec, "figure": FS, "axis": Axis, "legend": Legend,
                    "function": FunctionMark}
-        variants = _variants()
+        variants = _variants(at)
         for kind, cls in classes.items():
             fields = {f.name for f in dataclasses.fields(cls)}
             assert fields == set(variants[kind]) | NOT_VISUAL.get(kind, set()), (kind, fields)
         for kind, edits in variants.items():
             for name, edit in edits.items():
-                anim = edit(_base())
+                anim = edit(base())
                 if not adapter.unmet(anim, GIF) and _picture(adapter.render(anim, GIF)) == \
-                        _picture(adapter.render(_base(), GIF)):
+                        _picture(adapter.render(base(), GIF)):
                     silent.append(f"{kind}.{name}")
-    for name, value in _vf_variants().items():
+    for name, value in (_vf_variants().items() if vector_field else ()):
         if name == "constants":  # the swept map: its key is replaced in every state
             continue
         anim = vector_field_anim(params={"scale": None, name: value})
@@ -556,6 +577,8 @@ def test_every_field_set_is_drawn_or_reported_unmet():
 
     adapter = ManimAdapter()
     assert _silent(adapter) == []
+    # several layers: every field of the second layer too, and the legend
+    assert _silent(adapter, base=_base2, at=1, vector_field=False) == []
     swept = AnimationSpec(fps=4, timeline=ParameterSweep(parameter="grid", values=[3.0, 9.0],
                           target=TemplateTarget(name="vector_field_2d", version="1.0.0",
                                                 params={"u": "-y", "v": "x"})))
@@ -656,7 +679,12 @@ def _boxes(anim, req):
             texts = [box(m) for m in scene.mobjects if isinstance(m, M.Text)]
             marks = [box(m) for m in scene.mobjects if not isinstance(m, (M.Text, M.Axes))
                      and any(f.has_points() for f in m.get_family())]
-            out.append((texts, (x0, x1, y0, y1), marks,
+            # the axes: their lines and tick marks, which may stick out of the
+            # plot by one tick length only
+            t = MA.GAP / 3 + 1e-6
+            assert x0 - t <= box(ax)[0] and box(ax)[1] <= x1 + t and \
+                y0 - t <= box(ax)[2] and box(ax)[3] <= y1 + t, (box(ax), (x0, x1, y0, y1))
+            out.append((texts, (x0, x1, y0, y1), marks + [box(ax)],
                         (M.config.frame_width, M.config.frame_height)))
     return out
 
@@ -665,32 +693,57 @@ def _overlap(a, b, eps=1e-6):
     return a[0] < b[1] - eps and b[0] < a[1] - eps and a[2] < b[3] - eps and b[2] < a[3] - eps
 
 
-@needs_manim
-@pytest.mark.parametrize("size", [(560, 400), (300, 450), (400, 400), (320, 180)])
-@pytest.mark.parametrize("which", ["function", "vector_field"])
-def test_no_text_overlaps_another_or_the_plot_and_arrows_stay_inside(size, which):
-    """The caption overlapped the x title; edge arrows ran over the tick
-    labels, titles and frame label; portrait frames shrank text."""
+def _layout_specs(which):
     from ieeVisualizer.spec import Axis
 
-    req = AnimationRequest(format="gif", width=size[0], height=size[1], units="px", dpi=100)
     if which == "function":
         anim = dataclasses.replace(_base(), title="Damping")
         anim.figure.caption = "Source: model, not measured. " * 3
         anim.figure.axes = {"x": Axis(label="time", unit="s"), "y": Axis(unit="mm")}
-    else:
+    elif which == "long_y":  # a long rotated y title, a 3-line caption, a 2-line title
+        anim = dataclasses.replace(_fm("a*x", (1e-7, 3.3e-7), {"y": Axis(
+            label="a very long y axis label that is long", unit="EUR")}),
+            title="Title\nsecond line")
+        anim.figure.caption = "line one\nline two\nline three"
+    elif which == "vector_field":
         anim = vector_field_anim(params={"title": "Spiral", "caption": "Model field",
                                          "x_unit": "m", "y_unit": "m", "scale": 0.8,
                                          "x_range": [-3.0, 3.0], "y_range": [-2.0, 2.0]})
-    for texts, plot, marks, (fw, fh) in _boxes(anim, req):
+    else:  # a wide, flat field with long arrows
+        anim = vector_field_anim(params={"title": "Spiral\nline2", "caption": "Model field " * 10,
+                                         "x_unit": "m", "y_unit": "m", "scale": 2.0,
+                                         "x_range": [-300.0, 300.0], "y_range": [-0.001, 0.001]})
+    return anim
+
+
+@needs_manim
+@pytest.mark.parametrize("size", [(560, 400, 100), (300, 450, 100), (400, 400, 100),
+                                  (320, 180, 100), (800, 200, 100), (1000, 300, 150),
+                                  (1920, 1080, 200), (640, 480, 72)])
+@pytest.mark.parametrize("which", ["function", "long_y", "vector_field", "flat_field"])
+def test_no_text_overlaps_another_or_the_plot_and_arrows_stay_inside(size, which):
+    """The caption overlapped the x title; edge arrows ran over the tick
+    labels, titles and frame label; portrait frames shrank text; a long y
+    title ran off the top of a wide, short frame; a flat field's tick labels
+    overprinted. Every frame is either refused (frame_too_small) or clean."""
+    req = AnimationRequest(format="gif", width=size[0], height=size[1], units="px", dpi=size[2])
+    anim = _layout_specs(which)
+    try:
+        boxes = _boxes(anim, req)
+    except AnimationError as e:
+        assert e.issues[0].code == "frame_too_small"
+        return
+    for texts, plot, marks, (fw, fh) in boxes:
         assert len(texts) >= 6  # title, caption, two axis titles, ticks
         for i, a in enumerate(texts):
             assert -fw / 2 <= a[0] and a[1] <= fw / 2 and -fh / 2 <= a[2] and a[3] <= fh / 2
             assert not _overlap(a, plot), (a, plot)
             assert not any(_overlap(a, b) for b in texts[i + 1:]), (a, texts)
-        for m in marks:
+        for m in marks[:-1]:
             assert plot[0] - 1e-6 <= m[0] and m[1] <= plot[1] + 1e-6 and \
                 plot[2] - 1e-6 <= m[2] and m[3] <= plot[3] + 1e-6, (m, plot)
+        for m in marks:  # nothing drawn, the axes included, runs over a text
+            assert not any(_overlap(m, a) for a in texts), (m, texts)
 
 
 @needs_manim
@@ -784,6 +837,95 @@ def test_an_unimportable_manim_is_reported_unmet(monkeypatch):
 
 
 @needs_manim
+def test_several_layers_need_a_legend_or_are_never_titled_by_one_name():
+    """'revenue' a*sin(x) + 'cost' cos(x): no legend, unmet() == [], and the
+    y axis titled 'revenue'."""
+    from ieeVisualizer.animation.manim_adapter import _plan
+
+    anim = _base2()
+    anim.figure.legend.show = True
+    anim.figure.layers[0].name, anim.figure.layers[1].name = "revenue", "cost"
+    unmet = ManimAdapter().unmet(anim, GIF)
+    assert any(u.startswith("/figure/legend") for u in unmet)
+    assert any(u.startswith("/figure/layers/0/name") for u in unmet)
+    assert _plan(_base2(), GIF)[0].labels == ("x", None)  # no layer's text titles the axis
+
+
+@needs_manim
+def test_a_state_with_no_finite_sample_is_refused_like_matplotlib():
+    from ieeVisualizer.animation import ParameterSweep
+
+    anim = dataclasses.replace(_fm("sqrt(a - x**2)", (-3.0, 3.0), {}, 101),
+                               timeline=ParameterSweep(parameter="a", values=[-1.0, 4.0]))
+    with pytest.raises(AnimationError) as e:
+        ManimAdapter().render(anim, GIF)
+    assert (e.value.issues[0].code, e.value.issues[0].path) == ("empty_series",
+                                                                "/figure/layers/0")
+
+
+@needs_manim
+@pytest.mark.parametrize("lo", [1e-7, 1e-9, 1e-12])
+def test_tiny_spans_are_drawn_rescaled_with_their_unit(lo):
+    """1e-7: the axis ran 2.2x the frame height; 1e-9: 2,006 ticks, 14.7 s;
+    1e-12: until the deadline."""
+    import time
+
+    from ieeVisualizer.animation.manim_adapter import _plan
+
+    anim = _fm("a*x", (lo, 3.3 * lo))
+    t = time.perf_counter()
+    ManimAdapter().render(anim, GIF, deadline=30)
+    assert time.perf_counter() - t < 10
+    labels = _plan(anim, GIF)[0].labels
+    assert "\u00d71e" in labels[0] and "\u00d71e" in labels[1]
+    req = AnimationRequest(format="gif", width=320, height=240, units="px", dpi=50)
+    for texts, _plot, marks, _ in _boxes(anim, req):  # the axes: inside the plot (_boxes)
+        for m in marks:
+            assert not any(_overlap(m, a) for a in texts)
+
+
+@needs_manim
+def test_the_layout_checks_the_deadline():
+    import tempfile
+
+    import manim as M
+
+    from ieeVisualizer.animation import manim_adapter as MA
+    from ieeVisualizer.animation.deadline import Deadline, DeadlineExceeded
+
+    plot, _, theme, _ = MA._plan(_base(), GIF)
+    t = [0.0]
+    late = Deadline(1.0, clock=lambda: t[0])
+    t[0] = 5.0
+    with tempfile.TemporaryDirectory() as tmp, M.tempconfig(MA._config(GIF, theme, tmp)):
+        with pytest.raises(DeadlineExceeded) as e:
+            MA._scene(plot, GIF, theme, late)
+    assert e.value.stats["phase"] == "layout"
+
+
+def test_math_text_is_reported_unmet():
+    anim = dataclasses.replace(_base(), title="$\\alpha$ sweep")
+    assert any("math text" in u and u.startswith("/title")
+               for u in ManimAdapter().unmet(anim, GIF))
+
+
+@needs_manim
+def test_series_colours_follow_matplotlib():
+    from ieeVisualizer.animation.manim_adapter import _styles
+
+    def L(expr, **kw):
+        return FunctionMark(expression=expr, variables=["x"], domain={"x": [0.0, 6.0]}, **kw)
+
+    pal = ["#111111", "#222222", "#333333"]
+    assert [c for c, *_ in _styles([L("sin(x)"), L("cos(x)")], pal, [])] == pal[:2]
+    assert [c for c, *_ in _styles([L("sin(x)", name="s"), L("cos(x)", name="s")], pal, [])] \
+        == [pal[0], pal[0]]
+    # an explicit colour takes nothing from the cycle
+    assert [c for c, *_ in _styles([L("sin(x)", style={"color": "#abcdef"}), L("cos(x)")],
+                                   pal, [])] == ["#abcdef", pal[0]]
+    (c, alpha, _), = _styles([L("sin(x)", style={"color": "#ff000080"})], pal, [])
+    assert c == "#ff0000" and abs(alpha - 128 / 255) < 1e-9
+
 def test_manim_uses_the_shared_distinct_labels():
     from ieeVisualizer.animation import ParameterSweep
 

@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 import pytest
-from cost import measure
+from cost import measure, within
 
 from ieeVisualizer.render import RenderError
 from ieeVisualizer.spec import SpecParseError, SpecValidationError
@@ -108,7 +108,7 @@ def test_png_area_is_limited_before_rasterising():
     assert 16000 * height * 4 > L.MAX_PNG_PIXELS  # ... but not the area limit
     with measure() as cost, pytest.raises(RenderError) as ei:
         render_view(v, "png", width=4000, scale=4)  # was rasterised: 16000 x 32000 px, 2 GB
-    assert cost.seconds < 2, cost
+    assert cost.within(2), cost
     issue = ei.value.issues[0]
     assert issue.code == "view_too_large" and "megapixels" in issue.message
     render_view(v, "png", width=4000, scale=1)  # 4000 x height: allowed
@@ -217,10 +217,10 @@ def test_copy_tree_copies_shared_references_once():
             a = [a, a]
         with measure() as cost:
             c = copy_tree(a, limit=1000)
-        print(cost.seconds, c[0] is c[1], c == a)
+        print(cost.seconds, cost.wall, c[0] is c[1], c == a)
     """, timeout=60)  # was 22.9 s: every path copied again
-    secs, shared, equal = out.split()
-    assert float(secs) < 1 and shared == "True" and equal == "True"
+    secs, wall, shared, equal = out.split()
+    assert within(1, float(secs), float(wall)) and shared == "True" and equal == "True"
 
 
 def test_copy_tree_tuple_subclasses_and_limits():

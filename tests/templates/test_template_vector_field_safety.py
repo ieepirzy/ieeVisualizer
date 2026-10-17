@@ -14,6 +14,7 @@ import subprocess
 import sys
 
 import pytest
+from cost import within
 
 from ieeVisualizer.templates import TemplateInputError, get
 
@@ -31,14 +32,14 @@ params = {"u": sys.argv[1], "v": "x", "grid": 3, **json.loads(sys.argv[2])}
 with measure() as cost:
     out = {"check": [[i.path, i.code] for i in vf.check(None, **params)
                      if i.severity == "error"]}
-out["check_seconds"], out["check_cost"] = cost.seconds, repr(cost)
+out.update(check_seconds=cost.seconds, check_wall=cost.wall, check_cost=repr(cost))
 with measure() as cost:
     try:
         vf.build(None, **params)
         out["build"] = "built"
     except TemplateInputError as e:
         out["build"] = [[i.path, i.code] for i in e.issues if i.severity == "error"]
-out["build_seconds"], out["build_cost"] = cost.seconds, repr(cost)
+out.update(build_seconds=cost.seconds, build_wall=cost.wall, build_cost=repr(cost))
 print(json.dumps(out))
 """
 
@@ -64,7 +65,8 @@ def test_explosive_expression_fails_fast_in_check_and_build(u, extra):
     expected = [["/params/u", "expression_too_large"]]
     assert out["check"] == expected, out
     assert out["build"] == expected, out
-    assert out["check_seconds"] < 2.0 and out["build_seconds"] < 2.0, out
+    assert within(2.0, out["check_seconds"], out["check_wall"]), out
+    assert within(2.0, out["build_seconds"], out["build_wall"]), out
 
 
 def test_ordinary_expressions_and_constants_still_build():

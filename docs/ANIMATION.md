@@ -275,24 +275,35 @@ the Matplotlib frames, so it is used only when named
 
 **Support is an allowlist** (`manim_adapter.DRAWN`): any spec field or
 template parameter set away from its default that Manim does not draw, any
-parameter Manim cannot sweep and `axis_limits` other than `fixed` are
-reported by `ManimAdapter().unmet(...)` and refused; `test_anim_manim.py`
+parameter Manim cannot sweep, `axis_limits` other than `fixed`, a legend
+(several layers with `legend.show`), the names of several layers and math
+text (`$...$`, drawn literally by Manim's `Text`) are reported by
+`ManimAdapter().unmet(...)` and refused (the coverage test runs on a one-layer
+and a two-layer spec); a state where a layer has no finite sample is
+`empty_series`, as in Matplotlib; `test_anim_manim.py`
 sets every field of every spec class and template parameter and requires
 each to be drawn or unmet, and checks that allowlisting an undrawn parameter
 (`vector_unit`) makes that test fail. Drawn by Matplotlib's rules: the title
 (with exactly the state's label when `label_frames`), the wrapped caption,
-axis titles (x: the variable; y: the layer name or expression; `label
-(unit)` without repeating the unit), the requested limits exactly, the
-theme's background, text, series colours and reference alpha (a reference
+axis titles (x: the variable; y: the layer name or expression for one
+layer, none from a layer's text for several; `label (unit)` without
+repeating the unit; an axis spanning less than 1e-3 drawn in units of its
+power of ten, `x (×1e-7)`), the requested limits exactly, the
+theme's background, text, series colours (assigned as Matplotlib does:
+by name, else expression; an explicit colour takes none from the cycle;
+alpha kept) and reference alpha (a reference
 vector field is translucent), `color`/`linewidth` read by the Matplotlib
 style parser, and the same `nonfinite_samples_omitted` /
 `null_values_omitted` warnings.
 
 **Layout.** Text keeps its point size at the request's dpi, as in
-Matplotlib; every text has its own band (a test checks that no text
-bounding box intersects another or the plot, and that every arrow is inside
-the plot); the plot gets the rest. Arrow tails are on the grid points and
-the axes reach past the grid by the longest arrow. A frame that leaves less
+Matplotlib; every text has its own band, axis titles are never longer than
+the plot (a test checks, over wide, short, portrait and high-dpi frames,
+that no text bounding box intersects another, the plot or the axes, and
+that every arrow is inside the plot); the plot gets the rest. Arrow tails
+are on the grid points; a vector field's axes are the box of the grid and
+every arrow tip, tick-labelled at their ends. The layout checks the
+deadline between its steps. A frame that leaves less
 than 1.2 x 0.8 in for the plot is `frame_too_small` (use a larger size or a
 lower dpi). Known differences: axes cross at the origin, only end values are
 tick-labelled.

@@ -16,6 +16,7 @@ import xml.etree.ElementTree as ET  # noqa: N817
 from pathlib import Path
 
 import pytest
+from cost import within
 
 import ieeVisualizer.view.render as view_render
 from ieeVisualizer.render import RenderError
@@ -86,10 +87,10 @@ def test_long_table_cell_truncates_quickly():
         v = ViewSpec(root=Stack([Table(data="d")]), datasets={"d": ds})
         with measure() as c:
             svg = render_view(v, "svg").content.decode()
-        print(c.seconds, svg.count("\\u2026"))
+        print(c.seconds, c.wall, svg.count("\\u2026"))
     """, timeout=60)
-    seconds, ellipses = out.split()
-    assert float(seconds) < 15 and int(ellipses) == 2
+    seconds, wall, ellipses = out.split()
+    assert within(15, float(seconds), float(wall)) and int(ellipses) == 2
 
 
 def test_fit_keeps_the_longest_prefix_that_fits():
@@ -119,10 +120,10 @@ def test_oversized_flow_is_refused_before_layout():
                  edges=[FlowEdge(f"n{i}", f"n{i+1}") for i in range(n - 1)])
         with measure() as c:
             issues = validate_view(ViewSpec(root=Stack([f])))
-        print(c.seconds, [(i.path, i.code) for i in issues])
+        print(c.seconds, c.wall, [(i.path, i.code) for i in issues])
     """, timeout=60)
-    seconds, codes = out.split(" ", 1)
-    assert float(seconds) < 5
+    seconds, wall, codes = out.split(" ", 2)
+    assert within(5, float(seconds), float(wall))
     assert eval(codes) == [("/root/children/0/nodes", "too_many_nodes"),  # noqa: S307
                            ("/root/children/0/edges", "too_many_edges")]
 
@@ -153,10 +154,10 @@ def test_layering_is_linear():
                  edges=[FlowEdge(f"n{i}", f"n{i+1}") for i in range(n - 1)])
         with measure() as c:
             layer, _ = _layers(f, set(back_edges(f)))
-        print(c.seconds, layer["n29999"])
+        print(c.seconds, c.wall, layer["n29999"])
     """, timeout=60)
-    seconds, last = out.split()
-    assert float(seconds) < 5 and last == "29999"
+    seconds, wall, last = out.split()
+    assert within(5, float(seconds), float(wall)) and last == "29999"
 
 
 def test_largest_allowed_flow_lays_out_in_seconds():
@@ -177,9 +178,9 @@ def test_largest_allowed_flow_lays_out_in_seconds():
         assert not [i for i in validate_view(v) if i.severity == "error"]
         with measure() as c:
             render_view(v, "svg"); render_view(v, "html")
-        print(c.seconds)
+        print(c.seconds, c.wall)
     """, timeout=120)
-    assert float(out) < 20
+    assert within(20, *map(float, out.split()))
 
 
 def test_crossing_count_matches_pairwise_definition():

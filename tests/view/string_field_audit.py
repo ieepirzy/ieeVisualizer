@@ -4,11 +4,12 @@ For every string field of a view that reaches layout or rendering, builds
 the view holding a 10 000-character value (one unbroken word, and words) as
 many times as validation allows, renders SVG, HTML and PNG (at the default
 scale, 2) and
-prints name, shape, count, seconds per format tab-separated. A PNG
-refused with view_too_large prints refused <seconds>. Seconds are reference
-seconds (tests/cost.py, which the test puts on the path): CPU time scaled by
-a reference workload timed before and after each field, so a busy machine
-does not count against the budget.
+prints name, shape, count, <seconds>/<wall> per format tab-separated. A PNG
+refused with view_too_large prints refused <seconds>/<wall>. Seconds are
+reference seconds (tests/cost.py, which the test puts on the path): CPU time
+scaled by a reference workload timed before each field, so a busy machine
+does not count against the budget; wall is wall-clock seconds, for the
+test's backstop against waiting instead of working.
 """
 import dataclasses
 import sys
@@ -122,21 +123,21 @@ print("FIELDS", len(FIELDS), len(names), sep="\t", flush=True)
 for name in names:
     build = FIELDS[name]
     rows = []
-    before = reference_cpu()
+    ref = reference_cpu()
     for shape, s in (("word", "x" * 10_000), ("words", ("word " * 2000)[:10_000])):
         k = max_count(build, s)
         v = build(k, s)
         times = []
         for fmt in ("svg", "html", "png") if shape == "word" else ("svg", "html"):
-            t = time.process_time()
+            t, w = time.process_time(), time.perf_counter()
             try:
                 render_view(v, fmt)
-                times.append(("", time.process_time() - t))
+                tag = ""
             except RenderError as e:
                 assert e.issues[0].code == "view_too_large", e
-                times.append(("refused ", time.process_time() - t))
+                tag = "refused "
+            times.append((tag, time.process_time() - t, time.perf_counter() - w))
         rows.append((shape, k, times))
-    ref = max(before, reference_cpu())
     for shape, k, times in rows:
-        print(name, shape, k, *(f"{tag}{round(reference_seconds(cpu, ref), 2)}"
-                                for tag, cpu in times), sep="\t", flush=True)
+        print(name, shape, k, *(f"{tag}{round(reference_seconds(cpu, ref), 2)}/{round(wall, 2)}"
+                                for tag, cpu, wall in times), sep="\t", flush=True)
