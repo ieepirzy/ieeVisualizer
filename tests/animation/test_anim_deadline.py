@@ -7,7 +7,7 @@ import dataclasses
 
 import numpy as np
 import pytest
-from anim_helpers import SMALL, codes, run_limited, sine_anim, weekly_anim
+from anim_helpers import ROOT, SMALL, codes, run_limited, sine_anim, weekly_anim
 
 from ieeVisualizer.animation import (
     AnimationRequest,
@@ -60,25 +60,28 @@ def test_unused_datasets_are_dropped_before_any_state_is_built():
     """A dataset no layer draws was copied and validated in every state
     (400,000 rows x 100 states: 988 s); over 1 M cells it is refused (one
     validation of 2 M cells takes 7.5 s, uninterruptible)."""
-    out = run_limited("""
+    out = run_limited(f"""
+        sys.path.insert(0, {str(ROOT / "tests")!r})
+        from cost import measure
         from test_anim_deadline import _fn, _sweep
         from anim_helpers import SMALL
         from ieeVisualizer.animation import render_animation
         from ieeVisualizer.spec import DataSnapshot, FigureSpec
         n = 100_000
-        big = DataSnapshot.from_columns({"u": [float(i) for i in range(n)],
-                                         "w": [float(i % 7) for i in range(n)]})
+        big = DataSnapshot.from_columns({{"u": [float(i) for i in range(n)],
+                                         "w": [float(i % 7) for i in range(n)]}})
         def timed(fig):
-            t = time.perf_counter()
-            render_animation(_sweep(fig, 20), SMALL)
-            return time.perf_counter() - t
+            with measure() as c:
+                render_animation(_sweep(fig, 20), SMALL)
+            return c.seconds
         timed(FigureSpec(layers=[_fn()]))  # warm-up
         base = timed(FigureSpec(layers=[_fn()]))
-        print(json.dumps({"s": timed(FigureSpec(datasets={"unused": big}, layers=[_fn()])),
-                          "base": base}))
+        print(json.dumps({{"s": timed(FigureSpec(datasets={{"unused": big}}, layers=[_fn()])),
+                          "base": base}}))
     """, timeout=120)
-    # relative to the same render without the dataset, measured in the same
-    # run (a loaded machine slows both): copied per state it was ~50x
+    # relative to the same render without the dataset, both in reference
+    # seconds (tests/cost.py: CPU work, which a loaded machine does not
+    # inflate as it does wall-clock time): copied per state it was ~50x
     assert out["s"] < 3 * out["base"] + 1.0, out
     big = DataSnapshot.from_columns({"u": [0.0] * 500_001, "w": [0.0] * 500_001})
     issues = validate_animation(_sweep(FigureSpec(datasets={"big": big}, layers=[_fn()])))
