@@ -288,7 +288,7 @@ each to be drawn or unmet, and checks that allowlisting an undrawn parameter
 axis titles (x: the variable; y: the layer name or expression for one
 layer, none from a layer's text for several; `label (unit)` without
 repeating the unit; an axis spanning less than 1e-3 drawn in units of its
-power of ten, `x (×1e-7)`), the requested limits exactly, the
+power of ten, `x (×1e-7)`, with an offset when far from 0), the requested limits exactly, the
 theme's background, text, series colours (assigned as Matplotlib does:
 by name, else expression; an explicit colour takes none from the cycle;
 alpha kept) and reference alpha (a reference
@@ -296,14 +296,19 @@ vector field is translucent), `color`/`linewidth` read by the Matplotlib
 style parser, and the same `nonfinite_samples_omitted` /
 `null_values_omitted` warnings.
 
-**Layout.** Text keeps its point size at the request's dpi, as in
-Matplotlib; every text has its own band, axis titles are never longer than
-the plot (a test checks, over wide, short, portrait and high-dpi frames,
+**Layout.** Text is drawn at its point size at the request's dpi, as in
+Matplotlib; a text too long for its band is shrunk, never below 7 pt (the
+frame is `frame_too_small` instead); every text has its own band, axis
+titles are never longer than the plot (a test checks, over wide, short, portrait and high-dpi frames,
 that no text bounding box intersects another, the plot or the axes, and
 that every arrow is inside the plot); the plot gets the rest. Arrow tails
 are on the grid points; a vector field's axes are the box of the grid and
-every arrow tip, tick-labelled at their ends. The layout checks the
-deadline between its steps. A frame that leaves less
+every arrow tip, tick-labelled at their ends; the aspect is free, as in
+Matplotlib (an arrow is `(u, v)` in data units on each axis). Tick labels
+get the digits that tell the ends apart; a tiny span far from 0 is drawn
+with an offset (`x (×1e-7 + 1.0000001)`). Series of a wrapped colour cycle
+are dashed like Matplotlib's later rounds. The layout checks the deadline
+between its steps. A frame that leaves less
 than 1.2 x 0.8 in for the plot is `frame_too_small` (use a larger size or a
 lower dpi). Known differences: axes cross at the origin, only end values are
 tick-labelled.

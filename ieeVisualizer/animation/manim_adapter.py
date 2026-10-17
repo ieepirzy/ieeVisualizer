@@ -27,7 +27,8 @@ label, exactly the result's ``states[i].label``, when ``label_frames``), the
 caption (wrapped), axis titles (the variable for x, the layer name or
 expression for y when there is one layer, none from a layer's text for
 several; ``label (unit)``, the unit not repeated; an axis spanning less than
-1e-3 is drawn in units of its own power of ten, ``x (x1e-7)``), the requested
+1e-3 is drawn in units of its own power of ten, ``x (x1e-7)``, with an
+offset when far from 0), the requested
 axis limits exactly, the theme's background, text and series colours
 (Matplotlib's assignment: a series by name, else expression, shares one
 colour; an explicit colour takes none from the cycle; alpha kept),
@@ -35,14 +36,20 @@ colour; an explicit colour takes none from the cycle; alpha kept),
 ``nonfinite_samples_omitted`` / ``null_values_omitted`` warnings. Text uses
 ``Text`` (Pango, a sans font), never ``MathTex``: no LaTeX.
 
-Layout: text keeps its point size at the request's dpi (as in Matplotlib);
-each text has its own band, so none overlaps another, the plot or the axes
-(axis titles are never longer than the plot); the plot gets the rest, and a
-frame that leaves less than :data:`MIN_PLOT_IN` for it is
-``frame_too_small``. A vector field's axes are the box of its grid and every
-arrow tip, and are tick-labelled at their ends. Known differences from Matplotlib: Manim's axes
-cross at the origin inside the box and only the end values are
-tick-labelled.
+Layout: text is drawn at its point size at the request's dpi (as in
+Matplotlib); a text too long for its band (a title, an axis title, a long
+word of a caption) is shrunk to fit, never below :data:`MIN_TEXT_PT`
+(``frame_too_small`` instead). Each text has its own band, so none overlaps
+another, the plot or the axes; the plot gets the rest, and a frame that
+leaves less than :data:`MIN_PLOT_IN` for it is ``frame_too_small``. The
+aspect is free, as in Matplotlib, a vector field's too: its arrows are
+``(u, v)`` in data units on each axis, and its axes are the box of its grid
+and every arrow tip, tick-labelled at their ends. Tick labels get the digits
+that tell the ends apart, and a tiny span far from 0 is drawn with an
+offset (``x (x1e-7 + 1.0000001)``). Series of a wrapped colour cycle are
+dashed as Matplotlib's rounds are (``--``, ``:``, ``-.``). Known differences
+from Matplotlib: Manim's axes cross at the origin inside the box and only the
+end values are tick-labelled.
 
 Frames are drawn one output frame at a time by the camera (a held state
 once) and streamed into the same encoders as the Matplotlib adapter (Pillow
@@ -213,8 +220,15 @@ def unmet_fields(anim: AnimationSpec) -> list[str]:
         if tl.parameter.partition(".")[0] not in SWEPT.get(t.name, set()):
             out.append(f"manim cannot sweep {tl.parameter!r}")
     out += [f"{p} (math text $...$: manim draws text literally)" for p, text in _texts(anim)
-            if isinstance(text, str) and text.count("$") >= 2]
+            if isinstance(text, str) and _is_math(text)]
     return out
+
+
+def _is_math(text: str) -> bool:
+    """Matplotlib's own test for math text (an even number of unescaped $)."""
+    from matplotlib import cbook
+
+    return bool(cbook.is_math_text(text))
 
 
 def _texts(anim: AnimationSpec):
@@ -380,8 +394,9 @@ class _Plot:
     draw: object
     title: str | None = None
     caption: str | None = None
-    #: One scene unit per data unit on both axes (a vector field).
-    equal_aspect: bool = False
+    #: Scene units kept free inside the axes on every side (arrow heads are
+    #: drawn in scene units, whatever the data scale).
+    margin: float = 0.0
     #: The title of each state (set by the adapter: label_frames).
     titles: list[str | None] = dataclasses.field(default_factory=list)
 
@@ -454,8 +469,9 @@ def _theme(name, warnings) -> tuple[str, str, list[str], float | None]:
             [colors.to_hex(c) for c in palette], roles_for(theme).reference_alpha)
 
 
-def _styles(layers, palette: list[str], warnings) -> list[tuple[str, float, float]]:
-    """``(hex colour, opacity, stroke width)`` of each function layer, as the
+def _styles(layers, palette: list[str], warnings) -> list[tuple[str, float, float, int]]:
+    """``(hex colour, opacity, stroke width, cycle round)`` of each function
+    layer, as the
     Matplotlib renderer assigns them: styles read by its own parser (the same
     values accepted, the same ``invalid_style_value`` fallback, a colour's
     alpha kept); a series is identified by its name, else its expression,
@@ -467,41 +483,64 @@ def _styles(layers, palette: list[str], warnings) -> list[tuple[str, float, floa
 
     out, seen, nxt = [], {}, 0
     for k, m in enumerate(layers):
+        rnd = 0
         path = f"/figure/layers/{k}"
         style = parse_style(m.style, DRAWN["style"], f"{path}/style", "a function mark", warnings)
         ident = m.name or f"function|{m.expression}"
         if "color" in style:
             color = style["color"]
         elif ident in seen:
-            color = seen[ident]
+            color, rnd = seen[ident]
         else:
             if nxt == len(palette):
                 warnings.append(RenderWarning(
                     "colour_cycle_wrapped", f"the figure has more than {len(palette)} series, "
                     "so series colours repeat.", path))
-            color = palette[nxt % len(palette)]
+            color, rnd = palette[nxt % len(palette)], nxt // len(palette)
             nxt += 1
-        seen.setdefault(ident, color)
+        seen.setdefault(ident, (color, rnd))
         r, g, b, a = colors.to_rgba(color)
-        out.append((colors.to_hex((r, g, b)), a, float(style.get("linewidth", 2.0)) * 2))
+        out.append((colors.to_hex((r, g, b)), a, float(style.get("linewidth", 2.0)) * 2,
+                    0 if "color" in style else rnd))
     return out
 
 
-def _exponent(lo: float, hi: float) -> int:
-    """The power of ten an axis is drawn in: 0, unless its span is below
-    1e-3 (Manim places ticks with an absolute 1e-6 tolerance: at 1e-7 the axis
-    ran off the frame, at 1e-9 it drew 2,006 ticks); then the span's own, and
-    the axis title says so (``x (x 1e-7)``)."""
+#: Dash ratio of each wrapped round of the colour cycle (Matplotlib's
+#: "--", ":", "-." variants; Manim dashes have one ratio).
+_WRAP_DASH = (0.55, 0.2, 0.4)
+
+
+def _axis_units(lo: float, hi: float) -> tuple[float, int]:
+    """``(offset, exponent)``: an axis draws ``(v - offset) / 10**exponent``.
+    Both are 0 unless its span is below 1e-3 (Manim places ticks with an
+    absolute 1e-6 tolerance: at 1e-7 the axis ran off the frame, at 1e-9 it
+    drew 2,006 ticks); then the exponent is the span's own, and the offset is
+    the low end when the values are far from 0 compared with the span (as
+    Matplotlib's offset text: 1.0000001 to 1.0000003 is drawn 0 to 2, titled
+    ``x (x1e-7 + 1.0000001)``)."""
     span = hi - lo
     if not (math.isfinite(span) and span > 0) or span >= 1e-3:
-        return 0
-    return math.floor(math.log10(span))
+        return 0.0, 0
+    off = lo if max(abs(lo), abs(hi)) > 1e3 * span else 0.0
+    return off, math.floor(math.log10(span))
 
 
-def _scaled_label(label: str | None, e: int) -> str | None:
-    if not e:
+def _scaled_label(label: str | None, units: tuple[float, int]) -> str | None:
+    off, e = units
+    if not e and not off:
         return label
-    return f"{label} (\u00d71e{e})" if label else f"\u00d71e{e}"
+    note = f"\u00d71e{e}" + (f" + {off!r}" if off else "")
+    return f"{label} ({note})" if label else note
+
+
+def _tick_texts(values: list[float]) -> list[str]:
+    """Tick labels with enough significant digits that distinct values never
+    read the same (the two ends of a rising axis differ)."""
+    for d in range(6, 18):
+        texts = [format(v, f".{d}g") for v in values]
+        if len(set(texts)) == len(set(values)):
+            return texts
+    return [repr(v) for v in values]
 
 
 def _nice_range(lo: float, hi: float, keep: tuple[bool, bool] = (False, False)) -> list[float]:
@@ -610,21 +649,21 @@ def _function_plot(anim: AnimationSpec, tl: ParameterSweep, values, warnings, th
         x_lo = limits_x[0] if limits_x[0] is not None else x_lo
         x_hi = limits_x[1] if limits_x[1] is not None else x_hi
     _nice_range(x_lo, x_hi), _nice_range(y_lo, y_hi)  # refuses undrawable ranges
-    ex, ey = _exponent(x_lo, x_hi), _exponent(y_lo, y_hi)
-    fx, fy = 10.0 ** ex, 10.0 ** ey  # drawn in these units (1 unless the span is tiny)
-    xr = _nice_range(x_lo / fx, x_hi / fx, tuple(bool(limits_x) and v is not None
-                                                 for v in (limits_x or [None, None])))
-    yr = _nice_range(y_lo / fy, y_hi / fy, tuple(bool(limits_y) and v is not None
-                                                 for v in (limits_y or [None, None])))
+    ux, uy = _axis_units(x_lo, x_hi), _axis_units(y_lo, y_hi)
+    (ox, fx), (oy, fy) = (ux[0], 10.0 ** ux[1]), (uy[0], 10.0 ** uy[1])  # 0, 1 unless tiny
+    xr = _nice_range((x_lo - ox) / fx, (x_hi - ox) / fx,
+                     tuple(bool(limits_x) and v is not None for v in (limits_x or [None, None])))
+    yr = _nice_range((y_lo - oy) / fy, (y_hi - oy) / fy,
+                     tuple(bool(limits_y) and v is not None for v in (limits_y or [None, None])))
     first = layers[0][0]
     # Matplotlib's defaults: the variable for x; for y the layer name or
     # expression, but only for one layer (several are never titled by one)
     y_default = (first.name or first.expression) if len(layers) == 1 else None
-    labels = (_scaled_label(_axis_label(fig, "x", first.variables[0]), ex),
-              _scaled_label(_axis_label(fig, "y", y_default), ey))
+    labels = (_scaled_label(_axis_label(fig, "x", first.variables[0]), ux),
+              _scaled_label(_axis_label(fig, "y", y_default), uy))
 
     def pieces(layer, p):  # what one frame draws: the same function counts and draws
-        return [piece for run in _finite_runs(layer[3] / fx, ys(layer, p) / fy)
+        return [piece for run in _finite_runs((layer[3] - ox) / fx, (ys(layer, p) - oy) / fy)
                 for piece in _clip(run, xr, yr)]
 
     for p in values:  # before manim starts
@@ -640,9 +679,9 @@ def _function_plot(anim: AnimationSpec, tl: ParameterSweep, values, warnings, th
 
     def draw(scene, M, ax, state):
         for k, layer in enumerate(layers):
-            color, alpha, width = styles[k]
+            color, alpha, width, rnd = styles[k]
 
-            def curve(layer=layer, color=color, alpha=alpha, width=width):
+            def curve(layer=layer, color=color, alpha=alpha, width=width, rnd=rnd):
                 # ONE mobject per curve; each piece inside the axes is a
                 # subpath; the bezier points are built in one array
                 path = M.VMobject(stroke_color=color, stroke_width=width, stroke_opacity=alpha)
@@ -650,6 +689,10 @@ def _function_plot(anim: AnimationSpec, tl: ParameterSweep, values, warnings, th
                                 for piece in pieces(layer, values[state()])])
                 if len(pts):
                     path.set_points(pts)
+                if rnd and len(pts):  # a wrapped cycle: Matplotlib's -- then : then -.
+                    ratio = _WRAP_DASH[(rnd - 1) % len(_WRAP_DASH)]
+                    n = max(4, int(path.get_arc_length() / (GAP * 1.5)))
+                    return M.DashedVMobject(path, num_dashes=n, dashed_ratio=ratio)
                 return path
 
             scene.add(M.always_redraw(curve))
@@ -717,23 +760,31 @@ def _vector_field_plot(anim: AnimationSpec, tl: ParameterSweep, values, theme,
             ys_.append(gy[ok] + v[ok] / m[ok] * lens)
     bx = (float(np.min(np.concatenate(xs))), float(np.max(np.concatenate(xs))))
     by = (float(np.min(np.concatenate(ys_))), float(np.max(np.concatenate(ys_))))
-    pad = 0.05 * cell  # an arrow head's width
-    e = _exponent(min(bx[0], by[0]), min(bx[0], by[0]) + max(bx[1] - bx[0], by[1] - by[0]))
-    f = 10.0 ** e  # one unit for both axes (equal aspect); 1 unless the field is tiny
-    box = ((bx[0] - pad) / f, (bx[1] + pad) / f, (by[0] - pad) / f, (by[1] + pad) / f)
-    labels = tuple(_scaled_label(_label(p0.get(a + "_label") or a, p0.get(a + "_unit")), e)
-                   for a in ("x", "y"))
+    # an arrow head's width, per axis (the aspect is free, as in Matplotlib)
+    px = 0.05 * ((x1 - x0) / max(grid[0] - 1, 1) or bx[1] - bx[0] or 1.0)
+    py = 0.05 * ((y1 - y0) / max(grid[1] - 1, 1) or by[1] - by[0] or 1.0)
+    bx, by = (bx[0] - px, bx[1] + px), (by[0] - py, by[1] + py)
+    ux, uy = _axis_units(*bx), _axis_units(*by)  # per axis
+    (ox, fx), (oy, fy) = (ux[0], 10.0 ** ux[1]), (uy[0], 10.0 ** uy[1])
+    box = ((bx[0] - ox) / fx, (bx[1] - ox) / fx, (by[0] - oy) / fy, (by[1] - oy) / fy)
+    labels = (_scaled_label(_label(p0.get("x_label") or "x", p0.get("x_unit")), ux),
+              _scaled_label(_label(p0.get("y_label") or "y", p0.get("y_unit")), uy))
     role = p0.get("role") or "reference"  # the template's default for expressions
     alpha = theme[3] if role == "reference" else None
 
     def draw(scene, M, ax, state):
-        (sx0, sy0), (sx1, sy1) = ax.c2p(x0 / f, y0 / f)[:2], ax.c2p(x1 / f, y1 / f)[:2]
+        (sx0, sy0) = ax.c2p((x0 - ox) / fx, (y0 - oy) / fy)[:2]
+        (sx1, sy1) = ax.c2p((x1 - ox) / fx, (y1 - oy) / fy)[:2]
         dx = (sx1 - sx0) / max(grid[0] - 1, 1)
         dy = (sy1 - sy0) / max(grid[1] - 1, 1)
-        per_unit = (ax.c2p(1, 0)[0] - ax.c2p(0, 0)[0]) / f  # scene units per data unit
+        # scene units per data unit, per axis: an arrow is (u, v) in data
+        # units, as Matplotlib's quiver (angles and scale in "xy")
+        sx = (ax.c2p(1, 0)[0] - ax.c2p(0, 0)[0]) / fx
+        sy = (ax.c2p(0, 1)[1] - ax.c2p(0, 0)[1]) / fy
 
         def field_at(pt, k):
-            x, y = (c * f for c in ax.p2c(pt)[:2])
+            px_, py_ = ax.p2c(pt)[:2]
+            x, y = px_ * fx + ox, py_ * fy + oy
             with np.errstate(all="ignore"):
                 u, v = float(fu(x, y, values[k])), float(fv(x, y, values[k]))
             if not (math.isfinite(u) and math.isfinite(v)):
@@ -741,7 +792,8 @@ def _vector_field_plot(anim: AnimationSpec, tl: ParameterSweep, values, theme,
             norm = math.hypot(u, v)
             if not norm:
                 return np.zeros(3)
-            return np.array([u, v, 0.0]) / norm * length(k, norm) * per_unit
+            d = length(k, norm) / norm
+            return np.array([u * d * sx, v * d * sy, 0.0])
 
         def field():
             k = state()
@@ -761,7 +813,8 @@ def _vector_field_plot(anim: AnimationSpec, tl: ParameterSweep, values, theme,
     return _Plot(box=box, steps=(_nice_range(*box[:2])[2], _nice_range(*box[2:])[2]),
                  ticks=([box[0], box[1]], [box[2], box[3]]), labels=labels, draw=draw,
                  title=p0.get("title") or anim.title, caption=p0.get("caption"),
-                 equal_aspect=True)
+                 # half of Manim's widest arrow head (0.35 units)
+                 margin=0.2)
 
 
 def _axis_label(fig, key: str, default: str | None) -> str | None:
@@ -787,14 +840,32 @@ TEXT_PT = {"title": 12.0, "label": 10.0, "tick": 10.0, "caption": 9.0}
 #: Smallest plot area (inches) left after the text: a smaller frame is
 #: refused (``frame_too_small``) rather than drawn unreadably.
 MIN_PLOT_IN = (1.2, 0.8)
+#: Smallest point size a text is shrunk to (to fit the frame); below that
+#: the frame is refused.
+MIN_TEXT_PT = 7.0
 GAP = 0.06 * UNITS_PER_IN
 
 
+def _fit(t, kind: str, text: str, have: float, dim: str = "width"):
+    """Shrink ``t`` to ``have`` scene units (its ``dim``), never below
+    :data:`MIN_TEXT_PT`: a text that would be smaller is ``frame_too_small``."""
+    need = getattr(t, dim)
+    if need <= have:
+        return t
+    if have / need * TEXT_PT[kind] < MIN_TEXT_PT:
+        raise AnimationError([issue("", "frame_too_small",
+                                    f"the text {text[:40]!r} needs {need / UNITS_PER_IN:.2f} in "
+                                    f"at {TEXT_PT[kind]:g} pt; the frame gives it "
+                                    f"{max(have, 0) / UNITS_PER_IN:.2f} in, and shrinking it "
+                                    f"below {MIN_TEXT_PT:g} pt would make it unreadable. Use a "
+                                    "larger size, a lower dpi or a shorter text.")])
+    return t.scale_to_fit_width(have) if dim == "width" else t.scale_to_fit_height(have)
+
+
 def _text(M, s: str, kind: str, max_width: float | None = None):
-    t = M.Text(s, font_size=TEXT_PT[kind] * FONT_PER_PT, font="Sans")
-    if max_width is not None and t.width > max_width:
-        t.scale_to_fit_width(max_width)
-    return t
+    # Matplotlib draws an escaped \$ as $ (math text itself is refused)
+    t = M.Text(s.replace("\\$", "$"), font_size=TEXT_PT[kind] * FONT_PER_PT, font="Sans")
+    return t if max_width is None else _fit(t, kind, s, max_width)
 
 
 def _wrap(text: str, width_units: float, pt: float) -> str:
@@ -816,7 +887,7 @@ def _compose(scene, M, plot: _Plot, fw: float, fh: float, state, deadline=None):
 
     check()
     left_edge, bottom_edge, top_edge = -fw / 2, -fh / 2, fh / 2
-    fmt = [[f"{v:g}" for v in vs] for vs in plot.ticks]
+    fmt = [_tick_texts(list(vs)) for vs in plot.ticks]
     xt = [_text(M, s, "tick") for s in fmt[0]]
     yt = [_text(M, s, "tick") for s in fmt[1]]
     xtitle = _text(M, plot.labels[0], "label") if plot.labels[0] else None
@@ -831,12 +902,12 @@ def _compose(scene, M, plot: _Plot, fw: float, fh: float, state, deadline=None):
     bottom = GAP + (caption.height + GAP if caption else 0.0) \
         + (xtitle.height + GAP if xtitle else 0.0) + max(t.height for t in xt) + GAP
     bh = fh - top - bottom
-    if ytitle is not None and ytitle.height > bh:  # never longer than the plot is tall
-        ytitle.scale_to_fit_height(max(bh, 1e-3))
+    if ytitle is not None:  # never longer than the plot is tall
+        _fit(ytitle, "label", plot.labels[1], bh, "height")
     left = GAP + (ytitle.width + GAP if ytitle else 0.0) + max(t.width for t in yt) + GAP
     bw = fw - left - GAP
-    if xtitle is not None and xtitle.width > bw:  # never wider than the plot
-        xtitle.scale_to_fit_width(max(bw, 1e-3))
+    if xtitle is not None:  # never wider than the plot
+        _fit(xtitle, "label", plot.labels[0], bw)
     if bw < MIN_PLOT_IN[0] * UNITS_PER_IN or bh < MIN_PLOT_IN[1] * UNITS_PER_IN:
         raise AnimationError([issue("", "frame_too_small",
                                     f"the frame leaves {bw / UNITS_PER_IN:.2f} x "
@@ -845,11 +916,11 @@ def _compose(scene, M, plot: _Plot, fw: float, fh: float, state, deadline=None):
                                     f"{MIN_PLOT_IN[1]:g} in. Use a larger size or a lower dpi "
                                     "(text keeps its point size).")])
     x0, x1, y0, y1 = plot.box
-    if plot.equal_aspect:
-        s = min(bw / (x1 - x0), bh / (y1 - y0))
-        w, h = (x1 - x0) * s, (y1 - y0) * s
-    else:
-        w, h = bw, bh
+    w, h = bw, bh  # free aspect, as Matplotlib (a vector field too)
+    if plot.margin:  # the data range grows so that ``margin`` stays free inside the axes
+        mx = plot.margin * (x1 - x0) / max(w - 2 * plot.margin, 1e-9)
+        my = plot.margin * (y1 - y0) / max(h - 2 * plot.margin, 1e-9)
+        x0, x1, y0, y1 = x0 - mx, x1 + mx, y0 - my, y1 + my
     # short tick marks: where the axes cross at the box's edge (data away from
     # 0) they stay clear of the tick labels
     ax = M.Axes(x_range=[x0, x1, plot.steps[0]], y_range=[y0, y1, plot.steps[1]],

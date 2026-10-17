@@ -285,6 +285,11 @@ class AnimationRegistry:
                            f"{', '.join(self._adapters) or '(none)'}.") from None
 
     def select(self, anim: AnimationSpec, request: AnimationRequest) -> AnimationAdapter:
+        if request.adapter and request.adapter not in self._adapters:
+            raise CapabilityError([_issue("", "unknown_adapter",
+                                          f"no animation adapter named {request.adapter!r}; "
+                                          f"registered: {', '.join(self._adapters) or '(none)'}.")],
+                                  [timeline_kind(anim), request.format], {})
         cands = [self.get(request.adapter)] if request.adapter else list(self._adapters.values())
         unmet: dict[str, list[str]] = {}
         for a in cands:

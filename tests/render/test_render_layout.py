@@ -94,3 +94,39 @@ def test_no_data_note_is_inside_the_plot_on_a_log_axis(horizontal):
     assert np.all(np.isfinite(bbox.get_points()))
     assert ax_box.x0 <= bbox.x0 and bbox.x1 <= ax_box.x1 + 1
     assert ax_box.y0 <= bbox.y0 and bbox.y1 <= ax_box.y1 + 1
+
+
+# ------------------------------------------------- an axis title is a claim
+
+
+def _ylabel(spec):
+    return build_figure(spec).axes.get_ylabel()
+
+
+def test_an_axis_holding_several_layers_is_never_titled_by_one_of_them():
+    """'revenue' over revenue + cost; with 11 layers 'a*sin(x) + 0'."""
+    from ieeVisualizer.spec import DataSnapshot, FigureSpec, FunctionMark, Legend, LineMark
+
+    def fn(expr, **kw):
+        return FunctionMark(expression=expr, variables=["x"], domain={"x": [0.0, 6.0]},
+                            samples=20, **kw)
+
+    two = FigureSpec(layers=[fn("sin(x)", name="revenue"), fn("cos(x)", name="cost")],
+                     legend=Legend(show=False))
+    assert _ylabel(two) == ""
+    many = FigureSpec(layers=[fn(f"sin(x) + {k}") for k in range(11)])
+    assert _ylabel(many) == ""
+    ds = DataSnapshot.from_columns({"week": [1, 2], "bookings": [3.0, 4.0], "quotes": [5.0, 6.0]},
+                                   units={"bookings": "count", "quotes": "count"})
+    lines = FigureSpec(datasets={"d": ds}, layers=[
+        LineMark(data="d", encoding={"x": "week", "y": "bookings"}, name="bookings"),
+        LineMark(data="d", encoding={"x": "week", "y": "quotes"}, name="quotes")])
+    assert _ylabel(lines) == "(count)" and build_figure(lines).axes.get_xlabel() == "week"
+    # an explicit label still applies; one layer is still titled by its name
+    two.axes = {"y": Axis(label="EUR")}
+    assert _ylabel(two) == "EUR"
+    assert _ylabel(FigureSpec(layers=[fn("sin(x)", name="revenue")])) == "revenue"
+    same = FigureSpec(datasets={"d": ds}, layers=[
+        LineMark(data="d", encoding={"x": "week", "y": "bookings"}),
+        LineMark(data="d", encoding={"x": "week", "y": "bookings"}, role="forecast")])
+    assert _ylabel(same) == "bookings (count)"  # several layers, one series
