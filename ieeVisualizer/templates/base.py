@@ -51,6 +51,12 @@ unknown_symbol           an expression uses a name that is neither a variable,
                          a parameter nor an allowed function
 nonfinite_samples        (warning) an expression gave nan/inf at some grid points;
                          those samples are stored as null, never as a number
+missing_interval_kind,   an interval parameter does not state what it is, or
+invalid_interval_kind,   states it inconsistently (the spec's interval codes,
+missing_interval_level,  from ``spec.intervals.metadata_problems``)
+invalid_interval_level, unexpected_interval_level, missing_interval_multiplier,
+invalid_interval_multiplier, unexpected_interval_multiplier,
+invalid_interval_quantiles, unexpected_interval_quantiles, conflicting_interval_level
 ======================== ===========================================================
 
 Warnings do not stop a build; they are recorded in
@@ -90,7 +96,11 @@ PARAM_TYPES = {
     "range": "array [min, max] of two numbers, min < max",
     "grid": "integer n (n x n points) or array [nx, ny]",
     "number_map": "object {name: number}",
+    "interval_list": "array of {lower, upper, kind, level?, multiplier?, quantiles?}: two "
+                     "column names, an interval kind, and its level (fraction, e.g. 0.95; "
+                     "central for quantile), SE/SD multiplier, or quantiles [lower, upper]",
 }
+INTERVAL_ITEM_KEYS = ("lower", "upper", "kind", "level", "multiplier", "quantiles")
 
 #: Unit expectations a :class:`ColumnRequirement` can declare.
 UNIT_POLICIES = ("recommended", "not_applicable")
@@ -426,6 +436,59 @@ class ComponentTemplate:
                         "it as empty or zero.")
 
 
+def _coerce_intervals(p: Parameter, v: Any, issues: Issues) -> Any:
+    """A list of interval objects, each with every key (level and multiplier
+    default to null). Whether kind/level/multiplier fit together is the
+    template's check (``spec.intervals.metadata_problems``)."""
+    if not isinstance(v, (list, tuple)) or not v:
+        issues.error(param_path(p.name), "invalid_parameter",
+                     f"parameter {p.name!r} must be a non-empty list of interval objects "
+                     "{lower, upper, kind, level?, multiplier?}, got " + repr(v) + ".")
+        return v
+    out = []
+    for k, item in enumerate(v):
+        path = ptr("params", p.name, str(k))
+        if not isinstance(item, Mapping):
+            issues.error(path, "invalid_parameter",
+                         f"interval {k} must be an object {{lower, upper, kind, level?, "
+                         f"multiplier?}}, got {item!r}.")
+            out.append(item)
+            continue
+        extra = sorted(set(item) - set(INTERVAL_ITEM_KEYS))
+        for key in extra:
+            issues.error(ptr("params", p.name, str(k), str(key)), "invalid_parameter",
+                         f"interval {k} has no key {key!r}.{suggest(str(key), INTERVAL_ITEM_KEYS)} "
+                         f"Keys: {', '.join(INTERVAL_ITEM_KEYS)}.")
+        norm = {key: item.get(key) for key in INTERVAL_ITEM_KEYS}
+        for key in ("lower", "upper"):
+            if not isinstance(norm[key], str) or not norm[key]:
+                issues.error(ptr("params", p.name, str(k), key), "missing_parameter"
+                             if norm[key] is None else "invalid_parameter",
+                             f"interval {k} needs {key!r}: the name of its {key} bound column.")
+        if norm["kind"] is not None and not isinstance(norm["kind"], str):
+            issues.error(ptr("params", p.name, str(k), "kind"), "invalid_parameter",
+                         f"interval {k}'s kind must be a string, got {norm['kind']!r}.")
+        for key in ("level", "multiplier"):
+            if norm[key] is not None:
+                if not _is_number(norm[key]):
+                    issues.error(ptr("params", p.name, str(k), key), "invalid_parameter",
+                                 f"interval {k}'s {key} must be a finite number or null, got "
+                                 f"{norm[key]!r}.")
+                else:
+                    norm[key] = float(norm[key])
+        qs = norm["quantiles"]
+        if qs is not None:
+            if not (isinstance(qs, (list, tuple)) and len(qs) == 2
+                    and all(_is_number(q) for q in qs)):
+                issues.error(ptr("params", p.name, str(k), "quantiles"), "invalid_parameter",
+                             f"interval {k}'s quantiles must be [lower, upper] numbers, got "
+                             f"{qs!r}.")
+            else:
+                norm["quantiles"] = [float(q) for q in qs]
+        out.append(norm)
+    return out
+
+
 def _coerce_param(p: Parameter, v: Any, issues: Issues) -> Any:
     """Type-check one parameter value; return the normalised value (or the
     raw value after recording an error)."""
@@ -473,6 +536,8 @@ def _coerce_param(p: Parameter, v: Any, issues: Issues) -> Any:
                 or not all(isinstance(x, int) and not isinstance(x, bool) for x in v)):
             return bad("an integer or [nx, ny]")
         v = list(v)
+    elif t == "interval_list":
+        return _coerce_intervals(p, v, issues)
     elif t == "number_map":
         if not isinstance(v, Mapping) or not all(
                 isinstance(k, str) and _is_number(x) for k, x in v.items()):

@@ -40,9 +40,11 @@ composes figures with text, KPI tiles, tables, notes and flow diagrams;
 `ieeVisualizer.network` draws graphs (docs/NETWORKS.md). Themes are
 registered, versioned data (`themes.list_themes()`); name one in
 `spec.theme`, pinned as `name@version` for reproducibility, instead of
-styling by hand. Not yet available: small multiples in one FigureSpec,
-subtitles, band/errorbar marks (planned Phase 2). Do not fake them; say
-what is missing and use the nearest honest form.
+styling by hand. Intervals: `band` and `errorbar` marks, or `y_lower` /
+`y_upper` on a line, scatter or vertical bar, each with its `interval_kind`
+and `interval_level` (docs/SPEC.md "Intervals"). Not yet available: small
+multiples in one FigureSpec, subtitles, ensembles of trajectories. Do not
+fake them; say what is missing and use the nearest honest form.
 
 ## Workflow
 
@@ -95,8 +97,8 @@ Runnable examples (template and composed): `references/examples.md`.
 | Nulls never drawn as 0 | yes | null stays null; gaps, "no data" bar slots, `null_values_omitted`; `empty_series`, `all_null_column`, `empty_dataset` errors |
 | Units never converted | yes | units stored verbatim; `mixed_units`, `unit_override_conflict` (templates), `axis_unit_conflict` (validate) |
 | Forecast distinct from observed | yes | `role="forecast"` always dashed/translucent/hatched; `forecast_style_overridden` |
-| No invented uncertainty | yes (templates) | bounds only from caller columns |
-| Interval states level and kind | planned | Phase 2 `interval_level`/`interval_kind`; until then put it in the caption |
+| No invented uncertainty | yes | bounds only from caller columns, drawn as given; a null bound is a gap |
+| Interval states level and kind | yes | `interval_kind` + `interval_level` required (`missing_interval_kind`, `missing_interval_level`); shown in the legend, or the caption when the legend is hidden |
 | Dual y-axes impossible | yes | spec 1.0 has one y axis |
 | Dates are not numbers | yes | `scale_dtype_mismatch` for numbers on a time axis |
 | Log axes positive | yes | `log_scale_nonpositive` |

@@ -50,7 +50,7 @@ checked for) what it declares. `default` declares nothing.
 | `semantic` | status colours by meaning (`positive`, `negative`, `attention`); data for callers, not series colours |
 | `typography` | font family list and sizes (`size`, `title`, `label`, `tick`, `legend`, `caption`) |
 | `line_width`, `grid_show`, `grid_alpha`, `grid_width`, `grid_below`, `spines` | strokes and frame |
-| `roles` | `forecast_linestyle` (dashed/dotted/dashdot, never solid), `forecast_hatch`, `forecast_fill_alpha`, `forecast_line_alpha` (a forecast line's opacity factor, default 0.75), `reference_color`, `reference_alpha`, `reference_fill_alpha`, `reference_linewidth` |
+| `roles` | `forecast_linestyle` (dashed/dotted/dashdot, never solid), `forecast_hatch`, `forecast_fill_alpha`, `forecast_line_alpha` (a forecast line's opacity factor, default 0.75), `reference_color`, `reference_alpha`, `reference_fill_alpha`, `reference_linewidth`, `interval_fill_alpha` (opacity of one interval band; renderer default 0.25 when unset, and written to the theme's JSON and hash only when set, so themes published before it keep their hash) |
 | `locale` | `NumberLocale`: decimal and group separators, minus sign, percent and currency layout, six concise date patterns |
 | `targets` | `{"email": FigureTarget(width, height, dpi), "slide": ...}` |
 | `provenance`, `pending` | where every value came from; slots still awaiting an official source |

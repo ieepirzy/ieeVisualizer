@@ -198,8 +198,9 @@ def scalar_position(value: Any, info: AxisInfo) -> float | None:
 
 
 def _bound(spec: FigureSpec):
-    """Yield (layer_index, axis_key, channel, column, dataset_name) for every
-    positional binding, honouring that channels map literally to axes."""
+    """Yield (layer_index, axis_key, encoding, column, dataset_name, channel)
+    for every positional binding, honouring that channels map literally to
+    axes; interval bounds (``y_lower``, ``y_upper``) are bound to y."""
     axes = AXES if spec.coordinate_system == "cartesian3d" else ("x", "y")
     for i, m in enumerate(spec.layers):
         if m.data is None:
@@ -207,11 +208,11 @@ def _bound(spec: FigureSpec):
         ds = spec.datasets.get(m.data)
         if not isinstance(ds, DataSnapshot):
             continue
-        for ch in axes:
+        for ch in axes + ("y_lower", "y_upper"):
             enc = m.encoding.get(ch)
             if enc is None:
                 continue
-            yield i, ch, enc, ds.columns[enc.field], m.data
+            yield i, ch[0], enc, ds.columns[enc.field], m.data, ch
 
 
 def infer_axes(spec: FigureSpec, warnings: list[RenderWarning]) -> dict[str, AxisInfo]:
@@ -224,11 +225,12 @@ def infer_axes(spec: FigureSpec, warnings: list[RenderWarning]) -> dict[str, Axi
     #: function's variable, name or expression)
     named: dict[str, list[str]] = {k: [] for k in keys}
 
-    for i, axis, enc, col, data in _bound(spec):
-        named[axis].append(enc.title or enc.field)
+    for i, axis, enc, col, data, ch in _bound(spec):
+        if ch == axis:  # an interval's bounds (y_lower, y_upper) do not name the axis
+            named[axis].append(enc.title or enc.field)
         info = infos[axis]
         bound_cols[axis].append(col)
-        p = f"/layers/{i}/encoding/{axis}"
+        p = f"/layers/{i}/encoding/{ch}"
         if col.dtype in ("str", "bool"):
             k = "category"
         elif col.dtype == "datetime":
@@ -240,7 +242,9 @@ def infer_axes(spec: FigureSpec, warnings: list[RenderWarning]) -> dict[str, Axi
         else:
             k = "numeric"
         kinds[axis][p] = k
-        if info.label_column is None:
+        if ch != axis:  # an interval bound: its unit, never the axis' name
+            info.unit = info.unit or col.unit
+        elif info.label_column is None:
             info.label_column, info.label_title, info.unit = enc.field, enc.title, col.unit
         elif info.unit is None:
             info.unit = col.unit
