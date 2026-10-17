@@ -196,8 +196,23 @@ def run_isolated(task: str, payload: dict[str, Any], deadline: Deadline) -> Any:
             proc.stdin.close()
         for fd in fds:  # closing ctl_w releases the watchdog
             os.close(fd)
-        shutil.rmtree(tmp, ignore_errors=True)
+        _remove(tmp)
         slots.release()
+
+
+def _remove(tmp: str, tries: int = 40, pause: float = 0.025) -> None:
+    """Remove the worker's temporary directory. A process of the killed
+    group (ffmpeg) can still be finishing a write when the first removal
+    lists the directory, which then is not empty: retried for up to about
+    1 s (within :data:`ISOLATION_SLACK_S`), the watchdog removing it after
+    that."""
+    import time
+
+    for _ in range(tries):
+        shutil.rmtree(tmp, ignore_errors=True)
+        if not os.path.exists(tmp):
+            return
+        time.sleep(pause)
 
 
 def _pickle(payload: dict[str, Any], task: str) -> bytes:

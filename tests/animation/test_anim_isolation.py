@@ -373,3 +373,27 @@ def test_a_huge_column_name_is_shortened_in_issue_paths():
                              data="d", encoding={"x": "t", "y": name})]))
     issues = [i for i in validate_animation(anim) if i.code.startswith("text_too")]
     assert issues and all(len(i.path) < 120 for i in issues)
+
+
+def test_the_temporary_directory_is_removed_even_if_a_file_appears_late(tmp_path, monkeypatch):
+    """A killed ffmpeg still writing when the directory was listed left it
+    behind (test_mp4_and_export_stop_at_the_deadline_plus_the_kill_slack,
+    now and then)."""
+    import shutil
+
+    from ieeVisualizer.animation import isolate as I
+
+    work = tmp_path / "ieev-anim-x"
+    work.mkdir()
+    real = shutil.rmtree
+    calls = []
+
+    def racing(path, ignore_errors=False):
+        calls.append(path)
+        real(path, ignore_errors=ignore_errors)
+        if len(calls) == 1:  # a late writer recreates it once
+            os.makedirs(os.path.join(path, "late"))
+
+    monkeypatch.setattr(I.shutil, "rmtree", racing)
+    I._remove(str(work), pause=0.001)
+    assert not work.exists() and len(calls) == 2
