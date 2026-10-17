@@ -30,6 +30,69 @@ def _left():
     return set(glob.glob(os.path.join(tempfile.gettempdir(), "ieev-anim-*")))
 
 
+def _own_tmp(monkeypatch, tmp_path):
+    """Point this test's renders at their own temporary directory and return
+    a function listing the worker directories left in it. A global glob of
+    /tmp also sees another suite's workers running in parallel."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    return lambda: set(glob.glob(os.path.join(str(tmp_path), "ieev-anim-*")))
+
+
+@dataclasses.dataclass
+class Stop:
+    """When an isolated render was stopped, on its deadline's clock
+    (``time.monotonic``): ``started`` (the Deadline), ``fired`` (the receive
+    loop raised: the caller's own expiry, or the worker's error arriving)
+    and ``returned`` (the error reached the test)."""
+
+    seconds: float = 0.0
+    started: float = 0.0
+    fired: float = 0.0
+    returned: float = 0.0
+
+    @property
+    def lag(self) -> float:
+        """Fired how long after the deadline (negative: before it)."""
+        return self.fired - self.started - self.seconds
+
+    @property
+    def overrun(self) -> float:
+        """From firing to the error reaching the caller: kill and clean-up."""
+        return self.returned - self.fired
+
+
+def _stopped(call, monkeypatch):
+    """``(Stop, error)`` for ``call``, which must be stopped by its deadline
+    in a worker. The overrun is measured from when the deadline fired, not
+    from when the test started, so time the scheduler takes away before
+    the expiry is not counted as the guarantee's overrun."""
+    from ieeVisualizer.animation import isolate
+
+    s = Stop()
+    run, receive = isolate.run_isolated, isolate._receive
+
+    def run_spy(task, payload, deadline):
+        s.seconds, s.started = deadline.seconds, deadline.started
+        return run(task, payload, deadline)
+
+    def receive_spy(*a):
+        try:
+            return receive(*a)
+        except BaseException:
+            s.fired = time.monotonic()
+            raise
+
+    monkeypatch.setattr(isolate, "run_isolated", run_spy)
+    monkeypatch.setattr(isolate, "_receive", receive_spy)
+    try:
+        call()
+    except AnimationError as e:
+        s.returned = time.monotonic()
+        assert s.started and s.fired, "not stopped in the worker's receive loop"
+        return s, e
+    raise AssertionError("finished; it should have been stopped")
+
+
 def _timed(call):
     t = time.monotonic()
     try:
@@ -52,7 +115,16 @@ def test_a_worker_render_equals_an_inline_one_and_errors_keep_their_structure():
     assert [(i.path, i.code) for i in e.value.issues] == [("/poster", "invalid_poster")]
 
 
-def test_reviewer_inputs_stop_at_the_deadline_plus_the_kill_slack():
+def _assert_stopped_on_time(s: Stop, e) -> None:
+    """Not before the deadline; fired by the receive loop within the slack
+    of it (it polls every 50 ms); killed and cleaned up within the slack of
+    firing."""
+    assert e.issues[0].code == "render_deadline_exceeded", e
+    assert 0 <= s.lag <= ISOLATION_SLACK_S, (s, s.lag, e.stats)
+    assert s.overrun <= ISOLATION_SLACK_S, (s, s.overrun, e.stats)
+
+
+def test_reviewer_inputs_stop_at_the_deadline_plus_the_kill_slack(tmp_path, monkeypatch):
     """A 0.5 s expression over 120 states (function and template sweeps; MP4
     and export cases: test_anim_mp4): each ran for minutes before round 3."""
     fn = _sweep(FigureSpec(layers=[_fn(HEAVY)]), 120)
@@ -60,16 +132,16 @@ def test_reviewer_inputs_stop_at_the_deadline_plus_the_kill_slack():
                             values=[i / 40 for i in range(40)])
     cases = [lambda: render_animation(fn, SMALL, deadline=D, isolation="process"),
              lambda: render_animation(tpl, SMALL, deadline=D, isolation="process")]
-    before = _left()
+    left = _own_tmp(monkeypatch, tmp_path)
     for call in cases:
-        elapsed, e = _timed(call)
-        assert e.issues[0].code == "render_deadline_exceeded" and e.issues[0].path == ""
-        assert D <= elapsed <= D + ISOLATION_SLACK_S, (elapsed, e.stats)
+        s, e = _stopped(call, monkeypatch)
+        _assert_stopped_on_time(s, e)
+        assert e.issues[0].path == "" and s.seconds == D
         # which phase the deadline lands in depends on the machine's speed (a
         # loaded runner can still be starting the worker or validating)
         assert e.stats["deadline_s"] == D and e.stats["phase"] in (
             "start worker", "start", "validate", "prepare", "plan", "parse"), e.stats
-    assert _left() <= before
+    assert not left()
 
 
 # ------------------------------------------------- review of #22/#24 (round 2)
@@ -144,10 +216,15 @@ def test_a_forged_or_pickled_answer_is_refused_without_running_it():
 
 
 def test_a_large_result_is_received_in_linear_time():
-    """``buf += chunk`` on bytes: 100 MB took 51.6 s."""
-    t = time.monotonic()
-    res = _probe("big", 64_000_000)
-    assert len(res.content) == 64_000_000 and time.monotonic() - t < 15
+    """``buf += chunk`` on bytes: 100 MB took 51.6 s. The cost is CPU (the
+    copies), so it is measured in reference seconds (tests/cost.py: this
+    process and the reaped worker), not wall-clock."""
+    from cost import measure  # here: child processes import this module without tests/
+
+    with measure() as cost:
+        res = _probe("big", 64_000_000)
+    assert len(res.content) == 64_000_000
+    assert cost.within(15), cost
 
 
 def test_resolved_data_over_the_cap_is_refused_before_any_worker_starts(monkeypatch):
@@ -163,7 +240,7 @@ def test_resolved_data_over_the_cap_is_refused_before_any_worker_starts(monkeypa
     assert {i.code for i in e.value.issues} == {"data_too_large"}
 
 
-def test_objects_from_main_and_failed_starts_are_structured_errors(monkeypatch):
+def test_objects_from_main_and_failed_starts_are_structured_errors(tmp_path, monkeypatch):
     from worker_probe import Probe, registry
 
     class Local(Probe):
@@ -172,7 +249,7 @@ def test_objects_from_main_and_failed_starts_are_structured_errors(monkeypatch):
     Local.__module__ = "__main__"
     reg = registry("report")
     reg.register(Local("report"), replace=True)
-    before = _left()
+    left = _own_tmp(monkeypatch, tmp_path)
     with pytest.raises(AnimationError) as e:
         render_animation(PROBE, dataclasses.replace(SMALL, adapter="probe"), registry=reg,
                          isolation="process")
@@ -187,7 +264,7 @@ def test_objects_from_main_and_failed_starts_are_structured_errors(monkeypatch):
     with pytest.raises(AnimationError) as e:
         render_animation(PROBE, SMALL, isolation="process")
     assert e.value.issues[0].code == "render_worker_failed"
-    assert _left() <= before
+    assert not left()
     if fds is not None:
         assert len(os.listdir("/proc/self/fd")) == fds
 

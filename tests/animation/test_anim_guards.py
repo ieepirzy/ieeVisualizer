@@ -278,8 +278,16 @@ def test_frame_column_work_counts_only_the_rows_each_state_shows():
         matplotlib_work_us(cum, (64, 48), 4, cum.figure)
 
 
-def test_huge_frame_column_is_refused_for_its_work():
+def test_huge_frame_column_is_refused_for_its_work(monkeypatch):
+    """100 cumulative states of 400 000 rows: refused by the work estimate,
+    from counts alone, before any state is built or drawn. Validating and
+    hashing the 800 000 cells first is O(cells) and takes 10-20 s here (over
+    the default 60 s deadline on a loaded machine), so the render gets a
+    deadline that cannot fire first: what is tested is the order (estimate
+    before states), which the spies check, not how long validation takes."""
     from ieeVisualizer.animation import AnimationSpec, FrameColumn
+    from ieeVisualizer.animation import frames as F
+    from ieeVisualizer.animation import mpl as M
     from ieeVisualizer.spec import DataSnapshot, FigureSpec, LineMark
 
     n = 400_000
@@ -287,9 +295,15 @@ def test_huge_frame_column_is_refused_for_its_work():
     anim = AnimationSpec(timeline=FrameColumn(dataset="d", column="t", display="cumulative"),
                          figure=FigureSpec(datasets={"d": ds}, layers=[LineMark(
                              data="d", encoding={"x": "t", "y": "y"})]), fps=10)
-    with pytest.raises(AnimationError) as e:
-        render_animation(anim, SMALL)
+    built = []
+    orig = F._frame_spec
+    monkeypatch.setattr(F, "_frame_spec", lambda *a: built.append(a[-1]) or orig(*a))
+    monkeypatch.setattr(M.MatplotlibAnimationAdapter, "render",
+                        lambda *a, **k: pytest.fail("rendered"))
+    with pytest.raises(AnimationError) as e:  # inline, so the spies see the pipeline
+        render_animation(anim, SMALL, deadline=3600, isolation="inline")
     assert e.value.issues[0].code == "animation_too_expensive"
+    assert built == []
 
 
 def test_template_sweep_work_is_estimated_before_the_template_runs(monkeypatch):
