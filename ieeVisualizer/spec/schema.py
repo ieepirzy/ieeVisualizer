@@ -22,7 +22,17 @@ from typing import Any
 from ._common import SUPPORTED_SCHEMA_VERSIONS
 from .data import DTYPES, ISO_DATETIME_PATTERN
 from .figure import LEGEND_POSITIONS, SCALES
-from .marks import CHANNELS, COORDINATE_SYSTEMS, MARK_TYPES, ORIENTATIONS, ROLES
+from .marks import (
+    CHANNELS,
+    COORDINATE_SYSTEMS,
+    INTERVAL_KINDS,
+    INTERVAL_MARKS,
+    LEVEL_KINDS,
+    MARK_TYPES,
+    MULTIPLIER_KINDS,
+    ORIENTATIONS,
+    ROLES,
+)
 
 _STR = {"type": "string"}
 _OPT_STR = {"type": ["string", "null"]}
@@ -86,11 +96,69 @@ _MARK_EXTRA: dict[str, dict[str, Any]] = {
 }
 
 
+_INTERVAL_PROPS = {
+    "interval_kind": {"enum": list(INTERVAL_KINDS) + [None]},
+    "interval_level": {"type": ["number", "null"], "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+    "interval_multiplier": {"type": ["number", "null"], "exclusiveMinimum": 0},
+    "interval_quantiles": {"type": ["array", "null"], "minItems": 2, "maxItems": 2,
+                           "items": {"type": "number", "exclusiveMinimum": 0,
+                                     "exclusiveMaximum": 1}},
+}
+
+
+def _required_number(key: str) -> dict[str, Any]:
+    return {"required": [key], "properties": {key: {"type": "number"}}}
+
+
+def _absent_or_null(key: str) -> dict[str, Any]:
+    return {"properties": {key: {"type": "null"}}}
+
+
+#: An interval states its kind, and its level or SE/SD multiplier where the
+#: kind has one (``validate`` reports the same with JSON pointers).
+_INTERVAL_RULES = [
+    {"if": {"required": ["interval_kind"],
+            "properties": {"interval_kind": {"enum": [k for k in LEVEL_KINDS
+                                                       if k != "quantile"]}}},
+     "then": {"allOf": [_required_number("interval_level"),
+                        _absent_or_null("interval_multiplier"),
+                        _absent_or_null("interval_quantiles")]}},
+    # a quantile interval: a (central) level, or an explicit [lower, upper] pair
+    {"if": {"required": ["interval_kind"],
+            "properties": {"interval_kind": {"const": "quantile"}}},
+     "then": {"allOf": [_absent_or_null("interval_multiplier"), {"oneOf": [
+         {"allOf": [_required_number("interval_level"), _absent_or_null("interval_quantiles")]},
+         {"allOf": [{"required": ["interval_quantiles"],
+                     "properties": {"interval_quantiles": {"type": "array"}}},
+                    _absent_or_null("interval_level")]}]}]}},
+    {"if": {"required": ["interval_kind"],
+            "properties": {"interval_kind": {"enum": list(MULTIPLIER_KINDS)}}},
+     "then": {"allOf": [_required_number("interval_multiplier"),
+                        _absent_or_null("interval_level"),
+                        _absent_or_null("interval_quantiles")]}},
+    {"if": {"required": ["interval_kind"], "properties": {"interval_kind": {"const": "min-max"}}},
+     "then": {"allOf": [_absent_or_null("interval_level"),
+                        _absent_or_null("interval_multiplier"),
+                        _absent_or_null("interval_quantiles")]}},
+]
+
+
 def _mark_schema(mtype: str) -> dict[str, Any]:
     props = {"type": {"const": mtype}}
     props.update(_MARK_BASE)
     props.update(_MARK_EXTRA.get(mtype, {}))
-    return _obj(props, ["type"])
+    if mtype not in INTERVAL_MARKS:
+        return _obj(props, ["type"])
+    props.update(_INTERVAL_PROPS)
+    kind = {"required": ["interval_kind"],
+            "properties": {"interval_kind": {"enum": list(INTERVAL_KINDS)}}}
+    if mtype in ("band", "errorbar"):
+        rules = [kind]
+    else:  # a line/scatter/bar draws an interval only when its bounds are bound
+        bounds = {"required": ["encoding"], "properties": {"encoding": {
+            "anyOf": [{"required": ["y_lower"]}, {"required": ["y_upper"]}]}}}
+        rules = [{"if": bounds, "then": kind}]
+    return _obj(props, ["type"], allOf=rules + _INTERVAL_RULES)
 
 
 _ANNOTATIONS = {

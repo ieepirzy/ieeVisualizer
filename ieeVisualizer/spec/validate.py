@@ -43,6 +43,26 @@ invalid_bins / function_source_conflict / function_source_missing /
 missing_field              mark- or annotation-specific shape problems
                            (invalid_limits also: a limit on a time axis that is
                            not an ISO-8601 date/time, or reversed date limits)
+missing_interval_kind      an interval (band, errorbar, y_lower/y_upper) does not
+                           say what it is
+invalid_interval_kind      interval_kind is not one of ``INTERVAL_KINDS``
+missing_interval_level     a confidence/credible/prediction/quantile interval
+                           without its level
+invalid_interval_level     a level outside (0, 1) (it is a fraction: 0.95)
+unexpected_interval_level  a level on a kind that has none (min-max, SE, SD)
+missing_interval_multiplier / invalid_interval_multiplier /
+unexpected_interval_multiplier  how many SE/SD a standard-error/-deviation bar
+                           spans: required there, > 0, and nowhere else
+invalid_interval_quantiles / unexpected_interval_quantiles /
+conflicting_interval_level  explicit quantile pair: 0 < lower < upper < 1, kind
+                           quantile only, and not together with a level
+interval_without_bounds    interval metadata on a layer that draws no interval
+interval_not_numeric       a bound (or the value it bounds) is not numeric
+interval_unit_mismatch     a bound's unit differs from the value's
+interval_inverted          a row whose lower bound is above its upper bound
+value_outside_interval     (warning) a value outside its own interval
+interval_not_symmetric     (warning) a ±k SE/SD bar whose value is not midway
+                           between its bounds
 ========================== =====================================================
 
 Time axes: an axis with ``scale="time"``, or with no scale whose bound columns
@@ -92,9 +112,11 @@ from .figure import (
     parse_time_coordinate,
     time_axes,
 )
+from .intervals import check_intervals
 from .marks import (
     ALLOWED_CHANNELS,
     COORDINATE_SYSTEMS,
+    INTERVAL_MARKS,
     MARK_TYPES,
     ORIENTATIONS,
     REQUIRED_3D,
@@ -411,6 +433,15 @@ def _mark_types_ok(c: _Ctx, p: str, m: Mark) -> bool:
                        _t_str(c, ep + "/title", e.title, "title", optional=True)]
     else:
         checks.append(_bad_type(c, p + "/encoding", "encoding", "a JSON object", m.encoding))
+    if m.type in INTERVAL_MARKS and hasattr(m, "interval_kind"):
+        checks += [_t_str(c, p + "/interval_kind", m.interval_kind, "interval_kind",
+                          optional=True),
+                   _t_number(c, p + "/interval_level", m.interval_level, "interval_level",
+                             optional=True),
+                   _t_number(c, p + "/interval_multiplier", m.interval_multiplier,
+                             "interval_multiplier", optional=True),
+                   _t_number_list(c, p + "/interval_quantiles", m.interval_quantiles,
+                                  "interval_quantiles", optional=True)]
     if isinstance(m, BarMark):
         checks.append(_t_str(c, p + "/orientation", m.orientation, "orientation"))
     elif isinstance(m, HistogramMark):
@@ -587,6 +618,7 @@ def _check_mark(c: _Ctx, i: int, m: Mark) -> None:
     if isinstance(m, FunctionMark) and not _function_is_sampled(c, p, m):
         return
     _check_bindings(c, p, m)
+    check_intervals(c, p, m)
 
 
 def _check_mark_options(c: _Ctx, p: str, m: Mark) -> None:

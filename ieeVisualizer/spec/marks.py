@@ -9,6 +9,22 @@ through ``encoding``. Channels:
 ``color``             colour by value (heatmap: the cell value)
 ``size``              marker size by value (scatter)
 ``series``            split rows into separate series by a column (long format)
+``y_lower``, ``y_upper`` an interval's bounds on the y axis (band, errorbar;
+                      optional on line, scatter and vertical bar)
+
+Every interval states what it is: ``interval_kind`` (one of
+:data:`INTERVAL_KINDS`) and, for the kinds with a coverage probability,
+``interval_level`` as a fraction (0.95), or for standard-error/-deviation
+bars ``interval_multiplier`` (1 for +-1 SE). A ``quantile`` interval with a
+level is central (equal-tailed: 0.8 is the 10th-90th percentile); an
+asymmetric one gives ``interval_quantiles`` [lower, upper] instead (e.g.
+[0.05, 0.75]). :func:`validate` refuses an
+interval without them, and renderers put the statement ("95 % prediction
+interval") in the legend or the caption. Bounds are data: renderers draw
+them as given, never computed, widened or smoothed, and a null bound is a
+gap in the interval, never zero. The three fields exist only on the marks
+that can carry an interval and are omitted from the JSON when unset, so a
+spec without intervals serializes (and hashes) exactly as before.
 
 ``role`` marks whether the layer shows ``observed`` data, a ``forecast`` or a
 ``reference`` (e.g. a target line or an analytic curve). Renderers must draw
@@ -46,7 +62,17 @@ from ._common import (
     suggest,
 )
 
-CHANNELS = ("x", "y", "z", "u", "v", "w", "color", "size", "series")
+CHANNELS = ("x", "y", "z", "u", "v", "w", "color", "size", "series", "y_lower", "y_upper")
+INTERVAL_CHANNELS = ("y_lower", "y_upper")
+#: What an interval is. Kinds with a coverage probability take
+#: ``interval_level``; standard-error/-deviation bars take
+#: ``interval_multiplier`` (how many SE/SD each side); min-max takes neither.
+INTERVAL_KINDS = ("confidence", "credible", "prediction", "quantile", "min-max",
+                  "standard-error", "standard-deviation")
+LEVEL_KINDS = ("confidence", "credible", "prediction", "quantile")
+MULTIPLIER_KINDS = ("standard-error", "standard-deviation")
+INTERVAL_FIELDS = ("interval_kind", "interval_level", "interval_multiplier",
+                   "interval_quantiles")
 ROLES = ("observed", "forecast", "reference")
 ORIENTATIONS = ("vertical", "horizontal")
 
@@ -90,12 +116,25 @@ class Mark:
 
 @dataclass
 class LineMark(Mark):
+    """With ``y_lower``/``y_upper``: the interval is drawn as a band around
+    the line."""
+
     type: str = field(default="line", init=False)
+    interval_kind: str | None = None
+    interval_level: float | None = None
+    interval_multiplier: float | None = None
+    interval_quantiles: list[float] | None = None
 
 
 @dataclass
 class ScatterMark(Mark):
+    """With ``y_lower``/``y_upper``: an error bar through each point."""
+
     type: str = field(default="scatter", init=False)
+    interval_kind: str | None = None
+    interval_level: float | None = None
+    interval_multiplier: float | None = None
+    interval_quantiles: list[float] | None = None
 
 
 @dataclass
@@ -112,6 +151,35 @@ class BarMark(Mark):
 
     type: str = field(default="bar", init=False)
     orientation: str = "vertical"
+    interval_kind: str | None = None
+    interval_level: float | None = None
+    interval_multiplier: float | None = None
+    interval_quantiles: list[float] | None = None
+
+
+@dataclass
+class BandMark(Mark):
+    """A filled interval between ``y_lower`` and ``y_upper`` along ``x``
+    (e.g. a prediction interval around a forecast; several bands of one
+    series at different levels make a fan chart)."""
+
+    type: str = field(default="band", init=False)
+    interval_kind: str | None = None
+    interval_level: float | None = None
+    interval_multiplier: float | None = None
+    interval_quantiles: list[float] | None = None
+
+
+@dataclass
+class ErrorbarMark(Mark):
+    """An interval from ``y_lower`` to ``y_upper`` at each ``x``, with caps,
+    and the point estimate ``y`` when it is encoded."""
+
+    type: str = field(default="errorbar", init=False)
+    interval_kind: str | None = None
+    interval_level: float | None = None
+    interval_multiplier: float | None = None
+    interval_quantiles: list[float] | None = None
 
 
 @dataclass
@@ -183,6 +251,9 @@ _CANON = {
     "scale": canon_float,
     "domain": _canon_domain,
     "parameters": _canon_float_map,
+    "interval_level": canon_float,
+    "interval_multiplier": canon_float,
+    "interval_quantiles": _canon_float_list,
 }
 
 
@@ -195,7 +266,11 @@ MARK_TYPES: dict[str, type[Mark]] = {
     "heatmap": HeatmapMark,
     "quiver": QuiverMark,
     "function": FunctionMark,
+    "band": BandMark,
+    "errorbar": ErrorbarMark,
 }
+#: Marks that can carry an interval (and the ``interval_*`` fields).
+INTERVAL_MARKS = ("line", "scatter", "bar", "band", "errorbar")
 
 #: Channels a mark needs in 2D (cartesian2d / polar).
 REQUIRED_CHANNELS: dict[str, frozenset[str]] = {
@@ -207,6 +282,8 @@ REQUIRED_CHANNELS: dict[str, frozenset[str]] = {
     "heatmap": frozenset({"x", "y", "color"}),
     "quiver": frozenset({"x", "y", "u", "v"}),
     "function": frozenset({"x", "y"}),  # sampled form only
+    "band": frozenset({"x", "y_lower", "y_upper"}),
+    "errorbar": frozenset({"x", "y_lower", "y_upper"}),
 }
 #: Additional channels required in cartesian3d.
 REQUIRED_3D: dict[str, frozenset[str]] = {
@@ -216,14 +293,16 @@ REQUIRED_3D: dict[str, frozenset[str]] = {
     "function": frozenset({"z"}),
 }
 ALLOWED_CHANNELS: dict[str, frozenset[str]] = {
-    "line": frozenset({"x", "y", "z", "color", "series"}),
-    "scatter": frozenset({"x", "y", "z", "color", "size", "series"}),
+    "line": frozenset({"x", "y", "z", "color", "series", "y_lower", "y_upper"}),
+    "scatter": frozenset({"x", "y", "z", "color", "size", "series", "y_lower", "y_upper"}),
     "area": frozenset({"x", "y", "color", "series"}),
-    "bar": frozenset({"x", "y", "color", "series"}),
+    "bar": frozenset({"x", "y", "color", "series", "y_lower", "y_upper"}),
     "histogram": frozenset({"x", "color", "series"}),
     "heatmap": frozenset({"x", "y", "color"}),
     "quiver": frozenset({"x", "y", "z", "u", "v", "w", "color"}),
     "function": frozenset({"x", "y", "z", "series"}),
+    "band": frozenset({"x", "y_lower", "y_upper", "color", "series"}),
+    "errorbar": frozenset({"x", "y", "y_lower", "y_upper", "color", "series"}),
 }
 #: Mark types each coordinate system supports.
 COORDINATE_SYSTEMS: dict[str, frozenset[str]] = {
@@ -322,6 +401,19 @@ def mark_from_dict(d: Any, path: str) -> Mark:
             kw["normalize"] = expect_bool(d["normalize"], _p(path, "normalize"), "normalize")
     elif cls is FunctionMark:
         _parse_function_fields(d, path, kw)
+    if mtype in INTERVAL_MARKS:
+        if "interval_kind" in d:
+            kw["interval_kind"] = expect_str(d["interval_kind"], _p(path, "interval_kind"),
+                                             "interval_kind", optional=True)
+        for key in ("interval_level", "interval_multiplier"):
+            if key in d:
+                kw[key] = expect_number(d[key], _p(path, key), key, optional=True)
+        if d.get("interval_quantiles") is not None:
+            qs = expect_list(d["interval_quantiles"], _p(path, "interval_quantiles"),
+                             "interval_quantiles")
+            kw["interval_quantiles"] = [
+                expect_number(q, ptr_join(path, "interval_quantiles", i), "quantile")
+                for i, q in enumerate(qs)]
     return cls(**kw)
 
 
