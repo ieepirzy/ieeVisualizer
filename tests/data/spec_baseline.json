@@ -1,0 +1,445 @@
+{
+ "environments": {
+  "matplotlib 3.11.2, numpy 2.5.4, sympy 1.14.0": {
+   "gallery.interval-bar": {
+    "png": "sha256:9d089b216f69af83e81c315f4e4ecdec681ea1dbfeab23c4e5faed32d0cf5035",
+    "spec_hash": "sha256:a3187b08d842136aa57aa5f5f9c1ca6c98b45fb1e6f4e76d8417791bd8c3186a",
+    "svg": "sha256:4e35e472c8d315c154ddbd190d0fa34eca8c02620431e7c36cffadb44e31a2c5"
+   },
+   "gallery.interval-line": {
+    "png": "sha256:2912e3fdd8c191e133669e21c04485c295c9fc065027c672e98e2a20c3acba96",
+    "spec_hash": "sha256:59ad78a960f591145a78869d3f86282a07d505c8bc681d92a814b1883eb3752b",
+    "svg": "sha256:d3db2133f965b7e1f4cf8203dc821da68b87f91ab87b3a7b75ca89a7d0b4000d"
+   },
+   "gallery.interval-scatter": {
+    "png": "sha256:e56b0557754ec0b6f6e2275d1ae8cf44ac9d05164d46795f918e77aeedf214e0",
+    "spec_hash": "sha256:5de04409541b09175782e185c9591ca841742d76e52e2899efe5a207e9fddc50",
+    "svg": "sha256:1c771655ff9633f1742f1489f99d03ba33be69db35634dc8ca55316cfbd44d23"
+   },
+   "gallery.legacy-field-2d": {
+    "png": "sha256:21cde7781f8c1428587477d26070ed777bb1cd46fc387cc376924f7b6ceaeace",
+    "spec_hash": "sha256:f4ce8962065bdb1de8c7e74659d211261a53fc1b4907687ad5f1fef9832b3201",
+    "svg": "sha256:778d1170f4ede54aa30400693626db6e6d731548ca40e9ff16aaa574dedaf1b8"
+   },
+   "gallery.legacy-field-3d": {
+    "png": "sha256:b39688ebbcea002c76fb5ae762f170a0ed6096c86320d2434b207421862c243d",
+    "spec_hash": "sha256:61d198af23ab1814eca0f49463318a43b9765de6710973a0dbcf08c5adec7086",
+    "svg": "sha256:f96147896682a3d6feec1a6ec8e4430ecdc47e33d749ca3064fb10d62e25fc77"
+   },
+   "gallery.legacy-function-2d": {
+    "png": "sha256:87dd084cad2ee525b31645e022ae31b6e9afc7cb2c99580c24d1a6cb97a5e09e",
+    "spec_hash": "sha256:57d2baa6babd793b12f2ef73b4dc477835809492c30a1b7495978985ab697ecf",
+    "svg": "sha256:e04697a324e28df1b993334be665d12936305fe131f8a4318e6906c214b07900"
+   },
+   "gallery.legacy-surface": {
+    "png": "sha256:10ecfe54b3f6840635c7da07b02c6c5ff090dd371721d7973d257442133d01b0",
+    "spec_hash": "sha256:e20274873b47330b608a54e9f2aa91aedc8f95f4a0ab95a882021e3827358bee",
+    "svg": "sha256:e97ab7c504efcf47001dec348c3bb0f36d43cbf1153aef1c99b4d760e64054ac"
+   },
+   "gallery.mark-area": {
+    "png": "sha256:ebb299c330f42a81a28062dffec75e56dfa10219db6c284b73db0f4ed3d51da5",
+    "spec_hash": "sha256:8d3a777c2a3dc53ae5d7229a5ae221e0050bf1faf5ae5b42f68fb7836ee6e4ba",
+    "svg": "sha256:caa7c71d691b26dbcfddaef04511204b19034e81e6998b484e408f5b69ac1a91"
+   },
+   "gallery.mark-band": {
+    "png": "sha256:7fda079dd34fb6dd0897ad35b28dbb1a8259e37fd6bfd7affddcfcbc12e901ae",
+    "spec_hash": "sha256:555b6efd1f23898ad5d1ccb81d467b651d9d00604bb24c910c3ac593d79bd07d",
+    "svg": "sha256:3fb5d33b8d433d5edbf25e9107ae6611db977fec5c4a30796b0b8ce8fe2c3514"
+   },
+   "gallery.mark-bar": {
+    "png": "sha256:d0f05f493649f34411f78fea8d98341b0827fb6c1fc095d0ab1b5f62bc87ac7d",
+    "spec_hash": "sha256:586b87cb79d66bb8a0e688dafe1a8c4e54dfdc4e561fe31e0008a6091fe5352e",
+    "svg": "sha256:c5407208d5a019debf1c0bce5f74fe317326f7286197cc435d8b1a1ca1b51e85"
+   },
+   "gallery.mark-errorbar": {
+    "png": "sha256:d6affe6213f6355456294022772b3e714fb84bb1d5339d3295ab6777fbeb80d7",
+    "spec_hash": "sha256:05f94ca8d2487c00cb5d61903e9dd0a7a56a77d3c45014d0ceb1f83ac6ec3a2e",
+    "svg": "sha256:f19e1ec715802b8d17693b6363bd21a1bd66c5f4c278d095cbaa7f101e2fef07"
+   },
+   "gallery.mark-function": {
+    "png": "sha256:3f9c05aec6996d2fc1ff0db752f9e333d750e4216db899fbf35edc3909a44bab",
+    "spec_hash": "sha256:ac588de20c58e8c4b4934130110479947aec80137c634424a1871dc8d4d450d6",
+    "svg": "sha256:2e7eff2e03aa0072d458294d30e9f062ce193ea170679f0d2c6430060c1283d0"
+   },
+   "gallery.mark-heatmap": {
+    "png": "sha256:9b8ffee7e0e6115381e3bdcbeedb8e1922c29aeb3df8d27076c650904a44fab2",
+    "spec_hash": "sha256:af82b1fe7e593cacba0a68cb7f382b2fb711fe5d5b3be3422059c7aed66900b3",
+    "svg": "sha256:b4be5fc14f880db41ad4a12088a171a345427ffd77e41b7f3931750addc998d5"
+   },
+   "gallery.mark-histogram": {
+    "png": "sha256:f76237f9f82dadaae5ad25dd86248ba186eeca6df25506f7d9b9692fe7eaad75",
+    "spec_hash": "sha256:5df52344ff6105f5f12bec509c3458f7d932397055f3c8a25418057f57225893",
+    "svg": "sha256:fb858c8b180440a50590af1cca52eb3cbb5c8dc37d876e038109ac3c8dfe595a"
+   },
+   "gallery.mark-line": {
+    "png": "sha256:55fef415b15d3c0dd0143cefc4c6d9c527220876b2e1991b11827042dfd1c009",
+    "spec_hash": "sha256:354f50379ca09ea72d5153bcc3951e16da5f6400b9534054ec3d6723d3edb692",
+    "svg": "sha256:61cb1a8376834e0415337e71104b0388bb26bd55823402b6420691c9b742a4e5"
+   },
+   "gallery.mark-quiver": {
+    "png": "sha256:6b866a1e38bf3b9a344a507def8fae5b56098d56b90080c7dfcbe497c1250d7e",
+    "spec_hash": "sha256:b0b950c8293341f2dd64fcc46f3faca0932caa10f1c89508cc430ee380a8a10a",
+    "svg": "sha256:caf859bf091e65992239b8fe2229bf99201805380d30ce2561fdb1b907c6823f"
+   },
+   "gallery.mark-scatter": {
+    "png": "sha256:84cd9b0399ffa08968556e3002318c644a772db0b8620d31dfc2266ca73df295",
+    "spec_hash": "sha256:7065a6c9d07941abcbeafa23b52534ce1d24dd061493074643c81139883c2a1a",
+    "svg": "sha256:f2664793baae9197293de970cac5a4abfc7e080b279bcd4ef42b4db698e1860e"
+   },
+   "render_examples.area_spec": {
+    "png": "sha256:311deac5cd0d8879b7427c4065e136e274abe39ef83deffc2bdd24fa07148d68",
+    "spec_hash": "sha256:5ae7eafaf0d4e78e18f8b3db89ef4fafb0bd968428212b08b9638d4a0d2fe7dc",
+    "svg": "sha256:40d33de11e9246e0aba58704ac7e297156a750bc11a2c182f56b7d9f323379cc"
+   },
+   "render_examples.bar_spec": {
+    "png": "sha256:9e9254939b723414e4e5af0a5084efa111c0a560ceb271ec27307cf526ccbd9c",
+    "spec_hash": "sha256:db8fc36a28a755d42d42d91cb0cb68b632eb5578634bf420810a1f3db639096a",
+    "svg": "sha256:7b2f5aeb8256c4a0e7055477a201270ac4f60e7978a74f49e90331908516975d"
+   },
+   "render_examples.function_spec": {
+    "png": "sha256:89751761132427fb38ca995c82326cc82cab54e2dcf4f2325f1c252bb09af935",
+    "spec_hash": "sha256:2dde606b51c4da6dcb493b8f214cca60281557076a3e1cdf43dd45e48a29a432",
+    "svg": "sha256:cb6ddfe90be8301d8d41456b8895300b0485116cf9f93ce1024eb09ac6290f94"
+   },
+   "render_examples.heatmap_spec": {
+    "png": "sha256:b54a50922b1d315a79b704cdeda383cd930211db05c89fad4a24b0a61a0ad993",
+    "spec_hash": "sha256:40a0b4efe48cfa3678bd28df57ec933adba63780175860c83ab1f488e473ec07",
+    "svg": "sha256:b37022831c6932eaeba5bcb1386e8e93ca444ea8432468844d22605363c5b8ec"
+   },
+   "render_examples.histogram_spec": {
+    "png": "sha256:1405eb4cca9ba2c0786676f3bb6e362041efacc145c251c699221ba31f44c3e8",
+    "spec_hash": "sha256:d6168b9e532bc18b85213d7153596cd36ac13f1eb196649def221314a91c78b5",
+    "svg": "sha256:5b1664fad2c25b4f7f4e5d49d74bb459392bffa7cd98d7343d2f51aad58799bf"
+   },
+   "render_examples.line3d_spec": {
+    "png": "sha256:880f7d62dc47c45c0a8df2a8defa99522da21a8621587617e65c4ed847c9ba53",
+    "spec_hash": "sha256:45d2642f693f94f75626031ba1088e316854391f3c6e5ffdf87dc470a4d2c1ce",
+    "svg": "sha256:46eef3e8afb84d6d52fc74b89ecf8dbfc0bfd95bff30969f323a7a53d972ef9b"
+   },
+   "render_examples.polar_spec": {
+    "png": "sha256:aa13282673239228ca96d9278c92f44adcb9ba19175f45ab22047793a11ba9b0",
+    "spec_hash": "sha256:f816242ecf7a15db40c02cc55c80cb61082f35b530f4dc9d0d4b488fd08dafde",
+    "svg": "sha256:b1000953eee81e69c146976d000d65203f4b56838049c21b9fc5d99bf205a361"
+   },
+   "render_examples.quiver_spec": {
+    "png": "sha256:92c67bdbe150638a1d49edd723c7bc8e31a36e9341f2c72a1f6c0bbdb106b391",
+    "spec_hash": "sha256:21373f325feced41e17e7692246c5852cae4010bb5d1a78fe7562da067450a24",
+    "svg": "sha256:ca54bf5e42db88914c6f2ecdedceaef40fe0dc7254bd5d9573bcdc9b11582f1d"
+   },
+   "render_examples.ref_spec": {
+    "png": "error: UnresolvedDatasetError ['unresolved_dataset']",
+    "spec_hash": "sha256:0ba1ece747f9efb4744cf41f689fbec274c1543019668f8b10c4f0446d941cc6",
+    "svg": "error: UnresolvedDatasetError ['unresolved_dataset']"
+   },
+   "render_examples.revenue_spec": {
+    "png": "sha256:a2bcc96574deee82b7c9094a51e77415c48d09d5feb4957f79c564ab9553e0d8",
+    "spec_hash": "sha256:e0aca723e5941660e06abd48b0cb489955c8b395468ca0dc6cfb17acece46f13",
+    "svg": "sha256:17fd8e5c91da4f64d195dd7c356407d8ad2f823e9dcad310aca693c20685a353"
+   },
+   "render_examples.scatter_spec": {
+    "png": "sha256:fd47cad4ca4561bd288ea29344ca41cbea2dcd36ef9c76d67e8c7eef1afdb0f3",
+    "spec_hash": "sha256:6401925bf0ae4326f6b18a219fb1bb8566b22ee7727d82de273a843e8327edfa",
+    "svg": "sha256:fc78ca24d4c8d897cefff2d5cb28d25b7db0406604dc952710e96cb81fd52f71"
+   },
+   "render_examples.surface_spec": {
+    "png": "sha256:71e1fc4e6a1644c74cc41c990cfbdf94e717a66b0af4327a04977fc885743873",
+    "spec_hash": "sha256:a1df5ed6377f2832fa1f8a5bb074b7927723e25ce9a43f69733503deeacff18e",
+    "svg": "sha256:2f7ba0bc6fe6e4bfc2fd608f89bb98eb2f4419f41bef86e0b4a37bf150f2fc20"
+   },
+   "spec_examples.function_spec": {
+    "png": "sha256:df2d8e2483f70ae45060d2928baf137a7ae8cb682cce7a525326e95b98b87a16",
+    "spec_hash": "sha256:37716b9920e9bf92dc2a558c15c413b36776c32e90ae3fc80f7a04b3988c0d5d",
+    "svg": "sha256:b28a6b3ee1f74bf231af945013deffacf36030344a6962a0dc72ad12338bf965"
+   },
+   "spec_examples.histogram_ref_spec": {
+    "png": "error: UnresolvedDatasetError ['unresolved_dataset']",
+    "spec_hash": "sha256:a83b41ebcb9e58da8682303b43ff99ec50fa940ea887ab52fdb5d5f55ba2542a",
+    "svg": "error: UnresolvedDatasetError ['unresolved_dataset']"
+   },
+   "spec_examples.misc_spec": {
+    "png": "sha256:33cba2dfcbf1421fb0388b2dfa50f1953c27511f029ffd3e3a393d1c64a69dcd",
+    "spec_hash": "sha256:595369b67b67cde693a62f97d73afeb265baedd5609a02ba220366c360d13614",
+    "svg": "sha256:e59f8547d2ce0f9efb58b16af3edb47ddf47d8a5b2e2b538fedd05aa6ec1ac1e"
+   },
+   "spec_examples.quiver_spec": {
+    "png": "sha256:c5a16f3d3f1d5db8fed9c9a9d1706bc8b231eef25d6022fadd2938334e407372",
+    "spec_hash": "sha256:564fbf21ccce6fa5dbb51abb1a74ded54c638646349b6af4ab9c793673ce827d",
+    "svg": "sha256:ffff4eaf301145bcaa05072fee45a7ee21dc6fe6bb5916885d327b1f20de32e0"
+   },
+   "spec_examples.scatter3d_spec": {
+    "png": "sha256:bfa5e6d454c1420428091b0ecaa50751a21a2e7ae7a56d7f497d167838a4213f",
+    "spec_hash": "sha256:beb7c6aa024bf1f8a84362c1a2787245907a1843116769ffe6039d2db9b1d43c",
+    "svg": "sha256:cc0e45918d9dd067946611c1d37a42ad6070ed243a4576b72c91593c1bb4ede8"
+   },
+   "spec_examples.timeseries_spec": {
+    "png": "sha256:7a7b9d1d47d0746a34c0553f5b352212829e8d8c9f40d7e11b3cf0fcb6167352",
+    "spec_hash": "sha256:4720406f9ca6dfcf133fc8c2c8bf2ac52ae4f037b21c05eae0b961178a4b5dd1",
+    "svg": "sha256:1c918c515ecd321162a433631797606326c59bc254ab376b72bd6e94705e07a2"
+   },
+   "template.bar_comparison@1.0.0": {
+    "png": "sha256:937b67fe865c3e761308ae5ee784dcb22b417764b2b31fa3b4674420553488b5",
+    "spec_hash": "sha256:9543723383fd2cd8fda97f1ab1bca33a79ed3f223eb570a56e0ee547a29dac15",
+    "svg": "sha256:2559b843b83d3140dcfd669a513b601efbf5ce6355b42996d8217010f96b289b"
+   },
+   "template.estimate_comparison@1.0.0": {
+    "png": "sha256:f87dc4cfe400e3ede137fd1f2154ae57afc3ba7e3fb58d4baa41e8a160c2079d",
+    "spec_hash": "sha256:29b541b83059a547f22e5ac4b00855743dbe0f6ace738488eeb470334f202fed",
+    "svg": "sha256:46b48f3499d167c16a33e63062cd586ac225f885a428f636c54a36b28c89a944"
+   },
+   "template.funnel@1.0.0": {
+    "png": "sha256:c3d59b51fc809ab72ccf1036209da3dfcfdcc02ac8300b59c1f49f9ba1ca0a2a",
+    "spec_hash": "sha256:8c83ed6aef98d88c93c4d834331ee3edfd34b00f6da9004366fd6c47b352ae94",
+    "svg": "sha256:eb4b5860eb3d9861203c93e44e3dc3d214f73b3fddbf3bd905dec2779d563e78"
+   },
+   "template.timeseries@1.0.0": {
+    "png": "sha256:33a02bd37940634b8db00bf1f639da851a69830de44bf8db4205090003507030",
+    "spec_hash": "sha256:d36311722cf87dc318308b58ac63f9ea1c2829a9649ff1635a033f5f7439a325",
+    "svg": "sha256:b114de8c337c0417100925767a2cebfc38b348e339d413c9dbb884f381772904"
+   },
+   "template.timeseries@2.0.0": {
+    "png": "sha256:f191246640b51518236413788979a98788bc39b9a86ac21bd8170cadb8b1f9ab",
+    "spec_hash": "sha256:8338985113529b7ca2e1f435602711467ccc1cdfe01ab4c4ea227ddbc84ac65c",
+    "svg": "sha256:b414e3ce3dd80366574205a8e94944385c48321999d484cc0509d7c2ee7bf31f"
+   },
+   "template.vector_field_2d@1.0.0": {
+    "png": "sha256:3ef459acfcd93c442b97a35e0a1d75762cf828492c16a065fcd00350c42207d0",
+    "spec_hash": "sha256:78a216b413c351847000e6c1545722836189c4b1e68a19282171fd0983768a56",
+    "svg": "sha256:cae67fe85789188314c3e762d82c3a348111d84bc0edf5f5d0a9f1f33f57ad6d"
+   }
+  },
+  "matplotlib 3.9.4, numpy 2.0.2, sympy 1.14.0": {
+   "gallery.interval-bar": {
+    "png": "sha256:fd3db3e82bfac3e68ccc2e21e85efd2913eb01dcd486e0d19330657713cdc9e0",
+    "spec_hash": "sha256:a3187b08d842136aa57aa5f5f9c1ca6c98b45fb1e6f4e76d8417791bd8c3186a",
+    "svg": "sha256:85053b6f23261725420229d52fab0e40de41fc76d0db3f9426543fd4bfeb0be8"
+   },
+   "gallery.interval-line": {
+    "png": "sha256:091ec946ceb17de78aa2088ea6ee2aebda8e8ba2d67dcaaf363937e072119021",
+    "spec_hash": "sha256:59ad78a960f591145a78869d3f86282a07d505c8bc681d92a814b1883eb3752b",
+    "svg": "sha256:c7bec5c09310ed11b9ef0621b17e69cf6762bada50f04f57e4dbaced68128dc2"
+   },
+   "gallery.interval-scatter": {
+    "png": "sha256:f5e4c6d09e7c0a5a165ab40d1fbbc46947c697385f6eb377928a20174dfc5401",
+    "spec_hash": "sha256:5de04409541b09175782e185c9591ca841742d76e52e2899efe5a207e9fddc50",
+    "svg": "sha256:66ebeb18b8d3596b97e952c2fd2c7e849bcd16f7983dc2a785f76eebcc4634eb"
+   },
+   "gallery.legacy-field-2d": {
+    "png": "sha256:b75aedcf6f2a11b6a449e41a99502e95c36b7232a48c061dea1afd9309c2d121",
+    "spec_hash": "sha256:f4ce8962065bdb1de8c7e74659d211261a53fc1b4907687ad5f1fef9832b3201",
+    "svg": "sha256:8a60841368944539b0b93cfc0578bea6a7a985e48bad5aeabee8bd8805312db6"
+   },
+   "gallery.legacy-field-3d": {
+    "png": "sha256:81c8fcfbf224fb1e4bdf08967787b2c2d966c449a22c1a115550fbea9ed6b87b",
+    "spec_hash": "sha256:61d198af23ab1814eca0f49463318a43b9765de6710973a0dbcf08c5adec7086",
+    "svg": "sha256:d83d3d36c151984fc4f5cf4b444c619ff2b64e9352325b72ecf83757560635c6"
+   },
+   "gallery.legacy-function-2d": {
+    "png": "sha256:543c5b901eeba7124e27890496640652fdacfefa4490fc4aa22eeabab29bf24b",
+    "spec_hash": "sha256:57d2baa6babd793b12f2ef73b4dc477835809492c30a1b7495978985ab697ecf",
+    "svg": "sha256:41df5fdeddaddc2c75b85b46f8aaf3cce3f0a939f37abc8118cb818984e3f7d8"
+   },
+   "gallery.legacy-surface": {
+    "png": "sha256:2e58feeca2ba2259c5795ac5ca787f9c9d4464a4ba7b43ba476f066937c8697a",
+    "spec_hash": "sha256:e20274873b47330b608a54e9f2aa91aedc8f95f4a0ab95a882021e3827358bee",
+    "svg": "sha256:96d0f74d7d8772806c0aa594f530d8ea21cd6c7ed00b4e3590d10094eea5ffc1"
+   },
+   "gallery.mark-area": {
+    "png": "sha256:8d475df6ce1f2b83b45e54b454c57ee7b22bb26e8c0c27fcc307502870e9d089",
+    "spec_hash": "sha256:8d3a777c2a3dc53ae5d7229a5ae221e0050bf1faf5ae5b42f68fb7836ee6e4ba",
+    "svg": "sha256:121b097cd49f6b0d7eefe06489239527bcb95c79fb757d32fb02b002498df8cd"
+   },
+   "gallery.mark-band": {
+    "png": "sha256:8067eee057695d625a768be542ba1bbf3c4c2b7cdc8389434b45c0ba9b4bcf63",
+    "spec_hash": "sha256:555b6efd1f23898ad5d1ccb81d467b651d9d00604bb24c910c3ac593d79bd07d",
+    "svg": "sha256:7057cf1efa2175acb496adc78fd89836368a889a39072229ed925a2c4254dea0"
+   },
+   "gallery.mark-bar": {
+    "png": "sha256:e7d895d1c40234248a25310c4fb654a0b54497971d43061ea9d143ee41c8bda4",
+    "spec_hash": "sha256:586b87cb79d66bb8a0e688dafe1a8c4e54dfdc4e561fe31e0008a6091fe5352e",
+    "svg": "sha256:d105afc19c526eec103543ba4153fbbc471b9c81893af1f119ebe5be468af619"
+   },
+   "gallery.mark-errorbar": {
+    "png": "sha256:70cd5da28f590bae18e68cdbcd7afeb0c39e0c025cdfe5af163d45a1827fd3ff",
+    "spec_hash": "sha256:05f94ca8d2487c00cb5d61903e9dd0a7a56a77d3c45014d0ceb1f83ac6ec3a2e",
+    "svg": "sha256:a0b60f51eea21eaf152e8e10a232a1b0a8037a485defde2d6ec404aa366a9526"
+   },
+   "gallery.mark-function": {
+    "png": "sha256:9b074b99a5a5debe425782d1dd2e9a856b73e07895acc8ee864fb4330f1831c6",
+    "spec_hash": "sha256:ac588de20c58e8c4b4934130110479947aec80137c634424a1871dc8d4d450d6",
+    "svg": "sha256:1096989b6c96f662bc2d7037646787a7e4e3d5875d611983bb7f23ef44e39c19"
+   },
+   "gallery.mark-heatmap": {
+    "png": "sha256:81095da6c85a534d1fbf3ab66ddf8d53dfd0d7f613d2f6d047f516076fe1b5d1",
+    "spec_hash": "sha256:af82b1fe7e593cacba0a68cb7f382b2fb711fe5d5b3be3422059c7aed66900b3",
+    "svg": "sha256:e5300dba916d70f690436c937a9bfb89ea182bd0d0402724244f055d1bc013e3"
+   },
+   "gallery.mark-histogram": {
+    "png": "sha256:f319748b4e5c7158a38c4dcffed82255d614db12e97b2986985de27e692a40d7",
+    "spec_hash": "sha256:5df52344ff6105f5f12bec509c3458f7d932397055f3c8a25418057f57225893",
+    "svg": "sha256:e6362bbafff26f8a0329afacf8e8f50e0af07489f3f8ba71fdf0760fc7fcb2f7"
+   },
+   "gallery.mark-line": {
+    "png": "sha256:08f33cc5ed69bad3eaf434a3622d1a2803b65c7f215b1fb5f64c806ca7e24c32",
+    "spec_hash": "sha256:354f50379ca09ea72d5153bcc3951e16da5f6400b9534054ec3d6723d3edb692",
+    "svg": "sha256:74009d100861ca899436b6e7ddf4c28b390e3c65225c764cf9f5b237266cf830"
+   },
+   "gallery.mark-quiver": {
+    "png": "sha256:10fa5775be19ee9620ee841412281483d704480d5cd0017a0ac948e2926afa07",
+    "spec_hash": "sha256:b0b950c8293341f2dd64fcc46f3faca0932caa10f1c89508cc430ee380a8a10a",
+    "svg": "sha256:0ca23ed6df79f55c032c8d281e8754f49c5c5a61f0e0dbf26b98b885175d83da"
+   },
+   "gallery.mark-scatter": {
+    "png": "sha256:9033462354dd31f657d8d3d8e674254ba9be72ac70fdcee5df3b0ecd87fcb977",
+    "spec_hash": "sha256:7065a6c9d07941abcbeafa23b52534ce1d24dd061493074643c81139883c2a1a",
+    "svg": "sha256:558eff25eede97746fdc2c607e0d6c9cce788d72e9d2a5dd8d059964e9d6fb79"
+   },
+   "render_examples.area_spec": {
+    "png": "sha256:16121da5c4fff00931422ac7b298d2ed14e75dd078576b1be2e52bbea44cf147",
+    "spec_hash": "sha256:5ae7eafaf0d4e78e18f8b3db89ef4fafb0bd968428212b08b9638d4a0d2fe7dc",
+    "svg": "sha256:7badf1ba4bbff3394e7ededfcd41ffb694ca50ef96cc825e7be6b7bc06cb7513"
+   },
+   "render_examples.bar_spec": {
+    "png": "sha256:70cf61c917eb83a7fea286116d76651b14f7659b60d185356d5b2c6e565c47a5",
+    "spec_hash": "sha256:db8fc36a28a755d42d42d91cb0cb68b632eb5578634bf420810a1f3db639096a",
+    "svg": "sha256:93c519a1f72f5f8313949230e11fe9d8b9ea9615a93e0289d731e39976eb29df"
+   },
+   "render_examples.function_spec": {
+    "png": "sha256:a7d7ce83e67e073c273dfd76adae93f7fb2030a24fb7aaa79d4a540bb3d30276",
+    "spec_hash": "sha256:2dde606b51c4da6dcb493b8f214cca60281557076a3e1cdf43dd45e48a29a432",
+    "svg": "sha256:f44ac8dbac2e1c7b08527b6e05704e038f583685d941eec3780726b7b026d580"
+   },
+   "render_examples.heatmap_spec": {
+    "png": "sha256:8537632d20ad8e8081ecd66180dc03e872cdde4920e8b8c8215e3b73ded2ec7a",
+    "spec_hash": "sha256:40a0b4efe48cfa3678bd28df57ec933adba63780175860c83ab1f488e473ec07",
+    "svg": "sha256:9c9032df4ca6c93ed4b08fe7a065e13b8c83108e31735a08627330dade8bf1d7"
+   },
+   "render_examples.histogram_spec": {
+    "png": "sha256:c23ddc3afdb9bcc4c3ba76e32f690a9b7526eeecaa5488fce1ef7d1c8bdf6a62",
+    "spec_hash": "sha256:d6168b9e532bc18b85213d7153596cd36ac13f1eb196649def221314a91c78b5",
+    "svg": "sha256:6dc9b7168f4e30608f1697cdd7521abd8c05fc9a7c1a5543790c038d717e5cbc"
+   },
+   "render_examples.line3d_spec": {
+    "png": "sha256:7e347a9cc26d06c949d9a4419334dbd43d59b8ace723311ee3a9645af933142d",
+    "spec_hash": "sha256:45d2642f693f94f75626031ba1088e316854391f3c6e5ffdf87dc470a4d2c1ce",
+    "svg": "sha256:0d222832789c5b12205922e844674411e0ff4353d45951f94dd5237253afde68"
+   },
+   "render_examples.polar_spec": {
+    "png": "sha256:4796be7f556a81c98525c49e1dac5fa8856565da131e866e222a2f3ba88dae15",
+    "spec_hash": "sha256:f816242ecf7a15db40c02cc55c80cb61082f35b530f4dc9d0d4b488fd08dafde",
+    "svg": "unstable"
+   },
+   "render_examples.quiver_spec": {
+    "png": "sha256:77cb9ab8d4321c37a9ee4df0ed0335788f3cea48d478e2f04238872ada8fbeda",
+    "spec_hash": "sha256:21373f325feced41e17e7692246c5852cae4010bb5d1a78fe7562da067450a24",
+    "svg": "sha256:e60087952b6fcca7c26e59e5924d34bdc52652df416e4cbcc2e447cb80be1efa"
+   },
+   "render_examples.ref_spec": {
+    "png": "error: UnresolvedDatasetError ['unresolved_dataset']",
+    "spec_hash": "sha256:0ba1ece747f9efb4744cf41f689fbec274c1543019668f8b10c4f0446d941cc6",
+    "svg": "error: UnresolvedDatasetError ['unresolved_dataset']"
+   },
+   "render_examples.revenue_spec": {
+    "png": "sha256:c6599dd0a88bab473d2ba55733673b8b8831603034106ee2e9babd24d49ef4dc",
+    "spec_hash": "sha256:e0aca723e5941660e06abd48b0cb489955c8b395468ca0dc6cfb17acece46f13",
+    "svg": "sha256:e19114118628f73a0a29d75fd00aa02b040f6e565a29b3a7790d2add679ecdda"
+   },
+   "render_examples.scatter_spec": {
+    "png": "sha256:d093c7126af733a38ef0c236cb2ca25cfedd4aae1b4c4913fcedab823a5e0e7e",
+    "spec_hash": "sha256:6401925bf0ae4326f6b18a219fb1bb8566b22ee7727d82de273a843e8327edfa",
+    "svg": "sha256:9079463b6a796f46e1d3e1a283a6b23c5e60554fa6b2416e918ec895ee5c828f"
+   },
+   "render_examples.surface_spec": {
+    "png": "sha256:ace8bf449ebfc93269e4064d28d299b1eae703e5efb3d1bcc8a9959f53844bbd",
+    "spec_hash": "sha256:a1df5ed6377f2832fa1f8a5bb074b7927723e25ce9a43f69733503deeacff18e",
+    "svg": "sha256:9a42a5888cb14650959743d7bd518125b215edec50bdcbe1b8484a4f01db826e"
+   },
+   "spec_examples.function_spec": {
+    "png": "sha256:3bd76a34bfb52c6554466ef83e975aee57c6675fe8a4c3d02cacc2f14b620c98",
+    "spec_hash": "sha256:37716b9920e9bf92dc2a558c15c413b36776c32e90ae3fc80f7a04b3988c0d5d",
+    "svg": "sha256:b488fb334ec1741bb3f6adcb9c33ed005915ae2227508a4b09000503906fde7b"
+   },
+   "spec_examples.histogram_ref_spec": {
+    "png": "error: UnresolvedDatasetError ['unresolved_dataset']",
+    "spec_hash": "sha256:a83b41ebcb9e58da8682303b43ff99ec50fa940ea887ab52fdb5d5f55ba2542a",
+    "svg": "error: UnresolvedDatasetError ['unresolved_dataset']"
+   },
+   "spec_examples.misc_spec": {
+    "png": "sha256:8d6d02ee0219b9da7ea67be6f29c35a0b55350dac480e624f9ecb86ec07e266a",
+    "spec_hash": "sha256:595369b67b67cde693a62f97d73afeb265baedd5609a02ba220366c360d13614",
+    "svg": "sha256:b66ae0ae4af6e70a3547aa60278f64a883ce17d900d0e325d216cf6fac3c8c3f"
+   },
+   "spec_examples.quiver_spec": {
+    "png": "sha256:fbb67d89d30cec24795b5b27ce87a7e6b5abe510115ebc8da145a29b8ccc84c8",
+    "spec_hash": "sha256:564fbf21ccce6fa5dbb51abb1a74ded54c638646349b6af4ab9c793673ce827d",
+    "svg": "sha256:378e225c1978069d1adb43fb82d88e42bf89f8157d9a30446fe04ad6347d5828"
+   },
+   "spec_examples.scatter3d_spec": {
+    "png": "sha256:aa5fc98ba9cfb9fce4b34e034100976d72bcb75414807569ad6104b3f9bcd393",
+    "spec_hash": "sha256:beb7c6aa024bf1f8a84362c1a2787245907a1843116769ffe6039d2db9b1d43c",
+    "svg": "sha256:3cee226fee797753083caa5b160da30f96bd2860ff66b1fc0c82ac2883f8e1ca"
+   },
+   "spec_examples.timeseries_spec": {
+    "png": "sha256:1d920595c82711ca123ea5ad9076e857d0aef4b4e39a0fbf8e748b0787356311",
+    "spec_hash": "sha256:4720406f9ca6dfcf133fc8c2c8bf2ac52ae4f037b21c05eae0b961178a4b5dd1",
+    "svg": "sha256:236483e0677811811c69dec028bae9b6d858bdd38802e37ea450599c3af885a0"
+   },
+   "template.bar_comparison@1.0.0": {
+    "png": "sha256:15a0dabef94226d41da12598e0ed4bae9153bb06f7f679a1777b489893316e5b",
+    "spec_hash": "sha256:9543723383fd2cd8fda97f1ab1bca33a79ed3f223eb570a56e0ee547a29dac15",
+    "svg": "sha256:5452296cb1cf9d9676adcf0044715b81b2526ec0eb8a804d05dcf4b566fa7c99"
+   },
+   "template.estimate_comparison@1.0.0": {
+    "png": "sha256:3a0ac9d5b2e67c25137638ac5a3ac134736051b515356aa593102355356dd632",
+    "spec_hash": "sha256:29b541b83059a547f22e5ac4b00855743dbe0f6ace738488eeb470334f202fed",
+    "svg": "sha256:ab5f5d22d61696d40928732482efb364a123cab831f69bafb0eb1c4bad36d437"
+   },
+   "template.funnel@1.0.0": {
+    "png": "sha256:be7ccd33eb188517ad7b38aceff4908d545129663333ae3ae4a92342def09730",
+    "spec_hash": "sha256:8c83ed6aef98d88c93c4d834331ee3edfd34b00f6da9004366fd6c47b352ae94",
+    "svg": "sha256:d0c146dc42e2d3c8aff1f0bba4d2243d19ee8636619ee542e1d7beb992a4fa79"
+   },
+   "template.timeseries@1.0.0": {
+    "png": "sha256:4203ddb25385432a0413faac0de206d389c3cef087dd12236b1c5706999b36b8",
+    "spec_hash": "sha256:d36311722cf87dc318308b58ac63f9ea1c2829a9649ff1635a033f5f7439a325",
+    "svg": "sha256:cbcd19c5c71aeb0ac9d04e91111e2ae887dd0c6210f9dc7d6d850ea6f9447300"
+   },
+   "template.timeseries@2.0.0": {
+    "png": "sha256:b2493049b50fd555afb292a9397b269caac739ca9bfbd46b5636a8232102bb62",
+    "spec_hash": "sha256:8338985113529b7ca2e1f435602711467ccc1cdfe01ab4c4ea227ddbc84ac65c",
+    "svg": "sha256:3b5f8112c5a6f511830fb63a7c77748725b3d081d80373687477255c3b1510d7"
+   },
+   "template.vector_field_2d@1.0.0": {
+    "png": "sha256:b6dd7434453e00c0e5ac73ea324e508e104f64374e06d8234550548546a6946a",
+    "spec_hash": "sha256:6586b5135ce4511efcc90f6bb0716d8ce12ffed9635bf24da9a038ff80e10f5a",
+    "svg": "sha256:c88a7798e7e93fa8b84d2dcaf33f9666f49d08f54e15aa4fa8f2a717ee1b5c0a"
+   }
+  }
+ },
+ "template_versions": {
+  "bar_comparison": [
+   "1.0.0"
+  ],
+  "dependency_map": [
+   "1.0.0"
+  ],
+  "estimate_comparison": [
+   "1.0.0"
+  ],
+  "funnel": [
+   "1.0.0"
+  ],
+  "network": [
+   "1.0.0"
+  ],
+  "org_chart": [
+   "1.0.0"
+  ],
+  "timeseries": [
+   "1.0.0",
+   "2.0.0"
+  ],
+  "vector_field_2d": [
+   "1.0.0"
+  ]
+ }
+}

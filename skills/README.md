@@ -87,8 +87,9 @@ API: nulls are never drawn as zero (`null_values_omitted`, "no data" bar
 slots, `empty_series`), units are never converted (`mixed_units`,
 `axis_unit_conflict`), forecasts are always drawn distinctly
 (`role="forecast"`), templates never invent uncertainty, dual y-axes cannot be
-expressed, and every export carries a provenance manifest. Required interval
-level and kind are planned ([ROADMAP](../docs/ROADMAP.md) "Phase 2 onward").
+expressed, and every export carries a provenance manifest. Every interval
+must state its kind and level (`interval_kind`, `interval_level`; docs/SPEC.md
+"Intervals").
 Everything else —
 zero baselines for bars, complete periods, fair comparisons, truthful titles,
 filled-in provenance, contrast, alt text — is guarded only by the skills.

@@ -197,6 +197,13 @@ reviewable branches; order follows dependencies, not importance.
   charts from quantiles. The interval's level and kind are required metadata
   and must appear in the legend or caption; an interval without a stated level
   is a validation error. Never computed or widened by the renderer.
+  *Status (branch `claude/uncertainty-marks`):* band and errorbar marks,
+  `y_lower`/`y_upper` on line/scatter/bar, the required kind/level (plus
+  `standard-error`/`standard-deviation` with an `interval_multiplier`),
+  legend/caption statement, `timeseries` 2.0.0 `intervals` (fan charts; a
+  breaking change, see "Breaking changes" below) and
+  the `estimate_comparison` template. Not yet: the `ensemble` mark, horizontal
+  intervals (bars and errorbars on x).
 
 ### Statistical and mathematical content
 
@@ -295,6 +302,26 @@ reviewable branches; order follows dependencies, not importance.
   If heavy renders become common, run them in a separate render container.
 
 ## Breaking changes
+
+* **`timeseries` 2.0.1 (not breaking):** adds
+  `metadata.template.forecast.boundary_rows`, the identities (time, series)
+  of the rows `connect_forecast` copied from the observations; the renderer
+  exempts a row from `interval_bounds_missing` only while it is still such
+  a copy. 2.0.0 stays registered and keeps its
+  `spec_hash` for the same inputs; unversioned calls now resolve to 2.0.1,
+  so unversioned specs record `version: "2.0.1"`.
+
+* **`timeseries` 2.0.0** (branch `claude/uncertainty-marks`): the template's
+  `lower_column`/`upper_column` (two unlabelled dotted bound lines) are
+  removed in favour of `intervals=[{lower, upper, kind, level?, ...}]`, whose
+  kind and level are required. 1.0.0 stays registered and builds exactly
+  what it did, **but `templates.get("timeseries")` / `templates.build(
+  "timeseries", ...)` without a version now resolve to 2.0.0**: an
+  unversioned caller passing `lower_column` gets `unknown_parameter`
+  (with a message saying how to state the interval or pin `version="1.0.0"`),
+  and unversioned specs record `version: "2.0.0"` in their template metadata
+  (so their `spec_hash` changes even without intervals). Pin the version to
+  keep 1.0.0.
 
 * **2026-10-15:** the two organisation-named built-in themes
   (`<organisation>-admin-dark`, `<organisation>-report-light`) were renamed

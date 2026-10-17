@@ -290,7 +290,7 @@ NOT_LIBRARY = {
 # Documented in the skills as *planned* (docs/ROADMAP.md "Phase 2 onward").
 # test_planned_names_not_shipped fails as soon as one appears in the package:
 # then update the skills that call it planned and drop it from this set.
-PLANNED = {"interval_level", "interval_kind", "y_lower", "y_upper"}
+PLANNED: set[str] = set()  # interval_level/_kind, y_lower/_upper shipped (spec 1.0)
 
 SNAKE_RE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$")
 CAMEL_RE = re.compile(r"^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+$")

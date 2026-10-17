@@ -57,8 +57,8 @@ def test_spec_snippet_labels_carry_units(capsys):
 def test_template_snippet(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     names, artifact_id = _run(_snippets()[2], capsys)
-    assert names == ("['bar_comparison', 'dependency_map', 'funnel', 'network', 'org_chart', "
-                     "'timeseries', 'vector_field_2d']")
+    assert names == ("['bar_comparison', 'dependency_map', 'estimate_comparison', 'funnel', "
+                     "'network', 'org_chart', 'timeseries', 'vector_field_2d']")
     assert sorted(os.listdir(tmp_path / "out" / artifact_id)) == [
         "figure.png", "figure.svg", "manifest.json", "spec.json", "theme.json"]
 

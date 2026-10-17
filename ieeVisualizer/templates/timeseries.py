@@ -169,8 +169,8 @@ class TimeseriesTemplate(ComponentTemplate):
         assert data is not None
         values = p["value_columns"]
         used = [("time_column", p["time_column"])] + [("value_columns", v) for v in values]
-        used += [(k, p[k]) for k in ("series_column", "role_column", "lower_column",
-                                     "upper_column") if p[k] is not None]
+        used += [(k, p[k]) for k in ("series_column", "role_column") if p[k] is not None]
+        used += self._bound_params(p)
         seen: dict[str, str] = {}
         for param, col in used:
             if col in seen:
@@ -186,6 +186,18 @@ class TimeseriesTemplate(ComponentTemplate):
         if p["role_column"] is not None and p["forecast_from"] is not None:
             issues.error(param_path("forecast_from"), "conflicting_parameters",
                          "give either role_column or forecast_from, not both.")
+        self._check_bound_params(p, issues)
+        if issues.errors:
+            return
+        self._check_keys(data, p, issues)
+        self._check_units(data, p, issues)
+
+    def _bound_params(self, p: dict[str, Any]) -> list[tuple[str, str]]:
+        """(parameter, column) of every uncertainty bound column."""
+        return [(k, p[k]) for k in ("lower_column", "upper_column") if p[k] is not None]
+
+    def _check_bound_params(self, p: dict[str, Any], issues: Issues) -> None:
+        values = p["value_columns"]
         if (p["lower_column"] is None) != (p["upper_column"] is None):
             missing = "upper_column" if p["upper_column"] is None else "lower_column"
             issues.error(param_path(missing), "missing_parameter",
@@ -194,10 +206,6 @@ class TimeseriesTemplate(ComponentTemplate):
             issues.error(param_path("lower_column"), "conflicting_parameters",
                          "bounds apply to a single value column; draw each bounded series "
                          "in its own figure or use long format.")
-        if issues.errors:
-            return
-        self._check_keys(data, p, issues)
-        self._check_units(data, p, issues)
 
     def _check_keys(self, data: DataSnapshot, p: dict[str, Any], issues: Issues) -> None:
         tcol = data.columns[p["time_column"]]
@@ -245,7 +253,7 @@ class TimeseriesTemplate(ComponentTemplate):
                                  f"found {bad}.")
 
     def _check_units(self, data: DataSnapshot, p: dict[str, Any], issues: Issues) -> None:
-        drawn = list(p["value_columns"]) + [c for c in (p["lower_column"], p["upper_column"]) if c]
+        drawn = list(p["value_columns"]) + [c for _, c in self._bound_params(p)]
         units = {c: data.columns[c].unit for c in drawn}
         declared = sorted({u for u in units.values() if u is not None})
         if len(declared) > 1:
@@ -310,11 +318,11 @@ class TimeseriesTemplate(ComponentTemplate):
                         "only.")
 
         values = p["value_columns"]
-        lower, upper = p["lower_column"], p["upper_column"]
-        cols = [tname] + list(values) + [c for c in (series, lower, upper) if c is not None]
+        bound_cols = list(dict.fromkeys(c for _, c in self._bound_params(p)))
+        cols = [tname] + list(values) + ([series] if series is not None else []) + bound_cols
         # y_unit only ever fills in a unit the columns lack (checked in _check); it is
         # written onto the copied columns so the produced dataset is self-describing.
-        y_unit_cols = set(values) | {c for c in (lower, upper) if c is not None}
+        y_unit_cols = set(values) | set(bound_cols)
         spec = FigureSpec(title=p["title"], caption=p["caption"])
         bands: list[dict[str, Any]] = []
         for part, rows in (("observed", observed), ("forecast", forecast)):
@@ -329,23 +337,7 @@ class TimeseriesTemplate(ComponentTemplate):
                                 "for it.")
                     continue
                 value_name = v if part == "observed" else f"{v} ({part})"
-                spec.layers.append(_line(part, tname, v, series, value_name))
-                idx = {}
-                for which, b in (("lower", lower), ("upper", upper)):
-                    if b is None:
-                        continue
-                    if not snap.columns[b].non_null():
-                        continue  # caller gave no bound for these rows; nothing is invented
-                    # Both bounds share one name (one legend entry) and the colour
-                    # of the value series they bound (color_of, see module doc).
-                    m = _line(part, tname, b, series, f"{v} range ({lower} to {upper})")
-                    m.style = {"linestyle": "dotted", "linewidth": 1, "color_of": value_name}
-                    idx[which] = len(spec.layers)
-                    spec.layers.append(m)
-                if len(idx) == 2:
-                    bands.append({"value_column": v, "lower_column": lower,
-                                  "upper_column": upper, "role": part,
-                                  "lower_layer": idx["lower"], "upper_layer": idx["upper"]})
+                self._value_layers(spec, snap, part, tname, v, series, value_name, p, bands)
             if not any(m.data == part for m in spec.layers):
                 del spec.datasets[part]  # nothing drawn from it; do not ship unused data
 
@@ -371,10 +363,42 @@ class TimeseriesTemplate(ComponentTemplate):
                 "forecast_rows": len(forecast) - len(boundary),
                 "shared_boundary": bool(boundary),
             }
+            self._boundary_meta(meta["forecast"], data, tname, series, boundary)
         if bands:
-            meta["bands"] = bands
+            meta[self._bands_key] = bands
         spec.metadata["template"] = meta
         return spec
+
+    _bands_key = "bands"
+
+    def _boundary_meta(self, fmeta: dict[str, Any], data: DataSnapshot, tname: str,
+                       series: str | None, boundary: list[int]) -> None:
+        """Hook for later versions to record more about the boundary rows
+        (1.0.0 records only ``shared_boundary``)."""
+
+    def _value_layers(self, spec: FigureSpec, snap: DataSnapshot, part: str, tname: str,
+                      v: str, series: str | None, value_name: str, p: dict[str, Any],
+                      bands: list[dict[str, Any]]) -> None:
+        """Append the layers of value column ``v`` in ``part``: its line and,
+        in 1.0.0, two dotted bound lines (recorded in ``bands``)."""
+        lower, upper = p["lower_column"], p["upper_column"]
+        spec.layers.append(_line(part, tname, v, series, value_name))
+        idx = {}
+        for which, b in (("lower", lower), ("upper", upper)):
+            if b is None:
+                continue
+            if not snap.columns[b].non_null():
+                continue  # caller gave no bound for these rows; nothing is invented
+            # Both bounds share one name (one legend entry) and the colour
+            # of the value series they bound (color_of, see module doc).
+            m = _line(part, tname, b, series, f"{v} range ({lower} to {upper})")
+            m.style = {"linestyle": "dotted", "linewidth": 1, "color_of": value_name}
+            idx[which] = len(spec.layers)
+            spec.layers.append(m)
+        if len(idx) == 2:
+            bands.append({"value_column": v, "lower_column": lower,
+                          "upper_column": upper, "role": part,
+                          "lower_layer": idx["lower"], "upper_layer": idx["upper"]})
 
     @staticmethod
     def _boundary_rows(data: DataSnapshot, series: str | None, keys: list[Any],

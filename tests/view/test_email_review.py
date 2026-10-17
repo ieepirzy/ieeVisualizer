@@ -336,3 +336,42 @@ def test_a_realistic_finnish_briefing_email_passes_the_gate():
                         Table("t", title="Toimipisteet"),
                         Note("Oulu: ei toimitettu, ei nolla.")]))
     check_legible(render_email(view, "email-phone"))
+
+
+def _channels(n: int, title: str):
+    import copy
+
+    from ieeVisualizer import templates
+
+    t = templates.get("bar_comparison")
+    e = copy.deepcopy(t.example())
+    c = e["data"]["columns"]
+    names = ["Search ads", "Social", "Organic search", "Referral", "Direct", "Email",
+             "Partners", "Fairs and events", "Video", "Radio", "Outdoor", "Telesales",
+             "Partner network", "Search optimisation", "Newsletter", "Customer service"]
+    c["channel"]["values"] = names[:n]
+    c["revenue"]["values"] = [1000.0 * (i * 7 % 13 + 1) + 0.5 for i in range(n)]
+    c["revenue_prev"]["values"] = [900.0 * (i * 5 % 11 + 1) for i in range(n)]
+    e["params"]["title"] = title
+    return t.build_payload(e)
+
+
+@pytest.mark.parametrize("n", [11, 12, 13, 16])
+def test_a_measuring_pass_that_collapses_is_not_a_refusal(n):
+    """Constrained layout giving up while a legend is still inside the axes
+    (a measuring pass) said layout_collapsed for 11-13 bars but not 16; only
+    the saved layout counts."""
+    view = ViewSpec(title="Weekly", figures={"f": _channels(
+        n, "Revenue by sales channel, the last 14 days compared with the period before")},
+        root=Stack([FigureComponent(figure="f")]))
+    check_legible(render_email(view, "email-phone"))
+
+
+def test_a_title_with_a_long_compound_word_moves_inside_the_image():
+    """A word wider than the room either side of the plot's centre cannot
+    wrap; the title moves sideways (no further than needed) instead of
+    running off the image."""
+    view = ViewSpec(title="Weekly", figures={"f": _channels(
+        5, "Kuljetuspalveluiden kokonaisliikevaihtokehityskatsaus")},
+        root=Stack([FigureComponent(figure="f")]))
+    check_legible(render_email(view, "email-phone"))

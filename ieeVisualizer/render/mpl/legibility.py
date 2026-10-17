@@ -77,7 +77,7 @@ def wrap(text: str, size_pt: float, width_pt: float, bold: bool = False) -> str:
     out = []
     for par in text.split("\n"):
         line = ""
-        for word in par.split(" "):
+        for word in _units_kept(par.split(" ")):
             cand = f"{line} {word}" if line else word
             if line and width(cand) > width_pt:
                 out.append(line)
@@ -86,6 +86,23 @@ def wrap(text: str, size_pt: float, width_pt: float, bold: bool = False) -> str:
                 line = cand
         out.append(line)
     return "\n".join(out)
+
+
+#: A word made only of these stays on the line of the word before it: a
+#: number and its unit read as one ("20 %", "1 234,50 €", "5 °C").
+_UNIT_CHARS = frozenset("%‰€$£¥°℃℉")
+
+
+def _units_kept(words: list[str]) -> list[str]:
+    """``words`` with a unit-only word (``%``, ``€``...) joined to the word
+    before it, so wrapping never puts a value and its unit on two lines."""
+    out: list[str] = []
+    for w in words:
+        if out and w and set(w) <= _UNIT_CHARS | set(".,;:)"):
+            out[-1] = f"{out[-1]} {w}"
+        else:
+            out.append(w)
+    return out
 
 
 def wrap_labels(ctx: Any) -> None:
@@ -147,8 +164,10 @@ def refit_title_on_layout(ctx: Any) -> None:
         return
     inner, title = engine.execute, ctx.ax.title
     original = " ".join(title.get_text().split("\n"))
+    x0 = title.get_position()[0]
 
     def execute(figure: Any) -> Any:
+        title.set_x(x0)  # each layout decides again from the title as drawn
         out = inner(figure)
         for _ in range(2):
             if not original or not _title_off_edge(title, figure):
@@ -161,9 +180,26 @@ def refit_title_on_layout(ctx: Any) -> None:
             title.set_text(wrap(original, title.get_fontsize(), room * 72.0 / figure.dpi,
                                 title.get_fontweight() == "bold"))
             out = inner(figure)
+            if _title_off_edge(title, figure):
+                _shift_into_figure(title, ctx.ax, figure)
         return out
 
     engine.execute = execute
+
+
+def _shift_into_figure(title: Any, ax: Any, fig: Any) -> None:
+    """A title still past the edge after wrapping (a word wider than the room
+    either side of the axes' centre, e.g. a long compound word) moves
+    sideways, no further than needed, to lie inside the figure: it stays the
+    figure's title, only no longer centred over the plot."""
+    box, plot = title.get_window_extent(), ax.get_window_extent()
+    if box.width > fig.bbox.width - 8 or plot.width <= 0:
+        return  # wider than the image: the audit reports it clipped
+    centre = (box.x0 + box.x1) / 2
+    lo, hi = box.width / 2 + 4, fig.bbox.width - box.width / 2 - 4
+    target = min(max(centre, lo), hi)
+    x, _ = title.get_position()
+    title.set_x(x + (target - centre) / plot.width)
 
 
 def _title_off_edge(title: Any, fig: Any) -> bool:
@@ -185,12 +221,87 @@ def wrap_annotations(ctx: Any, texts: list[Any]) -> None:
         boxes = [(t, t.get_window_extent()) for t in texts
                  if isinstance(t, Text) and t.get_visible() and t.get_text()]
     right = 0.98 * fig.bbox.width
+    rows = (ctx.axes.get("y") is not None and ctx.axes["y"].kind == "category")
     for t, box in boxes:
         room_pt = (right - box.x0) * 72.0 / fig.dpi
         # a column narrower than MIN_WRAP_EM would stack the words one per line and
         # squeeze the plot; such a text is left as it is and the audit reports it
         if box.x1 > right and room_pt >= MIN_WRAP_EM * t.get_fontsize():
             t.set_text(wrap(t.get_text(), t.get_fontsize(), room_pt))
+            if rows and getattr(t, "xyann", None) is not None:
+                ctx.row_wrapped.append(t)  # placed in its row after layout
+
+
+def fit_rows_on_layout(ctx: Any) -> None:
+    """Profile renders: after every layout, an annotation anchored on a
+    category row that wrapping made taller keeps its own placement (just
+    above the anchor) when that stays in its row; only if it would climb
+    into the row above does it try, in turn, centred on the anchor and
+    hanging below it - each only if it stays in its row and clear of the
+    row's value labels. If none fits it stays as placed, and the audit
+    refuses it (``annotation_outside_row``)."""
+    engine = ctx.fig.get_layout_engine()
+    if engine is None or not ctx.row_wrapped:
+        return
+    inner = engine.execute
+    # a template's row notes are placed under their value labels instead
+    # (value_labels._clear_texts); everything else is placed here
+    placed = [(t, t.get_va(), tuple(t.xyann)) for t in ctx.row_wrapped
+              if not any(t is n for n in ctx.text_annotations)]
+
+    def execute(figure: Any) -> Any:
+        out = inner(figure)
+        labels = [lab.text for lab in ctx.value_labels if lab.text.get_visible()]
+        for t, va, off in placed:
+            try:
+                y = float(ctx.ax.yaxis.convert_units(t.xy[1]))
+            except (TypeError, ValueError):
+                continue
+            lo, hi = sorted(ctx.ax.transData.transform([(0, y - 0.5), (0, y + 0.5)])[:, 1])
+            for cand_va, cand_off in ((va, off), ("center", (off[0], 0.0)),
+                                      ("top", (off[0], -abs(off[1])))):
+                t.set_va(cand_va)
+                t.xyann = cand_off
+                box = t.get_window_extent()
+                if box.y0 >= lo - OVERLAP_TOLERANCE_PX and box.y1 <= hi + OVERLAP_TOLERANCE_PX \
+                        and not any(box.overlaps(lab.get_window_extent()) for lab in labels):
+                    break
+            else:
+                t.set_va(va)
+                t.xyann = off
+        return out
+
+    engine.execute = execute
+
+
+def annotation_rows(built: Any) -> list[RenderWarning]:
+    """Profile renders: a text annotation anchored on a category row (y)
+    whose drawn text reaches into another row's band reads as that row's:
+    ``annotation_outside_row`` (gating)."""
+    from matplotlib.text import Annotation
+
+    ax, ctx = built.axes, built.context
+    if ctx is None or ctx.three_d or ctx.axes.get("y") is None \
+            or ctx.axes["y"].kind != "category":
+        return []
+    out = []
+    for a in built.annotation_artists:
+        if not (isinstance(a, Annotation) and a.get_visible() and a.get_text()):
+            continue
+        try:
+            y = float(ax.yaxis.convert_units(a.xy[1]))
+        except (TypeError, ValueError):
+            continue
+        lo, hi = sorted(ax.transData.transform([(0, y - 0.5), (0, y + 0.5)])[:, 1])
+        box = a.get_window_extent()
+        if box.y0 < lo - OVERLAP_TOLERANCE_PX or box.y1 > hi + OVERLAP_TOLERANCE_PX:
+            text = " ".join(a.get_text().split())
+            out.append(RenderWarning(
+                "annotation_outside_row",
+                f"annotation {text[:40]!r} is anchored on row {a.xy[1]!r} but its text reaches "
+                "into a neighbouring row, so it reads as that row's. Shorten it or anchor it "
+                "where it has room.", f"/annotations/{getattr(a, '_ieev_index', '')}"))
+    return out
 
 
 # --------------------------------------------------------------------------

@@ -36,7 +36,7 @@ from ..base import (
 from ..prepare import PreparedSpec, prepare
 
 ADAPTER_NAME = "matplotlib"
-ADAPTER_VERSION = "1.0.0"
+ADAPTER_VERSION = "1.1.0"  # 1.1.0: band and errorbar marks, interval encodings
 #: Salt for SVG element ids; fixed so ids (and therefore bytes) are stable.
 SVG_HASHSALT = "ieeVisualizer"
 
@@ -50,6 +50,7 @@ CAPABILITIES = Capabilities(
     vector_export=True,
     max_points=1_000_000,
     max_bins=10_000,
+    intervals=True,
 )
 
 
@@ -68,6 +69,8 @@ class BuiltFigure:
     annotation_artists: list[Any] = field(default_factory=list)
     caption: Any = None
     context: Any = None
+    #: Profile renders: constrained layout gave up in a pass before the save.
+    measured_collapse: bool = False
 
 
 def _versions() -> tuple[str, str]:
@@ -326,7 +329,13 @@ class MatplotlibAdapter:
                 break
             causes += why
             h_in = (math.ceil(need * request.dpi) + 1e-6) / request.dpi
-        caught.extend(mine)
+        # constrained layout giving up during a measuring pass (a legend still
+        # inside the axes, value labels not yet fitted) says nothing about the
+        # figure that is saved: only the final draw's (in the caller's
+        # catch) becomes layout_collapsed
+        caught.extend(w for w in mine if "layout not applied" not in str(w.message))
+        # ... unless the saved layout is the collapsed one (checked in _audit)
+        built.measured_collapse = any("layout not applied" in str(w.message) for w in mine)
         if causes:
             built.warnings.append(growth_warning(request.size_px[1],
                                                  math.floor(h_in * request.dpi), causes))
@@ -343,6 +352,7 @@ class MatplotlibAdapter:
 
         from .data import infer_axes
         from .decorate import apply_annotations, apply_axes, apply_caption, apply_legend
+        from .intervals import caption_with_intervals
         from .marks import DRAW, DrawContext, fit_value_labels, report_bar_overlaps
 
         spec = prepared.spec
@@ -376,7 +386,8 @@ class MatplotlibAdapter:
             from .decorate import CAPTION_FONTSIZE
 
             cap["fontsize"] = ctx.fs(cap.get("fontsize", CAPTION_FONTSIZE))
-        caption = apply_caption(fig, spec.caption, figsize[1], figsize[0], **cap)
+        text = caption_with_intervals(spec.caption, spec.legend.show, ctx.interval_labels)
+        caption = apply_caption(fig, text, figsize[1], figsize[0], **cap)
         if ctx.min_pt:
             from .legibility import fit_ticks, fit_title, wrap_annotations, wrap_labels
 
@@ -399,8 +410,9 @@ class MatplotlibAdapter:
                                     and getattr(a, "_ieev_index", None) in movable]
         fit_value_labels(ctx)
         if ctx.min_pt:
-            from .legibility import refit_title_on_layout
+            from .legibility import fit_rows_on_layout, refit_title_on_layout
 
+            fit_rows_on_layout(ctx)
             refit_title_on_layout(ctx)
         apply_legend(ctx)  # last: an "auto" legend is placed against the final layout
         return BuiltFigure(figure=fig, axes=ax, warnings=warnings,
@@ -425,6 +437,72 @@ def row_notes(spec: FigureSpec) -> set[int]:
             if isinstance(a, TextAnnotation) and (a.text, a.x, a.y) in keys}
 
 
+def row_note_issues(built: BuiltFigure) -> list[RenderWarning]:
+    """A declared row note that matches no annotation (the spec was edited
+    after the template built it: ``row_note_stale``, a note - gating as
+    ``row_note_detached`` when the edited note's text runs past the plot's
+    right edge, away from its row's bar), and one that two annotations match
+    (``row_note_duplicated``, gating: the same rate drawn twice), named."""
+    from ...spec import TextAnnotation
+
+    spec = built.context.spec if built.context is not None else None
+    meta = spec.metadata.get("template") if spec is not None and isinstance(
+        spec.metadata, dict) else None
+    declared = meta.get("row_notes") if isinstance(meta, dict) else None
+    if not isinstance(declared, list):
+        return []
+    out = []
+    keys = [(d.get("text"), d.get("x"), d.get("y")) for d in declared if isinstance(d, dict)]
+    matched = {i for i, a in enumerate(spec.annotations)
+               if isinstance(a, TextAnnotation) and (a.text, a.x, a.y) in keys}
+    for key in keys:
+        hits = [i for i, a in enumerate(spec.annotations)
+                if isinstance(a, TextAnnotation) and (a.text, a.x, a.y) == key]
+        if not hits:
+            out.append(RenderWarning(
+                "row_note_stale",
+                f"the template's row note {key[0]!r} on row {key[2]!r} matches no annotation "
+                "(its text, x or row was changed after the template built the spec); an "
+                "annotation in its place is drawn at its own data position, not moved under "
+                "the row's value label.", "/metadata/template/row_notes"))
+            out += _detached(built, key, matched)
+        elif len(hits) > 1:
+            out.append(RenderWarning(
+                "row_note_duplicated",
+                f"the row note {key[0]!r} on row {key[2]!r} is drawn {len(hits)} times "
+                f"(annotations {', '.join(map(str, hits))}); remove the duplicate.",
+                f"/annotations/{hits[1]}"))
+    return out
+
+
+def _detached(built: BuiltFigure, key: tuple, matched: set[int]) -> list[RenderWarning]:
+    """The edited form of a stale row note (same row, same text or same x,
+    matching no declared note) whose drawn text runs past the plot's right
+    edge: it no longer sits by its row's bar and reads as a loose label."""
+    from matplotlib.text import Annotation
+
+    from ...spec import TextAnnotation
+
+    ax = built.axes
+    right = ax.get_window_extent().x1
+    out = []
+    for art in built.annotation_artists:
+        i = getattr(art, "_ieev_index", None)
+        if i is None or i in matched or not isinstance(art, Annotation):
+            continue
+        a = built.context.spec.annotations[i]
+        if not (isinstance(a, TextAnnotation) and a.y == key[2]
+                and (a.text == key[0] or a.x == key[1])):
+            continue
+        if art.get_window_extent().x1 > right + 1.0:
+            out.append(RenderWarning(
+                "row_note_detached",
+                f"annotation {a.text!r} replaces the template's row note on row {key[2]!r} "
+                "but runs past the plot's right edge, away from the row's bar; restore the "
+                "note or place it inside the plot.", f"/annotations/{i}"))
+    return out
+
+
 def _audit(built: BuiltFigure, request: RenderRequest) -> None:
     """Profile renders: append the legibility audit of the figure as drawn."""
     from .legibility import annotations_outside, audit, figure_glyphs
@@ -433,7 +511,20 @@ def _audit(built: BuiltFigure, request: RenderRequest) -> None:
     built.warnings.extend(figure_glyphs(built.figure))  # inside the render's rc context
     profile = request.render_profile
     if profile is not None:
-        built.warnings.extend(audit(built.figure, profile, request.display_width, built.axes))
+        from .legibility import annotation_rows
+
+        found = audit(built.figure, profile, request.display_width, built.axes)
+        built.warnings.extend(found)
+        if built.measured_collapse and any(w.code == "legibility_plot_collapsed"
+                                           for w in found):
+            # constrained layout gave up and the saved plot is the collapsed
+            # one: the final layout, not a measuring pass
+            built.warnings.append(RenderWarning(
+                "layout_collapsed", "the figure's text left no room for the plot at this "
+                "size, so matplotlib could not lay it out; shorten the text or use a larger "
+                "figure.", ""))
+        built.warnings.extend(annotation_rows(built))
+        built.warnings.extend(row_note_issues(built))
 
 
 def _collapsed(warnings: list[RenderWarning], request: RenderRequest) -> None:

@@ -197,6 +197,10 @@ class Capabilities:
     #: Mark types the adapter cannot draw in a given coordinate system even
     #: though it supports both separately.
     unsupported: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    #: Draws ``y_lower``/``y_upper`` intervals on line, scatter and bar marks
+    #: (band and errorbar marks are mark types). An adapter without it is not
+    #: chosen for such a spec, so an interval is never silently dropped.
+    intervals: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -211,6 +215,7 @@ class Capabilities:
             "max_points": self.max_points,
             "max_bins": self.max_bins,
             "unsupported": {k: sorted(v) for k, v in sorted(self.unsupported.items())},
+            "intervals": self.intervals,
         }
 
 

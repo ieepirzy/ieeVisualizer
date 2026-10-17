@@ -99,6 +99,9 @@ class RoleStyle:
     opacity (None: :data:`DEFAULT_FORECAST_LINE_ALPHA`); forecast bars/areas
     are hatched, filled at ``forecast_fill_alpha``. ``reference_*`` styles
     reference lines and the reference role (lighter, neutral colour).
+    ``interval_fill_alpha`` is the opacity of one interval band (None: the
+    renderer's default); nested bands of a fan chart add up towards the
+    centre, so it should stay low.
     """
 
     forecast_linestyle: str | None = None
@@ -109,6 +112,9 @@ class RoleStyle:
     reference_alpha: float | None = None
     reference_fill_alpha: float | None = None
     reference_linewidth: float | None = None
+    #: Added after themes were first published: written to the theme's JSON
+    #: (and hash) only when set, so themes that do not set it keep their hash.
+    interval_fill_alpha: float | None = field(default=None, metadata={"omit_if_none": True})
 
 
 @dataclass(frozen=True)
@@ -256,7 +262,8 @@ class Theme:
 
 def _plain(obj: Any) -> Any:
     if hasattr(obj, "__dataclass_fields__"):
-        return {f.name: _plain(getattr(obj, f.name)) for f in fields(obj)}
+        return {f.name: _plain(getattr(obj, f.name)) for f in fields(obj)
+                if not (f.metadata.get("omit_if_none") and getattr(obj, f.name) is None)}
     if isinstance(obj, (list, tuple)):
         return [_plain(v) for v in obj]
     if isinstance(obj, dict):
@@ -380,7 +387,8 @@ def structure_issues(theme: Theme) -> list[ValidationIssue]:
                  ("roles/forecast_fill_alpha", theme.roles.forecast_fill_alpha),
                  ("roles/forecast_line_alpha", theme.roles.forecast_line_alpha),
                  ("roles/reference_alpha", theme.roles.reference_alpha),
-                 ("roles/reference_fill_alpha", theme.roles.reference_fill_alpha)):
+                 ("roles/reference_fill_alpha", theme.roles.reference_fill_alpha),
+                 ("roles/interval_fill_alpha", theme.roles.interval_fill_alpha)):
         if v is not None and not (_num(v) and 0 < v <= 1):
             err(f"/{k}", f"{k} must be in (0, 1], got {v!r}.")
     ls = theme.roles.forecast_linestyle
