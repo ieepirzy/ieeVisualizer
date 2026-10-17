@@ -326,7 +326,11 @@ class MatplotlibAdapter:
                 break
             causes += why
             h_in = (math.ceil(need * request.dpi) + 1e-6) / request.dpi
-        caught.extend(mine)
+        # constrained layout giving up during a measuring pass (a legend still
+        # inside the axes, value labels not yet fitted) says nothing about the
+        # figure that is saved: only the final draw's (in the caller's
+        # catch) becomes layout_collapsed
+        caught.extend(w for w in mine if "layout not applied" not in str(w.message))
         if causes:
             built.warnings.append(growth_warning(request.size_px[1],
                                                  math.floor(h_in * request.dpi), causes))
@@ -425,6 +429,41 @@ def row_notes(spec: FigureSpec) -> set[int]:
             if isinstance(a, TextAnnotation) and (a.text, a.x, a.y) in keys}
 
 
+def row_note_issues(spec: FigureSpec | None) -> list[RenderWarning]:
+    """A declared row note that matches no annotation (the spec was edited
+    after the template built it: ``row_note_stale``, a note), and one that
+    two annotations match (``row_note_duplicated``, gating: the same rate
+    drawn twice), named."""
+    from ...spec import TextAnnotation
+
+    meta = spec.metadata.get("template") if spec is not None and isinstance(
+        spec.metadata, dict) else None
+    declared = meta.get("row_notes") if isinstance(meta, dict) else None
+    if not isinstance(declared, list):
+        return []
+    out = []
+    for d in declared:
+        if not isinstance(d, dict):
+            continue
+        key = (d.get("text"), d.get("x"), d.get("y"))
+        hits = [i for i, a in enumerate(spec.annotations)
+                if isinstance(a, TextAnnotation) and (a.text, a.x, a.y) == key]
+        if not hits:
+            out.append(RenderWarning(
+                "row_note_stale",
+                f"the template's row note {key[0]!r} on row {key[2]!r} matches no annotation "
+                "(its text, x or row was changed after the template built the spec); an "
+                "annotation in its place is drawn at its own data position, not moved under "
+                "the row's value label.", "/metadata/template/row_notes"))
+        elif len(hits) > 1:
+            out.append(RenderWarning(
+                "row_note_duplicated",
+                f"the row note {key[0]!r} on row {key[2]!r} is drawn {len(hits)} times "
+                f"(annotations {', '.join(map(str, hits))}); remove the duplicate.",
+                f"/annotations/{hits[1]}"))
+    return out
+
+
 def _audit(built: BuiltFigure, request: RenderRequest) -> None:
     """Profile renders: append the legibility audit of the figure as drawn."""
     from .legibility import annotations_outside, audit, figure_glyphs
@@ -433,7 +472,11 @@ def _audit(built: BuiltFigure, request: RenderRequest) -> None:
     built.warnings.extend(figure_glyphs(built.figure))  # inside the render's rc context
     profile = request.render_profile
     if profile is not None:
+        from .legibility import annotation_rows
+
         built.warnings.extend(audit(built.figure, profile, request.display_width, built.axes))
+        built.warnings.extend(annotation_rows(built))
+        built.warnings.extend(row_note_issues(built.context.spec if built.context else None))
 
 
 def _collapsed(warnings: list[RenderWarning], request: RenderRequest) -> None:

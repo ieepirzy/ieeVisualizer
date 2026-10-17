@@ -147,8 +147,10 @@ def refit_title_on_layout(ctx: Any) -> None:
         return
     inner, title = engine.execute, ctx.ax.title
     original = " ".join(title.get_text().split("\n"))
+    x0 = title.get_position()[0]
 
     def execute(figure: Any) -> Any:
+        title.set_x(x0)  # each layout decides again from the title as drawn
         out = inner(figure)
         for _ in range(2):
             if not original or not _title_off_edge(title, figure):
@@ -161,9 +163,26 @@ def refit_title_on_layout(ctx: Any) -> None:
             title.set_text(wrap(original, title.get_fontsize(), room * 72.0 / figure.dpi,
                                 title.get_fontweight() == "bold"))
             out = inner(figure)
+            if _title_off_edge(title, figure):
+                _shift_into_figure(title, ctx.ax, figure)
         return out
 
     engine.execute = execute
+
+
+def _shift_into_figure(title: Any, ax: Any, fig: Any) -> None:
+    """A title still past the edge after wrapping (a word wider than the room
+    either side of the axes' centre, e.g. a long compound word) moves
+    sideways, no further than needed, to lie inside the figure: it stays the
+    figure's title, only no longer centred over the plot."""
+    box, plot = title.get_window_extent(), ax.get_window_extent()
+    if box.width > fig.bbox.width - 8 or plot.width <= 0:
+        return  # wider than the image: the audit reports it clipped
+    centre = (box.x0 + box.x1) / 2
+    lo, hi = box.width / 2 + 4, fig.bbox.width - box.width / 2 - 4
+    target = min(max(centre, lo), hi)
+    x, _ = title.get_position()
+    title.set_x(x + (target - centre) / plot.width)
 
 
 def _title_off_edge(title: Any, fig: Any) -> bool:
@@ -185,12 +204,48 @@ def wrap_annotations(ctx: Any, texts: list[Any]) -> None:
         boxes = [(t, t.get_window_extent()) for t in texts
                  if isinstance(t, Text) and t.get_visible() and t.get_text()]
     right = 0.98 * fig.bbox.width
+    rows = (ctx.axes.get("y") is not None and ctx.axes["y"].kind == "category")
     for t, box in boxes:
         room_pt = (right - box.x0) * 72.0 / fig.dpi
         # a column narrower than MIN_WRAP_EM would stack the words one per line and
         # squeeze the plot; such a text is left as it is and the audit reports it
         if box.x1 > right and room_pt >= MIN_WRAP_EM * t.get_fontsize():
             t.set_text(wrap(t.get_text(), t.get_fontsize(), room_pt))
+            if rows and getattr(t, "xyann", None) is not None and t.get_va() == "baseline":
+                # anchored on a category row: centred on it, so its lines stay
+                # in its own row instead of climbing into the row above
+                t.set_va("center")
+                t.xyann = (t.xyann[0], 0.0)
+
+
+def annotation_rows(built: Any) -> list[RenderWarning]:
+    """Profile renders: a text annotation anchored on a category row (y)
+    whose drawn text reaches into another row's band reads as that row's:
+    ``annotation_outside_row`` (gating)."""
+    from matplotlib.text import Annotation
+
+    ax, ctx = built.axes, built.context
+    if ctx is None or ctx.three_d or ctx.axes.get("y") is None \
+            or ctx.axes["y"].kind != "category":
+        return []
+    out = []
+    for a in built.annotation_artists:
+        if not (isinstance(a, Annotation) and a.get_visible() and a.get_text()):
+            continue
+        try:
+            y = float(ax.yaxis.convert_units(a.xy[1]))
+        except (TypeError, ValueError):
+            continue
+        lo, hi = sorted(ax.transData.transform([(0, y - 0.5), (0, y + 0.5)])[:, 1])
+        box = a.get_window_extent()
+        if box.y0 < lo - OVERLAP_TOLERANCE_PX or box.y1 > hi + OVERLAP_TOLERANCE_PX:
+            text = " ".join(a.get_text().split())
+            out.append(RenderWarning(
+                "annotation_outside_row",
+                f"annotation {text[:40]!r} is anchored on row {a.xy[1]!r} but its text reaches "
+                "into a neighbouring row, so it reads as that row's. Shorten it or anchor it "
+                "where it has room.", f"/annotations/{getattr(a, '_ieev_index', '')}"))
+    return out
 
 
 # --------------------------------------------------------------------------
