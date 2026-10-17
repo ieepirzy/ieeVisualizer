@@ -668,8 +668,9 @@ def _boxes(anim, req):
     with tempfile.TemporaryDirectory() as tmp, M.tempconfig(MA._config(req, theme, tmp)):
         scene, set_state = MA._scene(plot, req, theme)
         ax = next(m for m in scene.mobjects if isinstance(m, M.Axes))
-        (x0, y0), (x1, y1) = ax.c2p(plot.box[0], plot.box[2])[:2], ax.c2p(plot.box[1],
-                                                                            plot.box[3])[:2]
+        # the plot: the axes' own data range (a vector field's keeps a margin)
+        (x0, y0), (x1, y1) = ax.c2p(ax.x_range[0], ax.y_range[0])[:2], \
+            ax.c2p(ax.x_range[1], ax.y_range[1])[:2]
         for k in range(len(plot.titles)):
             set_state(k)
 
@@ -709,6 +710,11 @@ def _layout_specs(which):
         anim = vector_field_anim(params={"title": "Spiral", "caption": "Model field",
                                          "x_unit": "m", "y_unit": "m", "scale": 0.8,
                                          "x_range": [-3.0, 3.0], "y_range": [-2.0, 2.0]})
+    elif which == "thin_field":  # x_range [0, 1e-6], y_range [0, 1]: free aspect
+        anim = vector_field_anim(params={"scale": None, "x_range": [0.0, 1e-6],
+                                         "y_range": [0.0, 1.0]})
+    elif which == "offset_span":  # 1.0000001 to 1.0000003: an offset axis
+        anim = _fm("a*0 + x", (1.0000001, 1.0000003))
     else:  # a wide, flat field with long arrows
         anim = vector_field_anim(params={"title": "Spiral\nline2", "caption": "Model field " * 10,
                                          "x_unit": "m", "y_unit": "m", "scale": 2.0,
@@ -720,7 +726,8 @@ def _layout_specs(which):
 @pytest.mark.parametrize("size", [(560, 400, 100), (300, 450, 100), (400, 400, 100),
                                   (320, 180, 100), (800, 200, 100), (1000, 300, 150),
                                   (1920, 1080, 200), (640, 480, 72)])
-@pytest.mark.parametrize("which", ["function", "long_y", "vector_field", "flat_field"])
+@pytest.mark.parametrize("which", ["function", "long_y", "vector_field", "flat_field",
+                                   "thin_field", "offset_span"])
 def test_no_text_overlaps_another_or_the_plot_and_arrows_stay_inside(size, which):
     """The caption overlapped the x title; edge arrows ran over the tick
     labels, titles and frame label; portrait frames shrank text; a long y
@@ -923,5 +930,143 @@ def test_series_colours_follow_matplotlib():
     # an explicit colour takes nothing from the cycle
     assert [c for c, *_ in _styles([L("sin(x)", style={"color": "#abcdef"}), L("cos(x)")],
                                    pal, [])] == ["#abcdef", pal[0]]
-    (c, alpha, _), = _styles([L("sin(x)", style={"color": "#ff000080"})], pal, [])
+    (c, alpha, _, _), = _styles([L("sin(x)", style={"color": "#ff000080"})], pal, [])
     assert c == "#ff0000" and abs(alpha - 128 / 255) < 1e-9
+
+
+def _scene_of(anim, req=GIF):
+    """``(scene, Axes, texts)`` of ``anim`` at its poster state, composed."""
+    import tempfile
+
+    import manim as M
+
+    from ieeVisualizer.animation import manim_adapter as MA
+
+    plot, _, theme, _ = MA._plan(anim, req)
+    tmp = tempfile.mkdtemp()
+    with M.tempconfig(MA._config(req, theme, tmp)):
+        scene, set_state = MA._scene(plot, req, theme)
+        set_state(0)
+        ax = next(m for m in scene.mobjects if isinstance(m, M.Axes))
+        texts = [m.text for m in scene.mobjects if isinstance(m, M.Text)]
+        return scene, ax, texts, plot
+
+
+@needs_manim
+def test_tick_labels_of_a_rising_axis_never_read_the_same():
+    """1.0000001 to 1.0000003 was labelled '1e+07' at both ends."""
+    from ieeVisualizer.animation.manim_adapter import _tick_texts
+
+    assert _tick_texts([1.0000001, 1.0000003]) == ["1.0000001", "1.0000003"]
+    assert _tick_texts([0.0, 2.0]) == ["0", "2"]
+    _, _, texts, plot = _scene_of(_fm("a*0 + x", (1.0000001, 1.0000003)))
+    assert "+ 1.0000001" in plot.labels[0]  # an offset, as Matplotlib's offset text
+    ends = _tick_texts(plot.ticks[0])
+    assert len(set(ends)) == 2 and all(t in texts for t in ends)
+
+
+@needs_manim
+def test_an_anisotropic_field_fills_its_plot_with_visible_arrows():
+    """x_range [0, 1e-6], y_range [0, 1]: one exponent and equal aspect gave
+    a sliver with no arrows and overprinted ticks."""
+    anim = vector_field_anim(params={"scale": None, "x_range": [0.0, 1e-6],
+                                     "y_range": [0.0, 1.0]})
+    scene, ax, texts, plot = _scene_of(anim)
+    (x0, y0), (x1, y1) = ax.c2p(ax.x_range[0], ax.y_range[0])[:2], \
+        ax.c2p(ax.x_range[1], ax.y_range[1])[:2]
+    assert (x1 - x0) > 0.5 * (y1 - y0)  # not a sliver
+    assert "\u00d71e-" in plot.labels[0] and "\u00d71e" not in plot.labels[1]  # per axis
+    arrows = [m for m in scene.mobjects if not isinstance(m, (type(ax),)) and
+              m.__class__.__name__ == "ArrowVectorField"]
+    assert arrows and sum(a.width > 0.05 or a.height > 0.05 for a in arrows[0]) > 5
+
+
+def test_math_text_uses_matplotlibs_test_and_draws_escaped_dollars():
+    from ieeVisualizer.animation.manim_adapter import _is_math
+
+    assert _is_math("$x$") and not _is_math("costs \\$5 or \\$6")
+    anim = dataclasses.replace(_base(), title="costs \\$5 or \\$6")
+    assert not any("math text" in u for u in ManimAdapter().unmet(anim, GIF))
+
+
+@needs_manim
+def test_escaped_dollars_are_drawn_as_dollars():
+    anim = dataclasses.replace(_base(), title="costs \\$5", label_frames=False)
+    assert "costs$5" in _scene_of(anim)[2]  # Manim keeps Text.text without spaces
+
+
+@needs_manim
+def test_a_wrapped_colour_cycle_is_dashed_like_matplotlib():
+    import manim as M
+
+    from ieeVisualizer.spec import Legend
+
+    anim = _base()
+    anim.figure.layers += [FunctionMark(expression=f"sin(x) + {k}", variables=["x"],
+                                        domain={"x": [0.0, 6.0]}, samples=40)
+                           for k in range(1, 11)]
+    anim.figure.legend = Legend(show=False)
+    scene, ax, _, _ = _scene_of(anim)
+    curves = [m for m in scene.mobjects if not isinstance(m, (M.Text, M.Axes))]
+    assert len(curves) == 11
+    assert not any(isinstance(c, M.DashedVMobject) for c in curves[:10])
+    assert isinstance(curves[10], M.DashedVMobject)
+    assert "colour_cycle_wrapped" in [w.code for w in ManimAdapter().render(anim, GIF).warnings]
+
+
+@needs_manim
+def test_drawn_opacity_is_the_styles_and_the_roles():
+    import manim as M
+
+    anim = _base()
+    anim.figure.layers[0].style = {"color": "#ff000080"}
+    scene, ax, _, _ = _scene_of(anim)
+    (curve,) = [m for m in scene.mobjects if not isinstance(m, (M.Text, M.Axes))]
+    assert abs(curve.get_stroke_opacity() - 128 / 255) < 1e-6
+    scene, ax, _, _ = _scene_of(vector_field_anim(params={"scale": None}))
+    (field,) = [m for m in scene.mobjects if m.__class__.__name__ == "ArrowVectorField"]
+    assert {round(a.get_stroke_opacity(), 3) for a in field} == {0.55}  # reference
+
+
+@needs_manim
+@pytest.mark.parametrize("size", [(800, 200, 100), (1000, 300, 150), (500, 150, 72)])
+def test_axis_titles_fit_the_plot_and_stay_legible(size):
+    """Titles were shrunk to fit with no floor (a 5 px y title)."""
+    import manim as M
+
+    from ieeVisualizer.animation import manim_adapter as MA
+    from ieeVisualizer.spec import Axis
+
+    anim = _fm("a*x", (0.0, 1.0), {"y": Axis(label="a very long y axis label that is long",
+                                              unit="EUR")})
+    req = AnimationRequest(format="gif", width=size[0], height=size[1], units="px", dpi=size[2])
+    try:
+        scene, ax, _, plot = _scene_of(anim, req)
+    except AnimationError as e:
+        assert e.issues[0].code == "frame_too_small"
+        return
+    (y0, y1) = ax.c2p(0, ax.y_range[0])[1], ax.c2p(0, ax.y_range[1])[1]
+    ytitle = next(m for m in scene.mobjects if isinstance(m, M.Text)
+                  and m.text.replace(" ", "") == plot.labels[1].replace(" ", ""))
+    assert ytitle.height <= (y1 - y0) + 1e-6
+    assert ytitle.font_size >= MA.MIN_TEXT_PT * MA.FONT_PER_PT - 1e-6
+
+
+def test_an_unknown_adapter_name_is_a_structured_error():
+    from ieeVisualizer.animation import render_animation
+    from ieeVisualizer.render import CapabilityError
+
+    with pytest.raises(CapabilityError) as e:
+        render_animation(_base(), dataclasses.replace(GIF, adapter="nope"))
+    assert e.value.issues[0].code == "unknown_adapter" and "nope" in str(e.value)
+
+
+def test_matplotlibs_empty_state_is_an_animation_error_naming_the_state():
+    from ieeVisualizer.animation import ParameterSweep, render_animation
+
+    anim = dataclasses.replace(_fm("sqrt(a - x**2)", (-3.0, 3.0), {}, 101),
+                               timeline=ParameterSweep(parameter="a", values=[-1.0, 4.0]))
+    with pytest.raises(AnimationError) as e:
+        render_animation(anim, GIF)
+    i = e.value.issues[0]
+    assert (i.code, i.path) == ("empty_series", "/figure/layers/0") and "a = -1" in i.message

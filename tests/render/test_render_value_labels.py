@@ -276,8 +276,9 @@ def many_labels():
 
 
 def test_value_labels_omitted_describes_the_layout_that_ships():
-    # at this size the labels only just do not fit
-    spec, request = many_labels(), RenderRequest(width=4.5, height=3.0, dpi=100)
+    # at this size the labels only just do not fit (4.5 in until the y axis
+    # stopped being titled "a" over the bars of a, b and c)
+    spec, request = many_labels(), RenderRequest(width=4.1, height=3.0, dpi=100)
     built, _ = drawn(spec, request)
     codes = [w.code for w in built.warnings]
     assert hidden_labels(built) and codes.count("value_labels_omitted") == 1
@@ -291,7 +292,7 @@ def test_value_labels_omitted_describes_the_layout_that_ships():
             built.figure.draw_without_rendering()
         codes = [w.code for w in built.warnings]
         assert codes.count("value_labels_omitted") == (1 if hidden_labels(built) else 0)
-        assert bool(hidden_labels(built)) == (width < 4.5), width
+        assert bool(hidden_labels(built)) == (width < 4.1), width
 
 
 def hidden_labels(built):

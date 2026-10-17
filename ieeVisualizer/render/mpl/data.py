@@ -221,8 +221,13 @@ def infer_axes(spec: FigureSpec, warnings: list[RenderWarning]) -> dict[str, Axi
     kinds: dict[str, dict[str, str]] = {k: {} for k in keys}  # axis -> {path: kind}
     aware: dict[str, list[tuple[str, Any]]] = {k: [] for k in keys}
     bound_cols: dict[str, list[Column]] = {k: [] for k in keys}
+    #: what each layer would title each axis with (a column, its title, a
+    #: function's variable, name or expression)
+    named: dict[str, list[str]] = {k: [] for k in keys}
 
     for i, axis, enc, col, data, ch in _bound(spec):
+        if ch == axis:  # an interval's bounds (y_lower, y_upper) do not name the axis
+            named[axis].append(enc.title or enc.field)
         info = infos[axis]
         bound_cols[axis].append(col)
         p = f"/layers/{i}/encoding/{ch}"
@@ -248,13 +253,21 @@ def infer_axes(spec: FigureSpec, warnings: list[RenderWarning]) -> dict[str, Axi
         if isinstance(m, FunctionMark) and m.expression is not None:
             for axis, var in zip(keys, m.variables):
                 kinds[axis][f"/layers/{i}/expression"] = "numeric"
+                named[axis].append(var)
                 if infos[axis].label_column is None:
                     infos[axis].label_column = var
             out_axis = keys[len(m.variables)] if len(m.variables) < len(keys) else None
+            if out_axis is not None:
+                named[out_axis].append(m.name or m.expression)
             if out_axis is not None and infos[out_axis].label_column is None:
                 infos[out_axis].label_column = m.name or m.expression
         if isinstance(m, HistogramMark):
             infos["y"].derived_label = "Density" if m.density else "Count"
+    for axis, names in named.items():
+        # an axis holding several layers that would title it differently is
+        # never titled by one of them (an explicit axis label still applies)
+        if len(set(names)) > 1:
+            infos[axis].label_column = infos[axis].label_title = None
 
     for axis, found in kinds.items():
         scale = spec.axes[axis].scale if axis in spec.axes else None

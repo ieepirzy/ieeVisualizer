@@ -21,7 +21,7 @@ import math
 
 import numpy as np
 
-from ..render.base import RenderWarning, issue
+from ..render.base import RenderError, RenderWarning, issue
 from ..render.mpl import CAPABILITIES as FIGURE_CAPABILITIES
 from ..render.mpl import MatplotlibAdapter
 from ..render.mpl.adapter import _dedupe
@@ -166,7 +166,7 @@ class MatplotlibAnimationAdapter:
         ranges: dict[str, list[float]] = {}
         req = request.frame_request()
 
-        def measure(spec: FigureSpec, keys) -> None:
+        def measure(spec: FigureSpec, keys, where: str = "the clip") -> None:
             try:
                 built = self._static.build_figure(spec, req)
             except RecursionError:  # text the layout engine cannot nest that deep
@@ -174,6 +174,10 @@ class MatplotlibAnimationAdapter:
                                             "the figure could not be laid out to fix its axis "
                                             "limits: its text or data nests too deeply.")]
                                      ) from None
+            except AnimationError:
+                raise
+            except RenderError as e:  # e.g. a state with no finite sample
+                raise state_error(e, where) from None
             for key in keys:
                 lo, hi = getattr(built.axes, f"get_{key}lim")()
                 r = ranges.setdefault(key, [lo, hi])
@@ -185,9 +189,11 @@ class MatplotlibAnimationAdapter:
             measure(full, whole)
         each = [k for k, _ in open_keys if k in per_frame]
         if each:
-            for spec in specs:
+            for st in fp.states:
+                if st.spec is None:
+                    continue
                 deadline.check("limits")
-                measure(spec, each)
+                measure(st.spec, each, f"state {st.index} ({st.label})")
                 deadline.count("states_limited")
         new_limits = {}
         for key, have in open_keys:
@@ -309,6 +315,10 @@ class _Drawn:
             raise AnimationError([issue("", "frame_not_drawable",
                                         f"state {s.index} ({s.label}) could not be drawn: "
                                         "its text or data nests too deeply.")]) from None
+        except AnimationError:
+            raise
+        except RenderError as e:  # e.g. a state with no finite sample
+            raise state_error(e, f"state {s.index} ({s.label})") from None
         for wn in res.warnings:
             self._per_state.setdefault((wn.code, wn.message, wn.path), []).append(s.index)
         return res.content, list(res.warnings)
@@ -439,3 +449,10 @@ def no_data_png(label: str, request: AnimationRequest, theme: str | None = None)
 
 
 __all__ = ["ADAPTER_NAME", "ADAPTER_VERSION", "MatplotlibAnimationAdapter", "no_data_png"]
+
+
+def state_error(e: RenderError, where: str) -> AnimationError:
+    """A static render's refusal of one state, as an animation error: its
+    paths under ``/figure``, its messages naming the state."""
+    return AnimationError([issue("/figure" + i.path, i.code, f"{where}: {i.message}",
+                                 i.severity) for i in e.issues])
