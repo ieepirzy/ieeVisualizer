@@ -150,10 +150,16 @@ of one colour (a fan chart) get legend swatches of the composited opacity
 row overshooting does not change it), so each swatch is the colour of the
 bulk of the region it names. In a profile (phone/tablet) render an interval
 entry too wide for a one-column legend inside the figure is wrapped: a
-percentile statement before its "(80 %)", then a long series name after
-its colon. Other renders are not wrapped. The timeseries template's
-connector row (`connect_forecast`) is an observation, so its missing bounds
-are not counted in `interval_bounds_missing`. Each interval's legend entry states its kind and level ("95 %
+percentile statement at " percentiles (", before its "(80 %)", then a
+long series name at the ": " right before the interval statement, so a
+series name with its own colon or parentheses ("Region: North (EUR)") stays
+whole. Other renders are not wrapped. The rows the timeseries template
+copied into its forecast dataset so the lines join (`connect_forecast`,
+recorded exactly in `metadata.template.forecast.boundary_rows`) are
+observations, so their missing bounds are not counted in
+`interval_bounds_missing`; every other forecast row without both bounds is,
+including rows next to the connector, forecasts overlapping actuals and
+ragged series. Each interval's legend entry states its kind and level ("95 %
 prediction interval", with the theme's decimal separator: "97,5 %"), and a
 figure with an interval always has a legend; with `legend.show` false the
 caption gains "Intervals: A: 95 % confidence interval; B: ..." instead,

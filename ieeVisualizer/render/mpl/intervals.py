@@ -49,6 +49,7 @@ def interval_text(ctx: Any, m: Any, rows: Any = None) -> str:
     text = mark_interval_label(m, decimal)
     if asymmetric(ctx, m, rows):
         text += ASYMMETRIC_NOTE
+    ctx.interval_statements.add(text)
     return text
 
 
@@ -66,7 +67,7 @@ def asymmetric(ctx: Any, m: Any, rows: Any = None) -> bool:
 
 #: Where a profile (phone/tablet) render breaks a percentile interval's
 #: legend label: before its level, "P10–P90 percentiles\n(80 %)".
-PERCENTILE_BREAK = " ("
+PERCENTILE_BREAK = " percentiles ("
 #: Points kept free for the legend frame's line and rounding.
 FRAME_PT = 4.0
 
@@ -80,12 +81,16 @@ def _text_width_pt(text: str, size: float) -> float:
                for line in text.split("\n"))
 
 
-def narrow_label(label: str, width_pt: float, size: float) -> str:
+def narrow_label(label: str, width_pt: float, size: float,
+                 statements: Any = ()) -> str:
     """An interval's legend label for a narrow (profile) render, wrapped
     only when it is wider than a one-column legend can be within the figure
     (the figure width less the legend's handle, paddings and frame, from the
-    legend rcParams): a percentile interval puts its level on the next line,
-    then a long ``"<series>: <statement>"`` puts the series on its own line."""
+    legend rcParams): a percentile statement puts its level on the next line
+    (at ``" percentiles ("``), then a long ``"<series>: <statement>"`` puts
+    the series on its own line, split at the ``": "`` right before the
+    statement (one of ``statements``), so a series name with its own colon
+    or parentheses ("Region: North (EUR)") is never split."""
     from matplotlib import rcParams
 
     ems = (rcParams["legend.handlelength"] + rcParams["legend.handletextpad"]
@@ -93,12 +98,14 @@ def narrow_label(label: str, width_pt: float, size: float) -> str:
     room = width_pt - ems * size - FRAME_PT
     if _text_width_pt(label, size) <= room:
         return label
-    head, sep, tail = label.partition(PERCENTILE_BREAK)
-    if sep and head.endswith("percentiles"):
-        label = f"{head}\n{sep.lstrip()}{tail}"
-    name, colon, rest = label.partition(": ")
-    if colon and _text_width_pt(label, size) > room:
-        label = f"{name}:\n{rest}"
+    k = label.rfind(PERCENTILE_BREAK)
+    if k >= 0:
+        cut = k + len(PERCENTILE_BREAK) - 2  # after "percentiles"
+        label = f"{label[:cut]}\n{label[cut + 1:]}"
+    starts = [label.rfind(": " + st[:8]) for st in statements if st]
+    k = max(starts, default=-1)
+    if k > 0 and _text_width_pt(label, size) > room:
+        label = f"{label[:k + 1]}\n{label[k + 2:]}"
     return label
 
 
@@ -128,26 +135,22 @@ def _missing(ctx: Any, i: int, placed: np.ndarray, lo: Any, hi: Any) -> None:
 
 
 def connector_rows(ctx: Any, m: Any) -> np.ndarray:
-    """Rows of a forecast layer that the timeseries template copied from the
-    observed data so the lines join (``connect_forecast``; recorded as
-    ``metadata.template.forecast.shared_boundary``): an observation, which
-    has no forecast interval, so its missing bounds are not a gap."""
+    """Rows of the timeseries template's ``forecast`` dataset that it copied
+    from the observed data so the lines join (``connect_forecast``), exactly
+    as it recorded them in ``metadata.template.forecast.boundary_rows``: an
+    observation, which has no forecast interval, so its missing bounds are
+    not a gap. Every other row with a missing bound is reported."""
     snap = _m._snapshot(ctx, m)
     n = len(snap.columns[m.encoding["x"].field].values)
     out = np.zeros(n, dtype=bool)
     meta = ctx.spec.metadata.get("template") if isinstance(ctx.spec.metadata, dict) else None
     fc = meta.get("forecast") if isinstance(meta, dict) else None
-    if m.role != "forecast" or not (isinstance(fc, dict) and fc.get("shared_boundary")):
+    rows = fc.get("boundary_rows") if isinstance(fc, dict) else None
+    if m.role != "forecast" or m.data != "forecast" or not isinstance(rows, list):
         return out
-    xname = m.encoding["x"].field
-    observed = set()
-    for o in ctx.spec.layers:
-        ds = ctx.spec.datasets.get(o.data) if o.role != "forecast" else None
-        col = getattr(ds, "columns", {}).get(xname) if ds is not None else None
-        if col is not None:
-            observed |= {v for v in col.values if v is not None}
-    for k, v in enumerate(snap.columns[xname].values):
-        out[k] = v in observed
+    for k in rows:
+        if isinstance(k, int) and not isinstance(k, bool) and 0 <= k < n:
+            out[k] = True
     return out
 
 
@@ -238,6 +241,7 @@ def bar_intervals(ctx: Any, i: int, m: Any, drawn: list[tuple[Any, np.ndarray, A
         return []
     grouped = len(drawn) > 1
     text = mark_interval_label(m, ctx.locale.decimal if ctx.locale is not None else ".")
+    ctx.interval_statements.add(text)
     first = _qualified(m.name if grouped else drawn[0][2], text)
     if grouped and len(with_iv) < len(drawn):  # name the series that have one
         first += f" ({', '.join(str(d[3]) for d in with_iv)})"

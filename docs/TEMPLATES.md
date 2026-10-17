@@ -105,7 +105,10 @@ legend ("80 % prediction interval (forecast)"). Several intervals make a fan
 chart: they are ordered widest level first. Bounds are copied as given; a
 segment with no row holding both bounds gets no band; a lower bound above
 its upper bound is `invalid_column_values`. The layers are recorded in
-`metadata["template"]["intervals"]`. Passing `lower_column` to 2.0.0 is
+`metadata["template"]["intervals"]`; with `connect_forecast`, the row
+indexes of the observed rows copied into dataset `forecast` are recorded in
+`metadata["template"]["forecast"]["boundary_rows"]` (so a renderer exempts
+exactly those from missing-bound warnings). Passing `lower_column` to 2.0.0 is
 `unknown_parameter` with a message saying how to state the interval.
 
 Example payload (2.0.0, abridged): `"intervals": [{"lower": "p10", "upper":

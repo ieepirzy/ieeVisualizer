@@ -51,6 +51,16 @@ class TimeseriesTemplate2(TimeseriesTemplate):
     )
     _bands_key = "intervals"
 
+    def _boundary_meta(self, fmeta: dict[str, Any], forecast: list[int],
+                       boundary: list[int]) -> None:
+        """``boundary_rows``: the indexes, in dataset ``forecast``, of the
+        observed rows copied there so the lines join (``connect_forecast``).
+        A renderer exempts exactly these from ``interval_bounds_missing``:
+        an observation has no forecast interval."""
+        if boundary:
+            copies = set(boundary)
+            fmeta["boundary_rows"] = [k for k, i in enumerate(forecast) if i in copies]
+
     def _check_params(self, params: dict[str, Any], issues: Issues) -> dict[str, Any]:
         resolved = super()._check_params(params, issues)
         for k, item in enumerate(issues.items):

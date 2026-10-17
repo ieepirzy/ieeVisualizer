@@ -178,6 +178,11 @@ def check_intervals(c: Any, p: str, m: Mark) -> None:
         _check_bounds(c, p, m)
 
 
+def _central_tails_print_alike(level: float) -> bool:
+    tail = (Decimal(1) - Decimal(repr(float(level)))) / 2
+    return _pct(float(tail), ".") == _pct(float(1 - tail), ".")
+
+
 def metadata_problems(kind: Any, level: Any, multiplier: Any,
                       quantiles: Any = None) -> list[tuple[str, str, str]]:
     """``(field, code, message)`` for each problem with an interval's stated
@@ -235,6 +240,12 @@ def metadata_problems(kind: Any, level: Any, multiplier: Any,
                         f"interval level {level!r} cannot be written distinctly from 0 % or "
                         "100 %" + (" (or its tails from P0/P100)" if kind == "quantile" else "")
                         + "; a figure would claim the extreme. Round it upstream."))
+        elif kind == "quantile" and _central_tails_print_alike(level):
+            tail = float((Decimal(1) - Decimal(repr(float(level)))) / 2)
+            out.append(("level", "invalid_interval_level",
+                        f"interval level {level!r} is so small that its two tails are both "
+                        f"written {_pct(tail, '.')}: the label could not tell them apart. "
+                        "Round it upstream."))
     elif level is not None and kind not in LEVEL_KINDS:
         out.append(("level", "unexpected_interval_level",
                     f"a {kind} interval has no coverage level; remove the level"
