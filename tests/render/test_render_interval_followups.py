@@ -53,9 +53,11 @@ def test_template_records_exactly_its_boundary_copies():
     t = templates.get("timeseries")
     spec = t.build_payload(t.example())
     assert spec.metadata["template"]["forecast"]["boundary_rows"] == [0]
-    old = templates.get("timeseries", "1.0.0")
-    assert "boundary_rows" not in old.build_payload(old.example()).metadata["template"][
-        "forecast"]
+    assert t.version == "2.0.1"
+    for version in ("1.0.0", "2.0.0"):  # released versions build exactly what they did
+        old = templates.get("timeseries", version)
+        assert "boundary_rows" not in old.build_payload(old.example()).metadata["template"][
+            "forecast"]
 
 
 @pytest.mark.parametrize("label, lines", [

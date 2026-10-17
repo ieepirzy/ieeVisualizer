@@ -51,15 +51,6 @@ class TimeseriesTemplate2(TimeseriesTemplate):
     )
     _bands_key = "intervals"
 
-    def _boundary_meta(self, fmeta: dict[str, Any], forecast: list[int],
-                       boundary: list[int]) -> None:
-        """``boundary_rows``: the indexes, in dataset ``forecast``, of the
-        observed rows copied there so the lines join (``connect_forecast``).
-        A renderer exempts exactly these from ``interval_bounds_missing``:
-        an observation has no forecast interval."""
-        if boundary:
-            copies = set(boundary)
-            fmeta["boundary_rows"] = [k for k, i in enumerate(forecast) if i in copies]
 
     def _check_params(self, params: dict[str, Any], issues: Issues) -> dict[str, Any]:
         resolved = super()._check_params(params, issues)
@@ -162,3 +153,20 @@ class TimeseriesTemplate2(TimeseriesTemplate):
         payload["params"]["caption"] = "Forecast and bands: model output."
         del payload["params"]["target"]  # fewer legend rows: the fan stays legible on a phone
         return payload
+
+
+class TimeseriesTemplate201(TimeseriesTemplate2):
+    """``timeseries`` 2.0.1: 2.0.0 plus ``boundary_rows`` in the forecast
+    metadata (non-breaking; 2.0.0 stays registered and builds what it did)."""
+
+    version = "2.0.1"
+
+    def _boundary_meta(self, fmeta: dict[str, Any], forecast: list[int],
+                       boundary: list[int]) -> None:
+        """``boundary_rows``: the indexes, in dataset ``forecast``, of the
+        observed rows copied there so the lines join (``connect_forecast``).
+        A renderer exempts exactly these from ``interval_bounds_missing``:
+        an observation has no forecast interval."""
+        if boundary:
+            copies = set(boundary)
+            fmeta["boundary_rows"] = [k for k, i in enumerate(forecast) if i in copies]

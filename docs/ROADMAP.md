@@ -303,6 +303,13 @@ reviewable branches; order follows dependencies, not importance.
 
 ## Breaking changes
 
+* **`timeseries` 2.0.1 (not breaking):** adds
+  `metadata.template.forecast.boundary_rows`, the forecast-dataset rows that
+  `connect_forecast` copied from the observations; the renderer exempts only
+  those from `interval_bounds_missing`. 2.0.0 stays registered and keeps its
+  `spec_hash` for the same inputs; unversioned calls now resolve to 2.0.1,
+  so unversioned specs record `version: "2.0.1"`.
+
 * **`timeseries` 2.0.0** (branch `claude/uncertainty-marks`): the template's
   `lower_column`/`upper_column` (two unlabelled dotted bound lines) are
   removed in favour of `intervals=[{lower, upper, kind, level?, ...}]`, whose
