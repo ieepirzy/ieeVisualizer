@@ -109,3 +109,79 @@ def test_frames_per_value_repeats_each_state():
     a = weekly_anim("current", data=weekly_data(None))
     a.timeline = FrameColumn(dataset="b", column="week", frames_per_value=2)
     assert plan(a).frames == [0, 0, 1, 1, 2, 2, 3, 3]
+
+
+# ------------------------------------------------- distinct frame labels
+
+
+def test_distinct_values_get_distinct_labels_with_at_most_three_more_digits():
+    from ieeVisualizer.animation.frames import state_labels
+
+    assert state_labels("a", [1.0001, 1.0002]) == ["a = 1.0001", "a = 1.0002"]
+    assert state_labels("a", [1.001, 1.002, 1.003]) == ["a = 1.001", "a = 1.002", "a = 1.003"]
+    # ordinary values keep their short labels, byte for byte
+    assert state_labels("phase", [0.0, 1.5707963, 3.14159265]) == \
+        ["phase = 0", "phase = 1.571", "phase = 3.142"]
+
+
+def test_sweep_and_frame_column_labels_tell_close_values_apart():
+    from anim_helpers import SMALL
+
+    from ieeVisualizer.animation import (
+        AnimationSpec,
+        FrameColumn,
+        ParameterSweep,
+        render_animation,
+    )
+    from ieeVisualizer.spec import DataSnapshot, FigureSpec, FunctionMark, LineMark
+
+    sweep = AnimationSpec(timeline=ParameterSweep(parameter="a", values=[1.0001, 1.0002]),
+                          figure=FigureSpec(layers=[FunctionMark(
+                              expression="a*sin(x)", variables=["x"], domain={"x": [0.0, 6.0]},
+                              samples=20, parameters={"a": 1.0})]), fps=2)
+    res = render_animation(sweep, SMALL)
+    assert [s["label"] for s in res.states] == ["a = 1.0001", "a = 1.0002"]
+    ds = DataSnapshot.from_columns({"t": [1.0001, 1.0001, 1.0002, 1.0002],
+                                    "x": [0.0, 1.0, 0.0, 1.0], "y": [1.0, 2.0, 2.0, 3.0]})
+    fc = AnimationSpec(timeline=FrameColumn(dataset="d", column="t"), fps=2,
+                       figure=FigureSpec(datasets={"d": ds}, layers=[LineMark(
+                           data="d", encoding={"x": "x", "y": "y"})]))
+    labels = [s["label"] for s in render_animation(fc, SMALL).states]
+    assert labels == ["t: 1.0001", "t: 1.0002"]
+
+
+def test_labels_that_still_collide_are_reported_not_escalated():
+    from anim_helpers import SMALL
+
+    from ieeVisualizer.animation import AnimationSpec, ParameterSweep, render_animation
+    from ieeVisualizer.spec import FigureSpec, FunctionMark
+
+    sweep = AnimationSpec(timeline=ParameterSweep(parameter="a",
+                                                  values=[1 + 1e-12, 1 + 2e-12, 2.0]),
+                          figure=FigureSpec(layers=[FunctionMark(
+                              expression="a*sin(x)", variables=["x"], domain={"x": [0.0, 6.0]},
+                              samples=20, parameters={"a": 1.0})]), fps=2)
+    res = render_animation(sweep, SMALL)
+    assert [s["label"] for s in res.states][:2] == ["a = 1", "a = 1"]  # at most .7g
+    amb = [w for w in res.warnings if w.code == "frame_labels_ambiguous"]
+    assert len(amb) == 1 and "states [0, 1]" in amb[0].message
+
+
+def test_ordinary_animations_are_unchanged_byte_for_byte():
+    """The labels of existing specs did not change, so neither did their
+    hashes or bytes (compared with the formatter this replaces)."""
+    from anim_helpers import SMALL, sine_anim, weekly_anim
+
+    from ieeVisualizer.animation import frames as F
+    from ieeVisualizer.animation import render_animation
+
+    for anim in (sine_anim(), weekly_anim("cumulative")):
+        new = render_animation(anim, SMALL)
+        old_texts = F.value_texts
+        try:  # the old formatter: always .4g, nothing escalated
+            F.value_texts = lambda values, numbers=False: (
+                [format(v, ".4g") if numbers else F._show(v) for v in values], [])
+            old = render_animation(anim, SMALL)
+        finally:
+            F.value_texts = old_texts
+        assert new.content == old.content and new.states == old.states

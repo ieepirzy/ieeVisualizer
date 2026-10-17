@@ -169,12 +169,59 @@ def frame_keys(snapshot: DataSnapshot, column: str) -> tuple[list[Any], list[Any
     return fi.keys, fi.values, fi.nulls
 
 
-def _show(v: Any) -> str:
+def _show(v: Any, digits: int = 4) -> str:
     if isinstance(v, str) and v.endswith("T00:00:00"):
         return v[:-9]
     if isinstance(v, float):
-        return format(v, ".4g")
+        return format(v, f".{digits}g")
     return str(v)
+
+
+#: Significant digits of a numeric frame label, and how many more are added
+#: while two distinct values would read the same ("in most cases 3 orders of
+#: magnitude is plenty"); past that, ``frame_labels_ambiguous`` says so.
+LABEL_DIGITS = 4
+LABEL_EXTRA_DIGITS = 3
+
+
+def value_texts(values: list[Any], numbers: bool = False) -> tuple[list[str], list[list[int]]]:
+    """``(text of each value, groups of states still sharing a text)``.
+    Numbers (every value when ``numbers``, else floats) get
+    :data:`LABEL_DIGITS` significant digits, plus one more at a time, up to
+    :data:`LABEL_EXTRA_DIGITS` more, while two distinct values share a text;
+    values that never collide keep exactly their ``.4g`` text."""
+
+    def text(v, d):
+        return format(v, f".{d}g") if numbers else _show(v, d)
+
+    for d in range(LABEL_DIGITS, LABEL_DIGITS + LABEL_EXTRA_DIGITS + 1):
+        texts = [text(v, d) for v in values]
+        groups: dict[str, list[int]] = {}
+        for i, t in enumerate(texts):
+            groups.setdefault(t, []).append(i)
+        clash = [idx for idx in groups.values()
+                 if len({repr(values[i]) for i in idx}) > 1]
+        if not clash:
+            return texts, []
+    return texts, clash
+
+
+def state_labels(parameter: str, values: list[Any]) -> list[str]:
+    """The label of each sweep state, ``parameter = value``: distinct values
+    get distinct labels where :func:`value_texts` can tell them apart."""
+    return [f"{parameter} = {t}" for t in value_texts(values, numbers=True)[0]]
+
+
+def ambiguous_labels(values: list[Any], clash: list[list[int]],
+                     path: str = "/timeline") -> list[ValidationIssue]:
+    """``frame_labels_ambiguous`` for each group of distinct states whose
+    labels read the same even with the extra digits."""
+    return [ValidationIssue(
+        path, "frame_labels_ambiguous",
+        f"states {idx} have distinct values ({', '.join(repr(values[i]) for i in idx)}) that "
+        f"read the same even with {LABEL_DIGITS + LABEL_EXTRA_DIGITS} significant digits; "
+        "their frames are labelled alike. Use values further apart.", "warning")
+        for idx in clash]
 
 
 def _complete_rows(spec: FigureSpec, mark, snap: DataSnapshot) -> bool:
@@ -314,10 +361,13 @@ def plan(anim: AnimationSpec, resolver=None, *, deadline=None, base: FigureSpec 
     issues: list[ValidationIssue] = []
     states: list[FrameState] = []
     if isinstance(tl, ParameterSweep):
-        for i, v in enumerate(sweep_values(tl, anim.fps)):
+        values = sweep_values(tl, anim.fps)
+        texts, clash = value_texts(values, numbers=True)
+        issues.extend(ambiguous_labels(values, clash))
+        for i, v in enumerate(values):
             if deadline is not None:
                 deadline.check("plan")
-            label = f"{tl.parameter} = {format(v, '.4g')}"
+            label = f"{tl.parameter} = {texts[i]}"
             if isinstance(tl.target, MarkTarget):
                 mark = base.layers[tl.target.layer]
                 assert isinstance(mark, FunctionMark)
@@ -333,16 +383,17 @@ def plan(anim: AnimationSpec, resolver=None, *, deadline=None, base: FigureSpec 
     else:
         fi = index or resolved_frame_index(base, tl)
         _guard(anim, len(fi.keys), resolved=True)
+        texts, clash = value_texts(fi.values)
+        issues.extend(ambiguous_labels(fi.values, clash))
         for k, v in enumerate(fi.values):
             if deadline is not None:
                 deadline.check("plan")
             if tl.display == "current":
-                label = f"{tl.column}: {_show(v)}"
+                label = f"{tl.column}: {texts[k]}"
             elif tl.display == "cumulative":
-                label = f"{tl.column}: through {_show(v)}"
+                label = f"{tl.column}: through {texts[k]}"
             else:
-                first = fi.values[max(0, k - tl.window + 1)]
-                label = f"{tl.column}: {_show(first)} to {_show(v)}"
+                label = f"{tl.column}: {texts[max(0, k - tl.window + 1)]} to {texts[k]}"
             spec, omitted = _frame_spec(base, tl, fi, k)
             for i in omitted:
                 issues.append(ValidationIssue(

@@ -73,7 +73,13 @@ from .base import (
     output_timing,
     size_warnings,
 )
-from .frames import sweep_values, template_params
+from .frames import (
+    ambiguous_labels,
+    state_labels,
+    sweep_values,
+    template_params,
+    value_texts,
+)
 from .limits import frame_mapping, frame_total, poster_index, sweep_state_count
 from .spec import AnimationSpec, ParameterSweep, TemplateTarget
 
@@ -306,8 +312,9 @@ def _plan(anim: AnimationSpec, request: AnimationRequest):
     tl: ParameterSweep = anim.timeline
     values = sweep_values(tl, anim.fps)
     # exactly the result's state labels (the ones Matplotlib draws)
-    labels = [f"{tl.parameter} = {format(v, '.4g')}" for v in values]
-    warnings: list[RenderWarning] = []
+    labels = state_labels(tl.parameter, values)
+    warnings = [RenderWarning(i.code, i.message, i.path) for i in
+                ambiguous_labels(values, value_texts(values, numbers=True)[1])]
     theme = _theme(request.theme or (anim.figure.theme if anim.figure else None), warnings)
     try:
         if isinstance(tl.target, TemplateTarget):

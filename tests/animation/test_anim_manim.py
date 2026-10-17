@@ -781,3 +781,16 @@ def test_an_unimportable_manim_is_reported_unmet(monkeypatch):
     monkeypatch.setattr(MA, "import_problem", lambda: "ImportError: libpango missing")
     assert any("not importable: ImportError: libpango" in u
                for u in ManimAdapter().unmet(_base(), GIF))
+
+
+@needs_manim
+def test_manim_uses_the_shared_distinct_labels():
+    from ieeVisualizer.animation import ParameterSweep
+
+    anim = dataclasses.replace(_base(), timeline=ParameterSweep(parameter="a",
+                                                                values=[1.0001, 1.0002]))
+    assert [s["label"] for s in ManimAdapter().render(anim, GIF).states] == \
+        ["a = 1.0001", "a = 1.0002"]
+    anim = dataclasses.replace(_base(), timeline=ParameterSweep(parameter="a",
+                                                                values=[1 + 1e-12, 1 + 2e-12]))
+    assert "frame_labels_ambiguous" in [w.code for w in ManimAdapter().render(anim, GIF).warnings]
