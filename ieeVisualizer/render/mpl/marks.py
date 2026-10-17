@@ -95,6 +95,8 @@ class DrawContext:
     plot_growth: dict[str, float] = field(default_factory=dict)
     #: Text annotations drawn (profile renders move one off a value label).
     text_annotations: list[Any] = field(default_factory=list)
+    #: Profile renders: annotations on a category row that wrapping made taller.
+    row_wrapped: list[Any] = field(default_factory=list)
     _color_i: int = 0
     _series: dict[tuple, _Series] = field(default_factory=dict)
     _color_of: dict[int, int | None] = field(default_factory=dict)
