@@ -926,6 +926,8 @@ def test_series_colours_follow_matplotlib():
     (c, alpha, _), = _styles([L("sin(x)", style={"color": "#ff000080"})], pal, [])
     assert c == "#ff0000" and abs(alpha - 128 / 255) < 1e-9
 
+
+@needs_manim
 def test_manim_uses_the_shared_distinct_labels():
     from ieeVisualizer.animation import ParameterSweep
 
