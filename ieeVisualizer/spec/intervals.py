@@ -34,9 +34,6 @@ _SPREAD_TEXT = {"standard-error": "standard error", "standard-deviation": "stand
 _NUMERIC = ("float", "int")
 
 
-#: Between a number and "%" (and after "±"): a no-break space, so a caption
-#: or legend is never wrapped between "95" and "%".
-NBSP = "\u00a0"
 #: Most decimals a number in a label is written with (beyond float noise).
 MAX_PLACES = 12
 
@@ -87,16 +84,19 @@ def indistinct_percent(fraction: float) -> bool:
 
 
 def interval_label(kind: str, level: float | None = None, multiplier: float | None = None,
-                   decimal: str = ".", quantiles: list[float] | None = None) -> str:
-    """What an interval is, in words: ``"95 % prediction interval"``,
-    ``"P10–P90 percentiles (80 %)"`` (a quantile interval with a level:
+                   decimal: str = ".", quantiles: list[float] | None = None,
+                   percent_sep: str = "") -> str:
+    """What an interval is, in words: ``"95% prediction interval"``,
+    ``"P10–P90 percentiles (80%)"`` (a quantile interval with a level:
     central, equal-tailed), ``"P5–P75 percentiles"``, ``"min-max range"``,
-    ``"±1 standard error"``. ``decimal`` is the decimal separator (``","``
-    writes ``"97,5 %"``); "%" follows a no-break space. Numbers are written
+    ``"±1 standard error"``. ``decimal`` and ``percent_sep`` are the locale's
+    decimal separator and what goes between a number and "%" (the house
+    style: none in English, ``"95%"``; a no-break space in fi-FI, ``","`` and
+    NBSP writing ``"97,5 %"``), as the theme's other numbers. Numbers are written
     exactly up to 4 decimals, rounded beyond that but never onto a whole
     number they are not (levels that would need more than
     :data:`MAX_PLACES` decimals for that are refused by validation)."""
-    pct = f"{NBSP}%"
+    pct = f"{percent_sep}%"
     if kind == "quantile":
         if quantiles is not None:
             lo, hi = quantiles
@@ -112,12 +112,12 @@ def interval_label(kind: str, level: float | None = None, multiplier: float | No
     return "min-max range"
 
 
-def mark_interval_label(m: Mark, decimal: str = ".") -> str | None:
+def mark_interval_label(m: Mark, decimal: str = ".", percent_sep: str = "") -> str | None:
     """:func:`interval_label` of a mark's interval, or None if it has none."""
     if not has_interval(m):
         return None
     return interval_label(m.interval_kind, m.interval_level, m.interval_multiplier, decimal,
-                          getattr(m, "interval_quantiles", None))
+                          getattr(m, "interval_quantiles", None), percent_sep)
 
 
 #: Relative difference of the two half-widths above which a ±k SE/SD bar

@@ -101,17 +101,19 @@ upper], checked as the spec checks them (paths
 `/params/intervals/<k>/kind` etc.). Each becomes a `band` layer per segment
 (observed / forecast rows; forecast bands are forecast-role, hatched),
 drawn before the value line in its colour (`color_of`) and labelled in the
-legend ("80 % prediction interval (forecast)"). Several intervals make a fan
+legend ("80% prediction interval (forecast)"). Several intervals make a fan
 chart: they are ordered widest level first. Bounds are copied as given; a
 segment with no row holding both bounds gets no band; a lower bound above
 its upper bound is `invalid_column_values`. The layers are recorded in
 `metadata["template"]["intervals"]`. **2.0.1** (non-breaking, the default
 since it was published; 2.0.0 stays registered and builds exactly what it
-did): with `connect_forecast`, the row indexes of the observed rows copied
-into dataset `forecast` are also recorded in
-`metadata["template"]["forecast"]["boundary_rows"]`, and a renderer exempts
-exactly those rows from missing-bound warnings. A spec without the key (2.0.0
-or older) gets no exemption: every forecast row without both bounds warns. Passing `lower_column` to 2.0.0 is
+did): with `connect_forecast`, the observed rows copied into dataset
+`forecast` are also recorded, by identity (`{"x": <time>}`, plus `"series"`
+in long format), in `metadata["template"]["forecast"]["boundary_rows"]`. A
+renderer exempts a row from missing-bound warnings only while it has such
+an identity and is still a copy of an observed row; a 2.0.0 spec (no key)
+gets the same copy rule from its own split, so neither gains a false
+warning. Passing `lower_column` to 2.0.0 is
 `unknown_parameter` with a message saying how to state the interval.
 
 Example payload (2.0.0, abridged): `"intervals": [{"lower": "p10", "upper":

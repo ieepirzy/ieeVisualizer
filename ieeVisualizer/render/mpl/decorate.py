@@ -187,6 +187,15 @@ def set_time_axis(ctx: DrawContext, key: str, info: AxisInfo,
         fmt = {"formats": list(loc.date_formats),
                "zero_formats": list(loc.date_zero_formats or loc.date_formats),
                "offset_formats": list(loc.date_offset_formats or loc.date_formats)}
+    if ctx.min_pt:
+        # A profile (phone/tablet) render: matplotlib's default offset for
+        # day/month ticks is "2026-Nov", which on a small screen reads as if
+        # the whole axis were November. State only the year there; the
+        # months are on the ticks. (Other renders keep matplotlib's text.)
+        offsets = list(fmt.get("offset_formats") or
+                       mdates.ConciseDateFormatter(locator).offset_formats)
+        offsets[2] = offsets[1]  # day ticks: the year only (hours keep the date)
+        fmt["offset_formats"] = offsets
     obj.set_major_formatter(mdates.ConciseDateFormatter(locator, tz=info.tz, **fmt))
 
 

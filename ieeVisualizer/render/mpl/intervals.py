@@ -46,11 +46,17 @@ def interval_text(ctx: Any, m: Any, rows: Any = None) -> str:
     about the value in ``rows`` (the rows that entry draws; default all)
     -- validate warns ``interval_not_symmetric``."""
     decimal = ctx.locale.decimal if ctx.locale is not None else "."
-    text = mark_interval_label(m, decimal)
+    text = mark_interval_label(m, decimal, _percent_sep(ctx))
     if asymmetric(ctx, m, rows):
         text += ASYMMETRIC_NOTE
     ctx.interval_statements.add(text)
     return text
+
+
+def _percent_sep(ctx: Any) -> str:
+    """Between a number and "%": the theme locale's (none without one, as
+    the neutral locale writes "94.2%")."""
+    return getattr(ctx.locale, "percent_sep", "") if ctx.locale is not None else ""
 
 
 def asymmetric(ctx: Any, m: Any, rows: Any = None) -> bool:
@@ -98,14 +104,26 @@ def narrow_label(label: str, width_pt: float, size: float,
     room = width_pt - ems * size - FRAME_PT
     if _text_width_pt(label, size) <= room:
         return label
-    k = label.rfind(PERCENTILE_BREAK)
-    if k >= 0:
-        cut = k + len(PERCENTILE_BREAK) - 2  # after "percentiles"
-        label = f"{label[:cut]}\n{label[cut + 1:]}"
-    starts = [label.rfind(": " + st[:8]) for st in statements if st]
-    k = max(starts, default=-1)
-    if k > 0 and _text_width_pt(label, size) > room:
-        label = f"{label[:k + 1]}\n{label[k + 2:]}"
+    # where the statement starts: at the label's start, or after the last
+    # ": " that is followed by a known statement; the series name is before
+    at, stmt = -1, None
+    for st in filter(None, statements):
+        if label.startswith(st[:8]):
+            k = 0
+        else:
+            k = label.rfind(": " + st[:8])
+            k = k + 2 if k >= 0 else -1
+        if k > at:
+            at, stmt = k, st
+    if stmt is None:
+        return label
+    if PERCENTILE_BREAK in stmt:  # break only inside the statement itself
+        k = label.find(PERCENTILE_BREAK, at)
+        if k >= 0:
+            cut = k + len(PERCENTILE_BREAK) - 2  # after "percentiles"
+            label = f"{label[:cut]}\n{label[cut + 1:]}"
+    if at > 0 and _text_width_pt(label, size) > room:
+        label = f"{label[:at - 1]}\n{label[at:]}"
     return label
 
 
@@ -135,23 +153,74 @@ def _missing(ctx: Any, i: int, placed: np.ndarray, lo: Any, hi: Any) -> None:
 
 
 def connector_rows(ctx: Any, m: Any) -> np.ndarray:
-    """Rows of the timeseries template's ``forecast`` dataset that it copied
-    from the observed data so the lines join (``connect_forecast``), exactly
-    as it recorded them in ``metadata.template.forecast.boundary_rows``: an
-    observation, which has no forecast interval, so its missing bounds are
-    not a gap. Every other row with a missing bound is reported."""
+    """Rows of a forecast layer that are the timeseries template's connector
+    (``connect_forecast``): a copy of an observed row, an observation with
+    no forecast interval, so its missing bounds are not a gap.
+
+    A row qualifies only while it *is* such a copy -- equal, in every column
+    both datasets have, to a row of an observed layer's dataset -- so
+    windowing, filtering, reordering or prepending rows cannot exempt a real
+    forecast row. With the identities 2.0.1 records
+    (``metadata.template.forecast.boundary_rows``, ``{"x", "series"?}``) the
+    row must also have one of them; a 2.0.0 spec (no identities, but
+    ``shared_boundary``) uses the copy rule alone, plus x before the split
+    for ``forecast_from``. Without template forecast metadata nothing is
+    exempt."""
     snap = _m._snapshot(ctx, m)
-    n = len(snap.columns[m.encoding["x"].field].values)
+    xname = m.encoding["x"].field
+    n = len(snap.columns[xname].values)
     out = np.zeros(n, dtype=bool)
     meta = ctx.spec.metadata.get("template") if isinstance(ctx.spec.metadata, dict) else None
     fc = meta.get("forecast") if isinstance(meta, dict) else None
-    rows = fc.get("boundary_rows") if isinstance(fc, dict) else None
-    if m.role != "forecast" or m.data != "forecast" or not isinstance(rows, list):
+    if m.role != "forecast" or not (isinstance(fc, dict) and fc.get("shared_boundary")):
         return out
-    for k in rows:
-        if isinstance(k, int) and not isinstance(k, bool) and 0 <= k < n:
-            out[k] = True
+    idents = fc.get("boundary_rows")
+    sname = m.encoding["series"].field if "series" in m.encoding else None
+    if idents is not None:
+        if not isinstance(idents, list):
+            return out
+        wanted = {(d.get("x"), d.get("series")) for d in idents if isinstance(d, dict)}
+    else:
+        wanted = None
+    split = fc.get("split") if fc.get("method") == "forecast_from" else None
+    copies = _observed_rows(ctx, snap)
+    names = sorted(snap.columns)
+    for k in range(n):
+        x = snap.columns[xname].values[k]
+        if wanted is not None:
+            key = (x, snap.columns[sname].values[k] if sname else None)
+            if key not in wanted:
+                continue
+        elif split is not None and not _before(x, split, snap.columns[xname].dtype):
+            continue
+        row = {c: snap.columns[c].values[k] for c in names}
+        out[k] = any(all(obs.get(c, row[c]) == row[c] for c in names) and
+                     set(obs) & set(names) == set(names) for obs in copies)
     return out
+
+
+def _observed_rows(ctx: Any, snap: Any) -> list[dict[str, Any]]:
+    """Every row of the datasets observed (non-forecast) layers draw from."""
+    out = []
+    seen = set()
+    for o in ctx.spec.layers:
+        ds = ctx.spec.datasets.get(o.data) if o.role != "forecast" else None
+        if ds is None or ds is snap or id(ds) in seen or not hasattr(ds, "columns"):
+            continue
+        seen.add(id(ds))
+        cols = ds.columns
+        rows = len(next(iter(cols.values())).values) if cols else 0
+        out += [{c: cols[c].values[r] for c in cols} for r in range(rows)]
+    return out
+
+
+def _before(x: Any, split: Any, dtype: Any) -> bool:
+    from ...templates.timeseries import parse_time
+
+    try:
+        return parse_time(x, dtype) < parse_time(split, dtype)
+    except (TypeError, ValueError):
+        return False
 
 
 def _qualified(base: str | None, text: str) -> str:
@@ -240,7 +309,8 @@ def bar_intervals(ctx: Any, i: int, m: Any, drawn: list[tuple[Any, np.ndarray, A
     if not with_iv:
         return []
     grouped = len(drawn) > 1
-    text = mark_interval_label(m, ctx.locale.decimal if ctx.locale is not None else ".")
+    text = mark_interval_label(m, ctx.locale.decimal if ctx.locale is not None else ".",
+                               _percent_sep(ctx))
     ctx.interval_statements.add(text)
     first = _qualified(m.name if grouped else drawn[0][2], text)
     if grouped and len(with_iv) < len(drawn):  # name the series that have one

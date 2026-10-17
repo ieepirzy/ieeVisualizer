@@ -41,7 +41,7 @@ def band(**kw) -> dict:
 
 
 def on(mark: str, **kw) -> dict:
-    """A line/scatter/bar/errorbar layer with a 95\u00a0% confidence interval."""
+    """A line/scatter/bar/errorbar layer with a 95% confidence interval."""
     return dict({"type": mark, "encoding": {"x": "t", "y": "y", "y_lower": "lo", "y_upper": "hi"},
                  "interval_kind": "confidence", "interval_level": 0.95}, **kw)
 
@@ -117,11 +117,11 @@ def test_interval_problems_are_structured_errors(layer, path, code):
 
 
 @pytest.mark.parametrize("kind, level, mult, text", [
-    ("confidence", 0.95, None, "95\u00a0% confidence interval"),
-    ("credible", 0.9, None, "90\u00a0% credible interval"),
-    ("prediction", 0.8, None, "80\u00a0% prediction interval"),
-    ("quantile", 0.5, None, "P25–P75 percentiles (50\u00a0%)"),
-    ("quantile", 0.975, None, "P1.25–P98.75 percentiles (97.5\u00a0%)"),
+    ("confidence", 0.95, None, "95% confidence interval"),
+    ("credible", 0.9, None, "90% credible interval"),
+    ("prediction", 0.8, None, "80% prediction interval"),
+    ("quantile", 0.5, None, "P25–P75 percentiles (50%)"),
+    ("quantile", 0.975, None, "P1.25–P98.75 percentiles (97.5%)"),
     ("min-max", None, None, "min-max range"),
     ("standard-error", None, 1, "±1 standard error"),
     ("standard-deviation", None, 1.96, "±1.96 standard deviations"),
@@ -132,7 +132,7 @@ def test_every_kind_is_stated_in_words(kind, level, mult, text):
     layer = band(interval_kind=kind, interval_level=level, interval_multiplier=mult)
     assert errors(spec_dict(layer)) == []
     assert interval_label(kind, level, mult) == text
-    assert interval_label("quantile", 0.975, None, decimal=",") == \
+    assert interval_label("quantile", 0.975, None, decimal=",", percent_sep="\u00a0") == \
         "P1,25–P98,75 percentiles (97,5\u00a0%)"
 
 
@@ -244,10 +244,10 @@ def test_json_schema_requires_the_statement():
 
 
 @pytest.mark.parametrize("level, text", [
-    (0.9999999, "99.99999\u00a0% confidence interval"),   # never rounded up to 100 %
-    (1e-7, "0.00001\u00a0% confidence interval"),         # never 0 % nor "1e-05 %"
-    (0.123456, "12.3456\u00a0% confidence interval"),
-    (0.95, "95\u00a0% confidence interval"),
+    (0.9999999, "99.99999% confidence interval"),   # never rounded up to 100 %
+    (1e-7, "0.00001% confidence interval"),         # never 0 % nor "1e-05 %"
+    (0.123456, "12.3456% confidence interval"),
+    (0.95, "95% confidence interval"),
 ])
 def test_levels_are_shown_exactly_never_as_a_false_round_number(level, text):
     from ieeVisualizer.spec import interval_label
@@ -265,8 +265,8 @@ def test_multiplier_is_shown_exactly_and_pluralised_from_what_is_shown():
 def test_quantile_level_is_central_and_says_so():
     from ieeVisualizer.spec import interval_label
 
-    assert interval_label("quantile", 0.8) == "P10–P90 percentiles (80\u00a0%)"
-    assert interval_label("quantile", 0.95) == "P2.5–P97.5 percentiles (95\u00a0%)"
+    assert interval_label("quantile", 0.8) == "P10–P90 percentiles (80%)"
+    assert interval_label("quantile", 0.95) == "P2.5–P97.5 percentiles (95%)"
 
 
 def test_explicit_quantile_pair_for_an_asymmetric_band():

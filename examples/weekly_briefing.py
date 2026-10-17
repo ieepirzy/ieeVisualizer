@@ -50,7 +50,7 @@ SOURCE = Provenance(source="examples/weekly_briefing.py", timezone="Europe/Helsi
 
 #: Service orders per ISO week, weeks 30-41 of 2026 (observed) ...
 ORDERS = [318, 335, 352, 361, 347, 372, 380, 366, 391, 404, 389, 412]
-#: ... and the planning forecast for weeks 42-45, with the model's 80 %
+#: ... and the planning forecast for weeks 42-45, with the model's 80%
 #: prediction interval (low, high).
 FORECAST = [405, 398, 384, 371]
 FORECAST_LOW = [380, 366, 347, 329]
@@ -100,7 +100,7 @@ def briefing() -> ViewSpec:
         forecast_from=monday(42), connect_forecast=True,
         intervals=[{"lower": "low", "upper": "high", "kind": "prediction", "level": 0.8}],
         title="Service orders per week",
-        caption="Weeks 42-45 forecast; band: the model's 80\u00a0% prediction interval.")
+        caption="Weeks 42-45 forecast; band: the model's 80% prediction interval.")
     by_workshop = templates.get("bar_comparison").build(
         workshop_data(), category_column="Workshop", value_columns=["Orders"],
         previous_column="Week 40", previous_label="week 40", value_labels=True,
@@ -140,7 +140,7 @@ def briefing() -> ViewSpec:
             Table("workshops", columns=["Workshop", "Orders", "Revenue"],
                   title="Week 41 by workshop"),
             Note("The forecast is the planning team's seasonal model; its band is the "
-                 "model's 80\u00a0% prediction interval, not a guarantee."),
+                 "model's 80% prediction interval, not a guarantee."),
             Note(f"Source: {COMPANY} workshop system and till export, ISO weeks starting "
                  "Monday (Europe/Helsinki). On time = finished by the promised date; the tile is "
                  "the order-weighted share across workshops. "

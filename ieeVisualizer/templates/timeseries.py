@@ -363,7 +363,7 @@ class TimeseriesTemplate(ComponentTemplate):
                 "forecast_rows": len(forecast) - len(boundary),
                 "shared_boundary": bool(boundary),
             }
-            self._boundary_meta(meta["forecast"], forecast, boundary)
+            self._boundary_meta(meta["forecast"], data, tname, series, boundary)
         if bands:
             meta[self._bands_key] = bands
         spec.metadata["template"] = meta
@@ -371,8 +371,8 @@ class TimeseriesTemplate(ComponentTemplate):
 
     _bands_key = "bands"
 
-    def _boundary_meta(self, fmeta: dict[str, Any], forecast: list[int],
-                       boundary: list[int]) -> None:
+    def _boundary_meta(self, fmeta: dict[str, Any], data: DataSnapshot, tname: str,
+                       series: str | None, boundary: list[int]) -> None:
         """Hook for later versions to record more about the boundary rows
         (1.0.0 records only ``shared_boundary``)."""
 

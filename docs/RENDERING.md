@@ -153,14 +153,21 @@ entry too wide for a one-column legend inside the figure is wrapped: a
 percentile statement at " percentiles (", before its "(80 %)", then a
 long series name at the ": " right before the interval statement, so a
 series name with its own colon or parentheses ("Region: North (EUR)") stays
-whole. Other renders are not wrapped. The rows the timeseries template
-copied into its forecast dataset so the lines join (`connect_forecast`,
-recorded exactly in `metadata.template.forecast.boundary_rows`) are
-observations, so their missing bounds are not counted in
-`interval_bounds_missing`; every other forecast row without both bounds is,
-including rows next to the connector, forecasts overlapping actuals and
-ragged series. Each interval's legend entry states its kind and level ("95 %
-prediction interval", with the theme's decimal separator: "97,5 %"), and a
+whole. Other renders are not wrapped. The row the timeseries template
+copied into its forecast dataset so the lines join (`connect_forecast`) is
+an observation, so its missing bounds are not counted in
+`interval_bounds_missing` -- but only while it still *is* that copy: equal,
+in every column both datasets have, to a row of an observed layer's dataset,
+and (2.0.1) carrying an identity listed in
+`metadata.template.forecast.boundary_rows` (`{"x", "series"?}`), or (2.0.0,
+no identities) before the split for `forecast_from`. Windowing (animation),
+filtering, reordering or prepending rows, or a forged list, never exempts a
+real forecast row; every other forecast row without both bounds warns. On a
+time axis of a profile render the date offset states only the year
+("2026", not matplotlib's "2026-Nov", which reads as if the whole axis were
+November); the months are on the ticks. Each interval's legend entry states its kind and level ("95%
+prediction interval"; with the theme locale's decimal separator and percent
+style, "97,5 %" in fi-FI), and a
 figure with an interval always has a legend; with `legend.show` false the
 caption gains "Intervals: A: 95 % confidence interval; B: ..." instead,
 each statement named as its legend entry would be. Forecast bands are hatched and

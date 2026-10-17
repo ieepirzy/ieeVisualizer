@@ -390,7 +390,7 @@ value with its unit, its comparison line ("▲ +23 orders vs week 40 (389
 orders)") and source, exactly as written (never the compacted tile form),
 every table cell as a `header (unit): value` line, each figure's `alt`
 summary (the two bounds of a range are named "lower bound" / "upper bound",
-and an interval's under the statement its legend gives, e.g. "80 %
+and an interval's under the statement its legend gives, e.g. "80%
 prediction interval (forecast), lower bound: ...";
 the observed point a forecast line starts from is not counted as a forecast
 value) and each flow's text version. A percentage KPI's delta is in

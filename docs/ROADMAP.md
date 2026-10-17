@@ -304,9 +304,10 @@ reviewable branches; order follows dependencies, not importance.
 ## Breaking changes
 
 * **`timeseries` 2.0.1 (not breaking):** adds
-  `metadata.template.forecast.boundary_rows`, the forecast-dataset rows that
-  `connect_forecast` copied from the observations; the renderer exempts only
-  those from `interval_bounds_missing`. 2.0.0 stays registered and keeps its
+  `metadata.template.forecast.boundary_rows`, the identities (time, series)
+  of the rows `connect_forecast` copied from the observations; the renderer
+  exempts a row from `interval_bounds_missing` only while it is still such
+  a copy. 2.0.0 stays registered and keeps its
   `spec_hash` for the same inputs; unversioned calls now resolve to 2.0.1,
   so unversioned specs record `version: "2.0.1"`.
 
