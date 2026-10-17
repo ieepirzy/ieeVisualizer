@@ -1,6 +1,7 @@
 """Roles, warnings, refusals, references and capability selection."""
 
 import pytest
+from cost import within
 from render_examples import (
     function_spec,
     latency_snapshot,
@@ -404,7 +405,7 @@ with measure() as cost:
     except RenderError as e:
         out = {"issues": [[i.path, i.code] for i in e.issues], "type": type(e).__name__,
                "message": str(e)}
-out["seconds"], out["cost"] = cost.seconds, repr(cost)  # reference seconds: tests/cost.py
+out.update(seconds=cost.seconds, wall=cost.wall, cost=repr(cost))  # see tests/cost.py
 print(json.dumps(out))
 """
 
@@ -429,7 +430,7 @@ def test_histogram_bin_count_is_capped_by_capability(kind, n):
     out = _render_in_child(kind, n)
     assert out["type"] == "CapabilityError", out
     assert f"{n} histogram bins (max 10000)" in out["message"]
-    assert out["seconds"] < 5.0, out
+    assert within(5.0, out["seconds"], out["wall"]), out
 
 
 def test_bins_are_part_of_the_requirements():
@@ -445,7 +446,7 @@ def test_bins_are_part_of_the_requirements():
 def test_too_many_categories_is_a_structured_error_fast():
     out = _render_in_child("cats", 5_001)
     assert out["issues"] == [["/axes/x", "too_many_categories"]], out
-    assert out["seconds"] < 5.0, out
+    assert within(5.0, out["seconds"], out["wall"]), out
 
 
 def test_many_category_labels_are_thinned_with_a_warning():
