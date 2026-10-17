@@ -124,12 +124,7 @@ def legend_pairs(legend) -> list:
     line - measured from the drawing, not taken in list order."""
     handles = getattr(legend, "legend_handles", None) or legend.legendHandles
     renderer = legend.figure._get_renderer()
-    boxes = []
-    for h in handles:
-        try:
-            boxes.append(h.get_window_extent(renderer))
-        except (AttributeError, TypeError):
-            boxes.append(None)
+    boxes = [_handle_box(h, renderer) for h in handles]
     out = []
     for t in legend.get_texts():
         tb = t.get_window_extent(renderer)
@@ -137,6 +132,28 @@ def legend_pairs(legend) -> list:
                 if b is not None and tb.y0 <= (b.y0 + b.y1) / 2 <= tb.y1 and b.x1 <= tb.x0 + 2]
         out.append((t, handles[min(near)[1]] if near else None))
     return out
+
+
+def _handle_box(h, renderer):
+    """Where a legend handle is drawn: its extent, or for a marker
+    collection (a scatter swatch, whose extent matplotlib reports as
+    infinite) the box of its marker offsets."""
+    import numpy as np
+    from matplotlib.transforms import Bbox
+
+    try:
+        b = h.get_window_extent(renderer)
+    except (AttributeError, TypeError):
+        b = None
+    if b is not None and np.all(np.isfinite(b.get_points())) and b.width + b.height > 0:
+        return b
+    offsets = getattr(h, "get_offsets", lambda: [])()
+    if len(offsets):
+        pts = h.get_offset_transform().transform(np.asarray(offsets, dtype=float))
+        if np.all(np.isfinite(pts)):
+            return Bbox.from_extents(pts[:, 0].min(), pts[:, 1].min(),
+                                     pts[:, 0].max(), pts[:, 1].max())
+    return None
 
 
 def _swatch(handle) -> tuple:
@@ -158,6 +175,16 @@ def _swatch(handle) -> tuple:
             except ValueError:
                 continue
     style = getattr(handle, "get_linestyle", lambda: None)()
+    # the dash pattern itself (every tuple style reads '--'), as given, not
+    # scaled by the line width
+    dashes = getattr(handle, "_unscaled_dash_pattern", None)
+    if dashes is None and hasattr(handle, "get_dashes"):
+        dashes = handle.get_dashes()
+        dashes = dashes[0] if isinstance(dashes, list) and dashes else dashes
+    if dashes is not None and len(dashes) == 2:
+        offset, seq = dashes
+        style = (round(float(offset or 0), 3),
+                 tuple(round(float(v), 3) for v in (seq or ())))
     marker = getattr(handle, "get_marker", lambda: None)()
     hatch = getattr(handle, "get_hatch", lambda: None)()
     return colour + (str(style), str(marker), str(hatch))

@@ -38,7 +38,7 @@ CONTENT_LOSS_CODES = ("flow_text_too_small", "table_cells_truncated",
                       "email_clipped_by_gmail", "email_not_phone_safe", "glyph_missing",
                       "glyph_check_failed",
                       "value_too_wide_for_screen", "annotation_outside_row",
-                      "row_note_duplicated")
+                      "row_note_duplicated", "row_note_detached")
 #: Everything :func:`check_legible` refuses: the gate a pipeline that must not
 #: send an illegible or incomplete report applies to every result.
 GATING_CODES = LEGIBILITY_CODES + CONTENT_LOSS_CODES

@@ -159,7 +159,10 @@ and why: rows of horizontal bars get room for their value labels, y category
 labels stop touching, a legend below the plot gets its height, a plot
 squeezed below 25 % gets 35 %. Only the final layout counts for
 `layout_collapsed`: constrained layout giving up during a measuring pass (a
-legend still inside the axes, value labels not yet fitted) is not reported. Value labels of a profile render are left out
+legend still inside the axes, value labels not yet fitted) is not reported,
+unless the saved plot is the collapsed one (`legibility_plot_collapsed`).
+Wrapping never separates a number from a unit-only word after it (`20 %`,
+`5 €`). Value labels of a profile render are left out
 of constrained layout (the value axis is widened to hold them instead), and
 every draw widens from the spec's limits, so a measuring pass at another
 layout cannot leave the bars squeezed. A legend below the plot on a narrow
@@ -174,11 +177,15 @@ time an annotation is a row note only if its text, x and row are exactly a
 recorded note's, so a caller's own annotation, wherever it sits in the
 list, is never moved. A recorded note that matches no annotation (the
 spec was edited after the template built it) is reported (`row_note_stale`,
-a note); one drawn twice is `row_note_duplicated` (gating, naming the
-annotations). Any annotation anchored on a category row that wraps on a
-profile is centred on its row, so its lines do not climb into the row
-above; one whose drawn text still reaches into another row's band is
-`annotation_outside_row` (gating). When one lies over a value label or
+a note); its edited form stays at its own data position and is refused
+(`row_note_detached`) if its text runs past the plot's right edge, away from
+its row's bar. A note drawn twice is `row_note_duplicated` (gating, naming
+the annotations). An annotation anchored on a category row that wrapping
+makes taller keeps its own placement (just above its anchor) when that stays
+in its row; only if it would climb into the row above is it centred on its
+anchor, or else hung below it - each only if it stays in its row and clear
+of the row's value labels (decided after every layout). One whose drawn text
+still reaches into another row's band is `annotation_outside_row` (gating). When one lies over a value label or
 past the plot's right edge, every row note moves under its own row's value
 label, wrapped to the room left, and the plot grows until each row holds
 both. Words and rows stay. Any other annotation keeps its data position; if
@@ -504,8 +511,9 @@ same order and the same anchor, measured from the drawing
 (`tests/render/anchored.py`): the node a reader model attributes a label to
 (nearest box point to the edge of each drawn marker, read from the drawing,
 independent of the renderer's rule), the bar a value label is drawn on, the
-swatch drawn beside a legend text (colour, line style, marker, hatch; paired
-by position, not list order), the category tick, an annotation's data anchor
+swatch drawn beside a legend text (colour, dash pattern, marker, hatch;
+paired by position, scatter swatches by their marker offsets, not list
+order), the category tick, an annotation's data anchor
 if its text is drawn there and the category rows its text reaches into (or
 those rows for a row note) - and nothing else; a test shows that swapping two
 value labels, two legend swatches, the dashes of two same-colour entries of a

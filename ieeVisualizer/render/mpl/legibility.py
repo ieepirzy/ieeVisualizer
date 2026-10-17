@@ -77,7 +77,7 @@ def wrap(text: str, size_pt: float, width_pt: float, bold: bool = False) -> str:
     out = []
     for par in text.split("\n"):
         line = ""
-        for word in par.split(" "):
+        for word in _units_kept(par.split(" ")):
             cand = f"{line} {word}" if line else word
             if line and width(cand) > width_pt:
                 out.append(line)
@@ -86,6 +86,23 @@ def wrap(text: str, size_pt: float, width_pt: float, bold: bool = False) -> str:
                 line = cand
         out.append(line)
     return "\n".join(out)
+
+
+#: A word made only of these stays on the line of the word before it: a
+#: number and its unit read as one ("20 %", "1 234,50 €", "5 °C").
+_UNIT_CHARS = frozenset("%‰€$£¥°℃℉")
+
+
+def _units_kept(words: list[str]) -> list[str]:
+    """``words`` with a unit-only word (``%``, ``€``...) joined to the word
+    before it, so wrapping never puts a value and its unit on two lines."""
+    out: list[str] = []
+    for w in words:
+        if out and w and set(w) <= _UNIT_CHARS | set(".,;:)"):
+            out[-1] = f"{out[-1]} {w}"
+        else:
+            out.append(w)
+    return out
 
 
 def wrap_labels(ctx: Any) -> None:
@@ -211,11 +228,50 @@ def wrap_annotations(ctx: Any, texts: list[Any]) -> None:
         # squeeze the plot; such a text is left as it is and the audit reports it
         if box.x1 > right and room_pt >= MIN_WRAP_EM * t.get_fontsize():
             t.set_text(wrap(t.get_text(), t.get_fontsize(), room_pt))
-            if rows and getattr(t, "xyann", None) is not None and t.get_va() == "baseline":
-                # anchored on a category row: centred on it, so its lines stay
-                # in its own row instead of climbing into the row above
-                t.set_va("center")
-                t.xyann = (t.xyann[0], 0.0)
+            if rows and getattr(t, "xyann", None) is not None:
+                ctx.row_wrapped.append(t)  # placed in its row after layout
+
+
+def fit_rows_on_layout(ctx: Any) -> None:
+    """Profile renders: after every layout, an annotation anchored on a
+    category row that wrapping made taller keeps its own placement (just
+    above the anchor) when that stays in its row; only if it would climb
+    into the row above does it try, in turn, centred on the anchor and
+    hanging below it - each only if it stays in its row and clear of the
+    row's value labels. If none fits it stays as placed, and the audit
+    refuses it (``annotation_outside_row``)."""
+    engine = ctx.fig.get_layout_engine()
+    if engine is None or not ctx.row_wrapped:
+        return
+    inner = engine.execute
+    # a template's row notes are placed under their value labels instead
+    # (value_labels._clear_texts); everything else is placed here
+    placed = [(t, t.get_va(), tuple(t.xyann)) for t in ctx.row_wrapped
+              if not any(t is n for n in ctx.text_annotations)]
+
+    def execute(figure: Any) -> Any:
+        out = inner(figure)
+        labels = [lab.text for lab in ctx.value_labels if lab.text.get_visible()]
+        for t, va, off in placed:
+            try:
+                y = float(ctx.ax.yaxis.convert_units(t.xy[1]))
+            except (TypeError, ValueError):
+                continue
+            lo, hi = sorted(ctx.ax.transData.transform([(0, y - 0.5), (0, y + 0.5)])[:, 1])
+            for cand_va, cand_off in ((va, off), ("center", (off[0], 0.0)),
+                                      ("top", (off[0], -abs(off[1])))):
+                t.set_va(cand_va)
+                t.xyann = cand_off
+                box = t.get_window_extent()
+                if box.y0 >= lo - OVERLAP_TOLERANCE_PX and box.y1 <= hi + OVERLAP_TOLERANCE_PX \
+                        and not any(box.overlaps(lab.get_window_extent()) for lab in labels):
+                    break
+            else:
+                t.set_va(va)
+                t.xyann = off
+        return out
+
+    engine.execute = execute
 
 
 def annotation_rows(built: Any) -> list[RenderWarning]:

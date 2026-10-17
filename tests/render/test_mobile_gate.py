@@ -12,6 +12,7 @@ from test_mobile_profiles import example, gate_refuses, measure, problems
 
 from ieeVisualizer import templates
 from ieeVisualizer.render import (
+    LegibilityError,
     RenderRequest,
     check_legible,
     get_profile,
@@ -483,13 +484,41 @@ def test_a_row_anchored_note_stays_in_its_row_or_is_refused(how):
     if how == "moved":
         (w,) = [w for w in result.warnings if w.code == "row_note_stale"]
         assert "18.5% of previous" in w.message and "Started quote" in w.message
+        # the edited note fits its own row once placed after layout: it is sent
+        check_legible(result)
+
+
+def _gating(result) -> set:
+    try:
+        check_legible(result)
+    except LegibilityError as e:
+        return {i.code for i in e.issues}
+    return set()
 
 
 def test_a_duplicated_row_note_is_refused_by_name():
     result = render(_funnel_edited("duplicate"), PHONE.figure_request("png"))
     (w,) = [w for w in result.warnings if w.code == "row_note_duplicated"]
     assert "18.5% of previous" in w.message and "annotations 0, 3" in w.message
-    assert gate_refuses(result)
+    assert "row_note_duplicated" in _gating(result)  # refused for this, not only overlap
+
+
+def _tall_note() -> FigureSpec:
+    """Six rows, no value labels, and a caller's note too long for its row:
+    wrapped on a phone it is taller than the row in every placement."""
+    spec = _bars(6, "y")
+    spec.layers[0].orientation = "horizontal"
+    spec.annotations.append(TextAnnotation(
+        text=" ".join(["Kampanja tauolla kaksi päivää"] * 3), x=1.0, y="Region 02"))
+    return spec
+
+
+def test_a_note_too_tall_for_its_row_is_refused_for_that_alone():
+    """annotation_outside_row is the only gating code here, so the gate's
+    verdict rests on it."""
+    result = render(_tall_note(), PHONE.figure_request("png"))
+    assert _gating(result) == {"annotation_outside_row"}
+
 
 
 def _row_drift(built):
@@ -507,3 +536,79 @@ def _row_drift(built):
 def test_the_anchor_comparison_tells_a_note_drifting_into_another_row():
     spec = _funnel_with_a_note()
     assert anchored(spec, DESKTOP, _row_drift) != anchored(spec, DESKTOP)
+
+
+def _scatter14() -> FigureSpec:
+    from ieeVisualizer.spec import ScatterMark
+
+    cols = {"t": list(range(10))}
+    cols.update({f"s{i}": [i + k for k in range(10)] for i in range(14)})
+    return FigureSpec(datasets={"d": DataSnapshot.from_columns(cols)},
+                      layers=[ScatterMark(data="d", encoding={"x": "t", "y": f"s{i}"},
+                                          name=f"P{i}") for i in range(14)])
+
+
+def _swap_scatter_swatches(built):
+    legend = built.axes.get_legend()
+    h = getattr(legend, "legend_handles", None) or legend.legendHandles
+    a, b = h[0].get_facecolor().copy(), h[1].get_facecolor().copy()
+    h[0].set_facecolor(b)
+    h[1].set_facecolor(a)
+
+
+def _redash(built):
+    """Two dash patterns that matplotlib both reports as '--'."""
+    legend = built.axes.get_legend()
+    h = getattr(legend, "legend_handles", None) or legend.legendHandles
+    h[10].set_linestyle((0, (6, 2, 1, 2)))
+
+
+@pytest.mark.parametrize(("make", "mutate"), [
+    (_scatter14, _swap_scatter_swatches),  # scatter swatches: extents are infinite
+    (lambda: _series(12, "S{}"), _redash),  # a dash pattern, not the name '--'
+])
+def test_the_anchor_comparison_reads_every_swatch(make, mutate):
+    from anchored import legend_pairs
+
+    spec = make()
+    built = build_figure(spec, DESKTOP)
+    assert all(h is not None for _, h in legend_pairs(built.axes.get_legend()))
+    assert anchored(spec, DESKTOP, mutate) != anchored(spec, DESKTOP)
+
+
+def test_a_collapsed_final_layout_is_reported_as_such():
+    """Long category names that leave the plot a few px wide: the saved
+    layout is the collapsed one, so layout_collapsed is reported (not only
+    legibility_plot_collapsed)."""
+    import copy
+
+    t = templates.get("bar_comparison")
+    e = copy.deepcopy(t.example())
+    c = e["data"]["columns"]
+    long = "Erittäin pitkä kategorianimi joka ei mahdu mihinkään kapeaan näkymään"
+    c["channel"]["values"] = [f"{x} {long}" for x in ("Google Ads", "Meta", "Orgaaninen haku")]
+    c["revenue"]["values"] = [1000.5, 8000.5, 2000.5]
+    c["revenue_prev"]["values"] = [900.0, 5400.0, 9900.0]
+    result = render(t.build_payload(e), get_profile("email-tablet").figure_request("png"))
+    codes = {w.code for w in result.warnings}
+    assert {"layout_collapsed", "legibility_plot_collapsed"} <= codes
+
+
+def test_an_edited_row_note_running_off_the_plot_is_refused():
+    """A rate note edited after the template built the spec (here
+    translated) is drawn at its own place, the rate column; running past the
+    plot's right edge, away from its row's bar, it is refused."""
+    spec = example("funnel")
+    a = spec.annotations[1]
+    spec.annotations[1] = TextAnnotation(text=a.text.replace("of previous", "edellisestä"),
+                                         x=a.x, y=a.y)
+    result = render(spec, PHONE.figure_request("png"))
+    assert "row_note_detached" in _gating(result)
+
+
+def test_wrapping_keeps_a_number_and_its_unit_together():
+    from ieeVisualizer.render.mpl.legibility import wrap
+
+    for width in range(30, 120, 5):
+        assert all(not line.startswith("%") for line in
+                   wrap("Target 20 % next week, up 5 € from last", 12, width).split("\n"))
