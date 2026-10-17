@@ -210,10 +210,30 @@ def apply_legend(ctx: DrawContext) -> None:
     if not spec.legend.show:
         return
     handles, labels = _in_bar_order(ctx, *_dedupe(*ctx.ax.get_legend_handles_labels()))
+    if ctx.listed_after:
+        from .intervals import legend_order
+
+        handles, labels = legend_order(ctx, handles, labels)
+    if ctx.band_records:
+        from .intervals import legend_handles
+
+        handles = legend_handles(ctx, handles)  # fan-chart swatches = the region they name
+    if ctx.min_pt and ctx.interval_labels:
+        from matplotlib import rcParams
+        from matplotlib.font_manager import FontProperties
+
+        from .intervals import narrow_label
+
+        known = set(ctx.interval_labels)  # only interval entries are rewrapped
+        size = max(FontProperties(size=rcParams["legend.fontsize"]).get_size_in_points(),
+                   ctx.min_pt)
+        width = ctx.fig.get_figwidth() * 72.0
+        labels = [narrow_label(lab, width, size) if lab in known else lab for lab in labels]
     if not handles:
         return
     labelled_roles = any(m.role != "observed" for m in spec.layers)
-    if len(handles) < 2 and not spec.legend.title and not labelled_roles:
+    if len(handles) < 2 and not spec.legend.title and not labelled_roles \
+            and not ctx.interval_labels:
         return  # a single unqualified series: the axis label already names it
     kw: dict[str, Any] = {"title": spec.legend.title}
     if spec.legend.position == "outside-right":

@@ -44,6 +44,8 @@ class Requirements:
     #: Largest bin count of any histogram layer (``bins``, or the number of
     #: intervals in ``bin_edges``); 0 without histograms.
     bins: int = 0
+    #: A line, scatter or bar layer encodes ``y_lower``/``y_upper``.
+    intervals: bool = False
 
     def describe(self) -> list[str]:
         out = [
@@ -63,6 +65,8 @@ class Requirements:
                       if self.unknown_size else ""))
         if self.bins:
             out.append(f"{self.bins} histogram bins")
+        if self.intervals:
+            out.append("interval encodings (y_lower/y_upper)")
         return out
 
     def unmet(self, caps: Capabilities) -> list[str]:
@@ -94,6 +98,8 @@ class Requirements:
                        "downsampling)")
         if caps.max_bins is not None and self.bins > caps.max_bins:
             out.append(f"{self.bins} histogram bins (max {caps.max_bins})")
+        if self.intervals and not caps.intervals:
+            out.append("interval encodings (y_lower/y_upper) on line, scatter or bar marks")
         return out
 
 
@@ -127,6 +133,9 @@ def requirements_for(spec: FigureSpec, request: RenderRequest) -> Requirements:
         points=points,
         unknown_size=tuple(unknown),
         bins=bins,
+        intervals=any(m.type in ("line", "scatter", "bar") and isinstance(m.encoding, dict)
+                      and ("y_lower" in m.encoding or "y_upper" in m.encoding)
+                      for m in spec.layers),
     )
 
 

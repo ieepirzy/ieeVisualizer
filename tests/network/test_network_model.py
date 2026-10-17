@@ -126,7 +126,7 @@ def test_limits_refuse_before_any_other_work(monkeypatch):
                        edges=[Edge("n0", "n1")] * 200_000)
     with measure() as cost:
         found = codes(huge)
-    assert cost.seconds < 0.5, cost
+    assert cost.within(0.1), cost  # ~0.01 when the limits refuse first
     assert found == [("/nodes", "too_many_nodes"), ("/edges", "too_many_edges")]
     force = NetworkSpec(nodes=[Node(f"n{i}") for i in range(MAX_FORCE_NODES + 1)])
     assert codes(force) == [("/layout/algorithm", "too_many_nodes")]

@@ -19,10 +19,10 @@ def _blocks():
 
 def test_doc_has_both_examples():
     types = sorted({layer["type"] for b in _blocks() for layer in json.loads(b)["layers"]})
-    assert types == ["line", "quiver"]
+    assert types == ["band", "line", "quiver"]
 
 
-@pytest.mark.parametrize("index", [0, 1])
+@pytest.mark.parametrize("index", [0, 1, 2])
 def test_doc_example_parses_validates_and_matches_schema(index):
     raw = _blocks()[index]
     spec = from_json(raw)
