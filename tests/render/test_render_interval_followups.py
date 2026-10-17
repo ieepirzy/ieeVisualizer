@@ -218,20 +218,6 @@ def test_a_series_name_with_percentiles_is_not_split_for_another_statement():
         "Top percentiles (EUR):", "95% confidence interval"]
 
 
-def test_phone_date_offset_states_the_year_not_a_month():
-    from ieeVisualizer.render import RenderRequest, get_profile
-
-    t = templates.get("timeseries")
-    s = t.build_payload(t.example())
-    for req in (get_profile("email-phone").figure_request("png"),
-                get_profile("email-tablet").figure_request("png")):
-        built = build_figure(s, req)
-        offset = built.axes.xaxis.get_major_formatter().get_offset()
-        assert offset == "2026", offset
-    desktop = build_figure(s, RenderRequest()).axes.xaxis.get_major_formatter().get_offset()
-    assert desktop == "2026-Oct"  # other renders keep matplotlib's text (bytes unchanged)
-
-
 def test_briefing_percent_style_is_one_style():
     import importlib.util
 

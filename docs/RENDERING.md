@@ -162,10 +162,7 @@ and (2.0.1) carrying an identity listed in
 `metadata.template.forecast.boundary_rows` (`{"x", "series"?}`), or (2.0.0,
 no identities) before the split for `forecast_from`. Windowing (animation),
 filtering, reordering or prepending rows, or a forged list, never exempts a
-real forecast row; every other forecast row without both bounds warns. On a
-time axis of a profile render the date offset states only the year
-("2026", not matplotlib's "2026-Nov", which reads as if the whole axis were
-November); the months are on the ticks. Each interval's legend entry states its kind and level ("95%
+real forecast row; every other forecast row without both bounds warns. Each interval's legend entry states its kind and level ("95%
 prediction interval"; with the theme locale's decimal separator and percent
 style, "97,5 %" in fi-FI), and a
 figure with an interval always has a legend; with `legend.show` false the
