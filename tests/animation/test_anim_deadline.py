@@ -70,9 +70,9 @@ def test_unused_datasets_are_dropped_before_any_state_is_built():
         n = 100_000
         big = DataSnapshot.from_columns({{"u": [float(i) for i in range(n)],
                                          "w": [float(i % 7) for i in range(n)]}})
-        def timed(fig):
+        def timed(fig):  # a deadline that cannot fire first: the work is measured
             with measure() as c:
-                render_animation(_sweep(fig, 20), SMALL)
+                render_animation(_sweep(fig, 20), SMALL, deadline=3600)
             return c.seconds
         timed(FigureSpec(layers=[_fn()]))  # warm-up
         base = timed(FigureSpec(layers=[_fn()]))
