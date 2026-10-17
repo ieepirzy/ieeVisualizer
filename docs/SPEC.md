@@ -130,7 +130,7 @@ layer states:
 | `interval_multiplier` | How many standard errors / deviations the bar spans on each side (`1`, `1.96`). Required for standard-error and standard-deviation; refused for the others. A ±k bar claims value ± one half-width: bounds that are not symmetric about the value are drawn as given, with a warning and "(bounds not symmetric)" in the legend. |
 
 Renderers state it in words where the reader sees it: the legend entry
-("95 % prediction interval", "P10–P90 percentiles (80 %)",
+("95% prediction interval", "P10–P90 percentiles (80%)",
 "P5–P75 percentiles", "±1 standard error", "min-max range";
 percentiles in P-notation, so locale decimals need no ordinal: "P2,5";
 `interval_label(kind, level, multiplier, quantiles=...)`), or the caption,
@@ -143,8 +143,11 @@ written 95 %. A level (or
 quantile) that cannot be written distinctly from 0 % / 100 % (P0 / P100)
 within 12 decimals, such as `1 - 1e-15`, is refused (`invalid_interval_level`
 / `invalid_interval_quantiles`), as is a quantile pair whose two percentiles
-are written the same (`[0.1, 0.10000000000000002]` would read "P10–P10"). "%" follows a no-break space, so a wrapped
-legend or caption never separates "95" from "%". The bounds are data: drawn as given, never computed, widened,
+are written the same (`[0.1, 0.10000000000000002]` would read "P10–P10"), or
+a central level so small that its two tails would (7.3e-15: "P50–P50").
+"%" follows the theme locale's percent style, as its other numbers do: none
+in English ("95%", the default), a no-break space in fi-FI ("95 %"), so a
+wrapped legend or caption never separates "95" from "%". The bounds are data: drawn as given, never computed, widened,
 symmetrised or smoothed. A null bound is a gap in the interval, never zero.
 Several bands of one series at different levels make a fan chart.
 
@@ -255,7 +258,7 @@ The `null` revenue week is a gap, not a zero.
 }
 ```
 
-The legend reads "80 % prediction interval (forecast)". The missing `p10`
+The legend reads "80% prediction interval (forecast)". The missing `p10`
 of the last week ends the band a week early; it is not drawn down to zero.
 
 ## Example: 2D vector field

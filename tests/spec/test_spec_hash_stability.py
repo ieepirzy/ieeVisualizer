@@ -37,6 +37,10 @@ KEYS = sorted(set().union(*RECORDED.values()))
 #: Seen on CI: gallery.mark-line hashed differently on two runners of one
 #: environment. They are built here (so a crash still fails) but not pinned.
 COMPUTED = ("gallery.", "template.vector_field_2d@")
+#: Figures whose rendering is meant to differ from the baseline's (their
+#: spec_hash is still pinned): interval statements follow the theme locale's
+#: percent style ("95%" in English, "95 %" in fi-FI) since main 236ea21.
+INTENDED_RENDER_CHANGES = {"template.timeseries@2.0.0", "template.estimate_comparison@1.0.0"}
 
 
 def _expected_hash(key: str) -> str | None:
@@ -72,6 +76,11 @@ def test_figure_without_intervals_is_byte_identical(key):
         pytest.skip(f"{key}: data computed with numpy, whose bits depend on the CPU; not "
                     "pinned")
     want = {fmt: HERE[key][fmt] for fmt in ("svg", "png") if HERE[key][fmt] != UNSTABLE}
+    if key in INTENDED_RENDER_CHANGES:  # their figure is meant to differ from main's
+        got = fingerprint(SPECS[key])
+        assert all(got[fmt] != want[fmt] for fmt in want), \
+            f"{key} renders like main again; drop it from INTENDED_RENDER_CHANGES"
+        return
     if not want:
         pytest.skip(f"{key}: main's own renders differ between processes here")
     got = fingerprint(SPECS[key])

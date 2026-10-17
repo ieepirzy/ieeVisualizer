@@ -51,6 +51,7 @@ class TimeseriesTemplate2(TimeseriesTemplate):
     )
     _bands_key = "intervals"
 
+
     def _check_params(self, params: dict[str, Any], issues: Issues) -> dict[str, Any]:
         resolved = super()._check_params(params, issues)
         for k, item in enumerate(issues.items):
@@ -152,3 +153,29 @@ class TimeseriesTemplate2(TimeseriesTemplate):
         payload["params"]["caption"] = "Forecast and bands: model output."
         del payload["params"]["target"]  # fewer legend rows: the fan stays legible on a phone
         return payload
+
+
+class TimeseriesTemplate201(TimeseriesTemplate2):
+    """``timeseries`` 2.0.1: 2.0.0 plus ``boundary_rows`` in the forecast
+    metadata (non-breaking; 2.0.0 stays registered and builds what it did)."""
+
+    version = "2.0.1"
+
+    def _boundary_meta(self, fmeta: dict[str, Any], data: DataSnapshot, tname: str,
+                       series: str | None, boundary: list[int]) -> None:
+        """``boundary_rows``: which observed rows were copied into dataset
+        ``forecast`` so the lines join (``connect_forecast``), by identity --
+        ``{"x": <time>}`` plus ``"series"`` in long format -- not position,
+        so windowing or editing the dataset cannot shift it onto another row.
+        A renderer exempts a forecast row from ``interval_bounds_missing``
+        only if it has such an identity and is still a copy of an observed
+        row (an observation has no forecast interval)."""
+        if not boundary:
+            return
+        out = []
+        for i in sorted(boundary):
+            ident = {"x": data.columns[tname].values[i]}
+            if series is not None:
+                ident["series"] = data.columns[series].values[i]
+            out.append(ident)
+        fmeta["boundary_rows"] = out

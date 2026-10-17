@@ -37,7 +37,7 @@ def test_hidden_legend_caption_names_the_series_of_each_interval():
         legend={"show": False}, caption="Cap.")
     built = build_figure(s)
     assert built.caption.get_text() == (
-        "Cap.\nIntervals: A: 95\u00a0% confidence interval; B: ±1 standard error.")
+        "Cap.\nIntervals: A: 95% confidence interval; B: ±1 standard error.")
 
 
 FAN = {"t": {"values": [0.0, 1.0, 2.0, 3.0]}, "m": {"values": [5.0, 5.0, 5.0, 5.0]},
@@ -78,8 +78,8 @@ def test_fan_legend_swatch_is_the_colour_of_the_region_it_names():
     labels = [t.get_text() for t in lg.get_texts()]
     handles = lg.legend_handles if hasattr(lg, "legend_handles") else lg.legendHandles
     a = 0.25
-    outer = handles[labels.index("90\u00a0% prediction interval")]
-    inner = handles[labels.index("50\u00a0% prediction interval")]
+    outer = handles[labels.index("90% prediction interval")]
+    inner = handles[labels.index("50% prediction interval")]
     assert _alpha(outer) == pytest.approx(a)
     assert _alpha(inner) == pytest.approx(1 - (1 - a) ** 2)
     # Read back the pixels: each swatch equals the plotted region it names.
@@ -122,7 +122,7 @@ def test_grouped_bars_list_one_interval_entry_after_their_bars():
     built = build_figure(spec(cols, [{"type": "bar", "encoding": {
         "x": "g", "y": "y", "y_lower": "lo", "y_upper": "hi", "series": "arm"},
         "interval_kind": "confidence", "interval_level": 0.95}]))
-    assert legend(built) == ["x", "y", "95\u00a0% confidence interval"]
+    assert legend(built) == ["x", "y", "95% confidence interval"]
 
 
 # --------------------------------------------------------------------------
@@ -151,7 +151,7 @@ def test_grouped_bar_entry_names_only_the_series_with_an_interval():
     enc = {"x": "g", "y": "y", "y_lower": "lo", "y_upper": "hi", "series": "arm"}
     built = build_figure(spec(cols, [{"type": "bar", "encoding": enc,
                                       "interval_kind": "confidence", "interval_level": 0.95}]))
-    assert legend(built) == ["Control", "Treatment", "95 % confidence interval (Treatment)"]
+    assert legend(built) == ["Control", "Treatment", "95% confidence interval (Treatment)"]
 
 
 def test_fan_swatches_stay_distinct_when_one_row_overshoots():
@@ -165,7 +165,7 @@ def test_fan_swatches_stay_distinct_when_one_row_overshoots():
     lg = built.axes.get_legend()
     handles = lg.legend_handles if hasattr(lg, "legend_handles") else lg.legendHandles
     labels = [t.get_text() for t in lg.get_texts()]
-    inner = handles[labels.index("50 % prediction interval")]
+    inner = handles[labels.index("50% prediction interval")]
     assert _alpha(inner) == pytest.approx(1 - 0.75 ** 2)
 
 
@@ -206,7 +206,7 @@ def test_percent_never_wraps_away_from_its_number():
         built = build_figure(s, RenderRequest(width=width, height=3.0))
         lines = built.caption.get_text().split("\n")
         assert not any(line.rstrip().endswith("95") for line in lines), lines
-        assert "95 %" in built.caption.get_text()
+        assert "95%" in built.caption.get_text()
 
 
 # --------------------------------------------------------------------------
@@ -255,7 +255,7 @@ def test_percentile_label_states_its_kind():
     built = build_figure(spec(ARMS, [{"type": "errorbar", "encoding": {
         "x": "g", "y": "y", "y_lower": "lo", "y_upper": "hi"},
         "interval_kind": "quantile", "interval_level": 0.95}]))
-    assert legend(built) == ["P2.5–P97.5 percentiles (95\u00a0%)"]
+    assert legend(built) == ["P2.5–P97.5 percentiles (95%)"]
 
 
 def test_the_template_connector_row_is_not_a_missing_bound():

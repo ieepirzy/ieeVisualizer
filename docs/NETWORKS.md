@@ -144,9 +144,13 @@ fresh processes with different `PYTHONHASHSEED`s.
   figure grows to fit and a phone puts the legend below the graph
   ([MOBILE_AND_EMAIL.md](MOBILE_AND_EMAIL.md)); the send gate refuses any
   label still shortened or left out. Every render takes a place for a label
-  only if it is at least 3 pt nearer its own node than any other node's rim;
-  a label with no such place is drawn at the first free one with a
-  `label_ambiguous` warning.
+  only if the gap from the label box to its own node's rim is at least 3 pt
+  smaller than the gap to every other node's rim (rim to rim); a label with
+  no such place is drawn whole at the first free one with a gating
+  `label_ambiguous` warning, never shortened instead. Without a profile, if
+  looking for clear places would shorten or drop more labels than taking the
+  first free place, the first free places are kept and the unclear labels
+  flagged.
 
 ## Text alternative
 

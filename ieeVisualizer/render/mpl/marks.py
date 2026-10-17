@@ -64,6 +64,9 @@ class DrawContext:
     no_data_notes: list[NoDataNote] = field(default_factory=list)
     #: What each drawn interval is ("95 % prediction interval"), in order.
     interval_labels: list[str] = field(default_factory=list)
+    #: The interval statements themselves ("95 % confidence interval"), for
+    #: wrapping a label between its series name and its statement.
+    interval_statements: set = field(default_factory=set)
     #: Every band drawn (fan-chart legend swatches, :func:`intervals.legend_handles`).
     band_records: list[Any] = field(default_factory=list)
     #: Legend entries to list after a layer's own (bar intervals): id -> layer.
@@ -92,6 +95,8 @@ class DrawContext:
     plot_growth: dict[str, float] = field(default_factory=dict)
     #: Text annotations drawn (profile renders move one off a value label).
     text_annotations: list[Any] = field(default_factory=list)
+    #: Profile renders: annotations on a category row that wrapping made taller.
+    row_wrapped: list[Any] = field(default_factory=list)
     _color_i: int = 0
     _series: dict[tuple, _Series] = field(default_factory=dict)
     _color_of: dict[int, int | None] = field(default_factory=dict)

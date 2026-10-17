@@ -150,11 +150,21 @@ of one colour (a fan chart) get legend swatches of the composited opacity
 row overshooting does not change it), so each swatch is the colour of the
 bulk of the region it names. In a profile (phone/tablet) render an interval
 entry too wide for a one-column legend inside the figure is wrapped: a
-percentile statement before its "(80 %)", then a long series name after
-its colon. Other renders are not wrapped. The timeseries template's
-connector row (`connect_forecast`) is an observation, so its missing bounds
-are not counted in `interval_bounds_missing`. Each interval's legend entry states its kind and level ("95 %
-prediction interval", with the theme's decimal separator: "97,5 %"), and a
+percentile statement at " percentiles (", before its "(80 %)", then a
+long series name at the ": " right before the interval statement, so a
+series name with its own colon or parentheses ("Region: North (EUR)") stays
+whole. Other renders are not wrapped. The row the timeseries template
+copied into its forecast dataset so the lines join (`connect_forecast`) is
+an observation, so its missing bounds are not counted in
+`interval_bounds_missing` -- but only while it still *is* that copy: equal,
+in every column both datasets have, to a row of an observed layer's dataset,
+and (2.0.1) carrying an identity listed in
+`metadata.template.forecast.boundary_rows` (`{"x", "series"?}`), or (2.0.0,
+no identities) before the split for `forecast_from`. Windowing (animation),
+filtering, reordering or prepending rows, or a forged list, never exempts a
+real forecast row; every other forecast row without both bounds warns. Each interval's legend entry states its kind and level ("95%
+prediction interval"; with the theme locale's decimal separator and percent
+style, "97,5 %" in fi-FI), and a
 figure with an interval always has a legend; with `legend.show` false the
 caption gains "Intervals: A: 95 % confidence interval; B: ..." instead,
 each statement named as its legend entry would be. Forecast bands are hatched and
