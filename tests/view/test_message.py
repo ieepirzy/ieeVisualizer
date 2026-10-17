@@ -266,11 +266,11 @@ def test_band_bounds_have_distinct_names_in_the_alt_text(rendered):
     text = " ".join(re.split("[ \n]+", rendered.text))
     # timeseries 2.0.0: the range is the model's 80 % prediction interval, named
     # as its legend entry (the caption and the caveat say the same)
-    assert "80\u00a0% prediction interval (forecast), lower bound: 4 values from 329 to 380" \
+    assert "80% prediction interval (forecast), lower bound: 4 values from 329 to 380" \
         in text
-    assert "80\u00a0% prediction interval (forecast), upper bound: 4 values from 413 to 430" \
+    assert "80% prediction interval (forecast), upper bound: 4 values from 413 to 430" \
         in text
-    assert "80\u00a0% prediction interval (forecast):" not in text
+    assert "80% prediction interval (forecast):" not in text
 
 
 # --------------------------------------------------------------------------
@@ -673,7 +673,23 @@ def test_briefing_band_says_one_thing_everywhere():
     view = wb.briefing()
     (band,) = [m for m in view.figures["trend"].layers if m.type == "band"]
     assert (band.interval_kind, band.interval_level) == ("prediction", 0.8)
-    assert "80 % interval" in view.figures["trend"].caption
+    # one wording, "%" bound to its number by a no-break space so it never wraps alone
+    assert view.figures["trend"].caption.endswith("the model's 80% prediction interval.")
+    texts = [getattr(c, "text", "") for c in view.root.children]
+    assert any("80% prediction interval, not a guarantee" in t for t in texts)
     source = path.read_text(encoding="utf-8")
-    assert "80 % prediction interval, not a guarantee" in source
     assert "min-max" not in source and "planning scenarios" not in source
+    assert not any("80 %" in t for t in texts + [view.figures["trend"].caption])
+
+
+def test_briefing_bars_carry_their_values():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "examples" / "weekly_briefing.py"
+    mod_spec = importlib.util.spec_from_file_location("_briefing_values", path)
+    wb = importlib.util.module_from_spec(mod_spec)
+    mod_spec.loader.exec_module(wb)
+    bars = wb.briefing().figures["workshops"]
+    assert bars.metadata["template"]["params"]["value_labels"] is True
+    assert "TODO(bar_comparison)" not in path.read_text(encoding="utf-8")

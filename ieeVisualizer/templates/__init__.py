@@ -31,7 +31,7 @@ from .estimate_comparison import EstimateComparisonTemplate
 from .funnel import FunnelTemplate
 from .registry import TemplateRegistry, parse_semver
 from .timeseries import TimeseriesTemplate
-from .timeseries_intervals import TimeseriesTemplate2
+from .timeseries_intervals import TimeseriesTemplate2, TimeseriesTemplate201
 from .vector_field import VectorField2DTemplate
 
 
@@ -39,6 +39,7 @@ def _builtin_registry() -> TemplateRegistry:
     reg = TemplateRegistry()
     reg.register(TimeseriesTemplate())
     reg.register(TimeseriesTemplate2())
+    reg.register(TimeseriesTemplate201())
     reg.register(VectorField2DTemplate())
     reg.register(BarComparisonTemplate())
     reg.register(FunnelTemplate())
@@ -97,6 +98,7 @@ __all__ = [
     "TemplateRegistryError",
     "TimeseriesTemplate",
     "TimeseriesTemplate2",
+    "TimeseriesTemplate201",
     "VectorField2DTemplate",
     "build",
     "catalog",
