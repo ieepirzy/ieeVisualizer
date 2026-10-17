@@ -36,8 +36,8 @@ def issues(name, payload_data, **params):
 
 
 def test_timeseries_latest_is_2_0_and_1_0_is_still_there():
-    assert templates.get("timeseries").version == "2.0.0"
-    assert templates.default_registry.versions("timeseries") == ["1.0.0", "2.0.0"]
+    assert templates.get("timeseries").version == "2.0.1"
+    assert templates.default_registry.versions("timeseries") == ["1.0.0", "2.0.0", "2.0.1"]
     old = templates.get("timeseries", "1.0.0")
     assert old.parameter("lower_column") is not None and old.parameter("intervals") is None
 

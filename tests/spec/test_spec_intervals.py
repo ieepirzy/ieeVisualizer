@@ -366,3 +366,9 @@ def test_tails_are_mentioned_only_for_a_quantile_level():
     assert "P0" not in msg
     ((_, _, msg),) = metadata_problems("quantile", 1 - 1e-15, None)
     assert "P0/P100" in msg
+
+
+@pytest.mark.parametrize("level", [7.3e-15, 9e-15])
+def test_a_central_level_whose_tails_print_alike_is_refused(level):
+    assert ("/layers/0/interval_level", "invalid_interval_level") in errors(
+        spec_dict(band(interval_kind="quantile", interval_level=level)))

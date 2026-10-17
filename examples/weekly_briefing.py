@@ -100,13 +100,10 @@ def briefing() -> ViewSpec:
         forecast_from=monday(42), connect_forecast=True,
         intervals=[{"lower": "low", "upper": "high", "kind": "prediction", "level": 0.8}],
         title="Service orders per week",
-        caption="Weeks 42-45 forecast; band: the model's 80 % interval.")
-    # TODO(bar_comparison): use templates "bar_comparison" with value_labels=True once
-    # its value labels pass the phone gate (in-flight fix); without them the
-    # bars carry no printed numbers, and the table below gives the exact values.
+        caption="Weeks 42-45 forecast; band: the model's 80\u00a0% prediction interval.")
     by_workshop = templates.get("bar_comparison").build(
         workshop_data(), category_column="Workshop", value_columns=["Orders"],
-        previous_column="Week 40", previous_label="week 40", value_labels=False,
+        previous_column="Week 40", previous_label="week 40", value_labels=True,
         orientation="horizontal", value_label="Orders",
         title="Orders by workshop, week 41 vs week 40")
     total, prev = sum(WEEK_ORDERS), sum(PREV_ORDERS)
@@ -143,7 +140,7 @@ def briefing() -> ViewSpec:
             Table("workshops", columns=["Workshop", "Orders", "Revenue"],
                   title="Week 41 by workshop"),
             Note("The forecast is the planning team's seasonal model; its band is the "
-                 "model's 80 % prediction interval, not a guarantee."),
+                 "model's 80\u00a0% prediction interval, not a guarantee."),
             Note(f"Source: {COMPANY} workshop system and till export, ISO weeks starting "
                  "Monday (Europe/Helsinki). On time = finished by the promised date; the tile is "
                  "the order-weighted share across workshops. "
