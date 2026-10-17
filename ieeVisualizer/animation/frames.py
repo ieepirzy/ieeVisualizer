@@ -177,33 +177,73 @@ def _show(v: Any, digits: int = 4) -> str:
     return str(v)
 
 
-#: Significant digits of a numeric frame label, and how many more are added
-#: while two distinct values would read the same ("in most cases 3 orders of
-#: magnitude is plenty"); past that, ``frame_labels_ambiguous`` says so.
+#: Significant digits of a numeric frame label, and how many more the values
+#: of a colliding group get ("in most cases 3 orders of magnitude is
+#: plenty"); past that, ``frame_labels_ambiguous`` says so.
 LABEL_DIGITS = 4
 LABEL_EXTRA_DIGITS = 3
 
 
 def value_texts(values: list[Any], numbers: bool = False) -> tuple[list[str], list[list[int]]]:
     """``(text of each value, groups of states still sharing a text)``.
+
     Numbers (every value when ``numbers``, else floats) get
-    :data:`LABEL_DIGITS` significant digits, plus one more at a time, up to
-    :data:`LABEL_EXTRA_DIGITS` more, while two distinct values share a text;
-    values that never collide keep exactly their ``.4g`` text."""
+    :data:`LABEL_DIGITS` significant digits. Only the values of a group of
+    distinct values that would read the same are widened: one digit at a
+    time, up to :data:`LABEL_EXTRA_DIGITS` more, or, for integer-valued
+    floats, printed in full; every other value keeps exactly its ``.4g``
+    text. A group nothing tells apart keeps its ``.4g`` texts and is
+    returned (``frame_labels_ambiguous``)."""
 
     def text(v, d):
         return format(v, f".{d}g") if numbers else _show(v, d)
 
-    for d in range(LABEL_DIGITS, LABEL_DIGITS + LABEL_EXTRA_DIGITS + 1):
-        texts = [text(v, d) for v in values]
-        groups: dict[str, list[int]] = {}
-        for i, t in enumerate(texts):
-            groups.setdefault(t, []).append(i)
-        clash = [idx for idx in groups.values()
-                 if len({repr(values[i]) for i in idx}) > 1]
-        if not clash:
-            return texts, []
+    def full(v):  # an integer-valued number, every digit
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return None
+        if isinstance(v, float) and not (v.is_integer() and abs(v) < 1e16):
+            return None
+        return str(int(v))
+
+    texts = [text(v, LABEL_DIGITS) for v in values]
+    groups: dict[str, list[int]] = {}
+    for i, t in enumerate(texts):
+        groups.setdefault(t, []).append(i)
+    clash = []
+    for idx in groups.values():
+        if len({_value_key(values[i]) for i in idx}) < 2:
+            continue
+        others = {t for k, t in enumerate(texts) if k not in idx}
+        candidates = [[text(values[i], d) for i in idx]
+                      for d in range(LABEL_DIGITS + 1, LABEL_DIGITS + LABEL_EXTRA_DIGITS + 1)]
+        if all(full(values[i]) is not None for i in idx):
+            candidates.append([full(values[i]) for i in idx])
+        for wide in candidates:
+            if _tells_apart(wide, [values[i] for i in idx]) and not others & set(wide):
+                for i, t in zip(idx, wide):
+                    texts[i] = t
+                break
+        else:
+            clash.append(idx)
     return texts, clash
+
+
+def _value_key(v: Any) -> Any:
+    """What makes two values the same value: numbers by number (1 and 1.0
+    are one value, every nan is one), anything else by its repr."""
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        f = float(v)
+        return ("number", "nan" if f != f else f)
+    return ("other", repr(v))
+
+
+def _tells_apart(texts: list[str], values: list[Any]) -> bool:
+    """Distinct values get distinct texts (equal values may share one)."""
+    seen: dict[str, Any] = {}
+    for t, v in zip(texts, values):
+        if seen.setdefault(t, _value_key(v)) != _value_key(v):
+            return False
+    return True
 
 
 def state_labels(parameter: str, values: list[Any]) -> list[str]:
@@ -212,16 +252,37 @@ def state_labels(parameter: str, values: list[Any]) -> list[str]:
     return [f"{parameter} = {t}" for t in value_texts(values, numbers=True)[0]]
 
 
+#: Groups described in one ``frame_labels_ambiguous`` warning, and states
+#: and values per group.
+MAX_AMBIGUOUS_GROUPS = 5
+MAX_AMBIGUOUS_STATES = 5
+
+
 def ambiguous_labels(values: list[Any], clash: list[list[int]],
                      path: str = "/timeline") -> list[ValidationIssue]:
-    """``frame_labels_ambiguous`` for each group of distinct states whose
-    labels read the same even with the extra digits."""
+    """One ``frame_labels_ambiguous`` warning for the groups of distinct
+    states whose labels read the same even with the extra digits (the first
+    :data:`MAX_AMBIGUOUS_GROUPS` described)."""
+    if not clash:
+        return []
+
+    def group(idx):
+        cut = idx[:MAX_AMBIGUOUS_STATES]
+        more = f" and {len(idx) - len(cut)} more" if len(idx) > len(cut) else ""
+        return (f"states {cut}{more} ({', '.join(repr(values[i]) for i in cut)}"
+                f"{', ...' if more else ''})")
+
+    shown = "; ".join(group(idx) for idx in clash[:MAX_AMBIGUOUS_GROUPS])
+    head = (f"{len(clash)} groups of distinct states read" if len(clash) > 1
+            else "distinct states read")
+    rest = f"; first {MAX_AMBIGUOUS_GROUPS}: " if len(clash) > MAX_AMBIGUOUS_GROUPS else ": "
+    digits = LABEL_DIGITS + LABEL_EXTRA_DIGITS
     return [ValidationIssue(
         path, "frame_labels_ambiguous",
-        f"states {idx} have distinct values ({', '.join(repr(values[i]) for i in idx)}) that "
-        f"read the same even with {LABEL_DIGITS + LABEL_EXTRA_DIGITS} significant digits; "
-        "their frames are labelled alike. Use values further apart.", "warning")
-        for idx in clash]
+        f"{head} the same even with {digits} significant digits{rest}{shown}. Their frames "
+        f"are labelled alike: labels tell values apart when they differ by more than about "
+        f"1 part in 10^{digits - 1} of their size (relative spacing), so space the values "
+        "further apart relative to their magnitude or rescale them.", "warning")]
 
 
 def _complete_rows(spec: FigureSpec, mark, snap: DataSnapshot) -> bool:

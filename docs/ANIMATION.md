@@ -31,7 +31,7 @@ its SHA-256, inline data included. Fields:
 | `fps` | 1..60 frames per second. |
 | `hold_start`, `hold_end` | Extra frames repeating the first/last state. |
 | `axis_limits` | `fixed` (default): every axis keeps one range for the whole animation; `auto`: each frame scales itself. Limits set in the figure are kept; only open ends are filled. |
-| `label_frames` | Append the state to the title: `phase = 1.571`, `week: through 2026-07-13`. Numbers get 4 significant digits; while two distinct values would read the same, up to 3 more (`a = 1.0001`, `a = 1.0002`); values that still collide (`1+1e-12`, `1+2e-12`) give a `frame_labels_ambiguous` warning naming the states. |
+| `label_frames` | Append the state to the title: `phase = 1.571`, `week: through 2026-07-13`. Numbers get 4 significant digits. Only the values of a group that would read the same are widened: up to 3 more digits (`a = 1.0001`, `a = 1.0002`), or every digit of an integer (`12345678`, `12345679`); every other label keeps its exact 4-digit text. A group that still reads the same (`1+1e-12`, `1+2e-12`) keeps its texts and gives one `frame_labels_ambiguous` warning naming the states (labels tell values apart down to about 1 part in 10^6 of their size). The label ends the title: when the title runs past the frame's edge, Matplotlib renders warn `frame_label_clipped` (the label is what gets cut off); Manim shrinks the title to fit. |
 | `poster` | `first`, `last` or a frame index `0..frame_count-1`: the frame exported as a still. Negative indices are refused (`invalid_poster`; use `last`), not read Python-style. |
 | `loop` | GIF loops forever when true (MP4 has no loop flag; a warning says so). |
 

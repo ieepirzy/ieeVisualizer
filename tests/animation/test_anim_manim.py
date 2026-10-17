@@ -938,3 +938,13 @@ def test_manim_uses_the_shared_distinct_labels():
     anim = dataclasses.replace(_base(), timeline=ParameterSweep(parameter="a",
                                                                 values=[1 + 1e-12, 1 + 2e-12]))
     assert "frame_labels_ambiguous" in [w.code for w in ManimAdapter().render(anim, GIF).warnings]
+
+
+@needs_manim
+def test_manim_fits_a_long_title_so_its_state_label_is_never_cut_off():
+    from test_anim_frames import _amplitude
+
+    req = AnimationRequest(format="gif", width=360, height=640, units="px", dpi=100)
+    for texts, _plot, _marks, (fw, _fh) in _boxes(_amplitude([-1.234561e-5, -1.234562e-5]),
+                                                  req):
+        assert all(-fw / 2 <= a[0] and a[1] <= fw / 2 for a in texts)
