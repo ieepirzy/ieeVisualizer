@@ -216,3 +216,35 @@ def test_a_tick_outside_the_view_does_not_stand_in_for_the_leftmost_visible_one(
     assert values[0] < min(axis.get_view_interval()) <= values[1]  # Sep 1 is hidden
     labels = axis.get_major_formatter().format_ticks(values)
     assert labels[1] == "Sep 15", labels
+
+
+def _dated_ticks(spec):
+    from matplotlib import dates as mdates
+
+    built = build_figure(spec, RenderRequest())
+    built.figure.canvas.draw()
+    axis = built.axes.xaxis
+    lo, hi = sorted(axis.get_view_interval())
+    return axis.get_offset_text().get_text(), [
+        (mdates.num2date(t.get_loc()), t.label1.get_text()) for t in axis.get_major_ticks()
+        if lo - 1e-9 <= t.get_loc() <= hi + 1e-9 and t.label1.get_text()]
+
+
+def test_the_offset_states_no_field_the_ticks_label():
+    spec = _series(["2026-10-14T06:00:00", "2026-10-14T18:00:00"])
+    spec.axes["x"] = Axis(label="Day", scale="time", limits=["2026-10-01", "2026-10-31"])
+    offset, ticks = _dated_ticks(spec)
+    assert offset == "2026-Oct", (offset, ticks)  # not "2026-Oct-14" over "05 09 13 ..."
+
+
+def test_under_wider_limits_every_tick_outside_the_offsets_month_names_its_month():
+    """Fixed limits (an animation's, or the caller's) can reach months the
+    data are not in: the offset names the data's month, so each tick in
+    another month must say which."""
+    spec = _series(_weeks("2026-09-07", 4))  # September only
+    spec.axes["x"] = Axis(label="Week", scale="time", limits=["2026-09-01", "2026-11-30"])
+    offset, ticks = _dated_ticks(spec)
+    assert offset in ("2026", "2026-Sep"), offset
+    for d, label in ticks:
+        if offset == "2026-Sep" and d.month != 9:
+            assert MONTHS[d.month - 1] in label, ticks

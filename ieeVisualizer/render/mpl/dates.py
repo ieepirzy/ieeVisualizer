@@ -11,13 +11,15 @@ changes two things:
   limits wider than the data add a year): its minute (``2026-Oct-14 06:10``),
   day (``2026-Oct-14``) or month (``2026-Oct``) when the data lie within
   one, else its year (``2026``) or two years (``2025–2026``); three or more
-  years get none. Month and year ticks keep matplotlib's rule: no offset
+  years get none. It never states the field the ticks label (no day offset
+  over day ticks). Month and year ticks keep matplotlib's rule: no offset
   when a tick already names the year (January);
 * a tick whose label leaves out a coarser field that the offset does not
   state for it either (the month of a day tick, the day of an hour or minute
   tick, the hour and minute of a second tick, the year of a tick outside the
-  offset's years) is prefixed with it: the leftmost tick, and each tick where
-  that field changes (``Sep 08``, ``Oct-14 23:00 ... Oct-15 00:00``). A label
+  offset's years) is prefixed with it: the leftmost tick, each tick where
+  that field changes, and any tick in another month or year than the offset
+  states (limits wider than the data) (``Sep 08``, ``Oct-14 23:00 ... Oct-15 00:00``). A label
   whose own format already carries the field is left alone (``Oct``,
   ``14.09.`` in fi-FI).
 
@@ -66,7 +68,7 @@ class ExtentOffsetFormatter(mdates.ConciseDateFormatter):
         dates = [mdates.num2date(v, tz=self._tz) for v in values]
         fields = [d.timetuple()[:6] for d in dates]
         level = _level(fields) if len(fields) > 1 else 5
-        text, years, stated = self._extent()
+        text, years, stated = self._extent(level)
         lo, hi = self._view()
         shown = [i for i, v in enumerate(values) if lo - 1e-9 <= v <= hi + 1e-9]
         shown.sort(key=lambda i: values[i], reverse=self._inverted())  # left to right
@@ -91,7 +93,12 @@ class ExtentOffsetFormatter(mdates.ConciseDateFormatter):
                         break
                     known.add(k)
             missing = needed - known
-            if missing and (previous is None or any(previous.get(k) != f[k] for k in missing)):
+            # the leftmost tick, a change of context, and any tick the offset
+            # would otherwise misdate (another month or year than it states)
+            contradicted = any(k < len(stated) and f[k] != stated[k] for k in missing) or (
+                0 in missing and years is not None)
+            changed = previous is None or any(previous.get(k) != f[k] for k in missing)
+            if missing and (changed or contradicted):
                 labels[i] = self._prefixed(labels[i], dates[i], missing)
             previous = {k: f[k] for k in needed}
         return labels
@@ -137,10 +144,11 @@ class ExtentOffsetFormatter(mdates.ConciseDateFormatter):
         a, b = self.axis.get_view_interval()
         return bool(a > b)
 
-    def _extent(self) -> tuple[str, tuple[int, int] | None, tuple[int, ...]]:
+    def _extent(self, level: int) -> tuple[str, tuple[int, int] | None, tuple[int, ...]]:
         """``(text, years, stated)``: the offset, the years it covers (None
         when it states none) and the leading fields it states (year, month,
-        day, hour, minute) when it names a single year."""
+        day, hour, minute) when it names a single year. It states no field the
+        ticks label themselves (no day over day ticks), so ``level`` caps it."""
         if self.axis is None:
             return ("", None, ())
         vlo, vhi = self._view()
@@ -160,6 +168,7 @@ class ExtentOffsetFormatter(mdates.ConciseDateFormatter):
             same += 1
         # offset_formats: [1] year, [2] year-month, [3] year-month-day,
         # [5] year-month-day hour:minute; there is none for an hour alone
+        same = min(same, {0: 1, 1: 1, 2: 2, 3: 3, 4: 3, 5: 5}[level])
         index = {1: 1, 2: 2, 3: 3, 4: 3, 5: 5}[same]
         stated = fa[: {1: 1, 2: 2, 3: 3, 5: 5}[index]]
         return (a.strftime(self.offset_formats[index] or "%Y"), (a.year, a.year), stated)
