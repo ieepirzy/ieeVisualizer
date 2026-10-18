@@ -1,13 +1,14 @@
 """Render-time estimate vs measured render time, one case per cost term:
-measured / estimated must stay within [1 / OVER, UNDER] (a case over the band
-is measured once more; one-time costs are paid first). Marked ``slow``:
-excluded by default, run with ``python -m pytest -m slow``.
+measured / estimated must stay within [1 / OVER, UNDER] (one-time costs are
+paid first). The estimate is of render work, so the measurement is too:
+reference seconds (tests/cost.py, CPU time scaled by a reference workload),
+which a loaded machine does not inflate as it does wall-clock time. Marked
+``slow``: excluded by default, run with ``python -m pytest -m slow``.
 """
-
-import time
 
 import pytest
 from anim_helpers import vector_field_anim
+from cost import measure
 
 from ieeVisualizer.animation import (
     AnimationRequest,
@@ -106,10 +107,10 @@ def warm():
     render_animation(vector_field_anim(), AnimationRequest())
 
 
-def _timed(anim, req) -> float:
-    t = time.perf_counter()
-    render_animation(anim, req)
-    return time.perf_counter() - t
+def _cost(anim, req) -> float:
+    with measure() as c:
+        render_animation(anim, req)
+    return c.seconds
 
 
 @pytest.mark.parametrize("name", list(CASES))
@@ -118,9 +119,7 @@ def test_estimate_tracks_measured_render_time(name):
     req = AnimationRequest()
     figure = anim.figure
     est = matplotlib_work_us(anim, req.frame_request().size_px, N, figure) / 1e6
-    actual = _timed(anim, req)
-    if actual / est > UNDER:  # load on a shared machine only adds time: measure again
-        actual = min(actual, _timed(anim, req))
+    actual = _cost(anim, req)
     ratio = actual / est
     print(f"{name}: estimate {est:.2f} s, measured {actual:.2f} s, ratio {ratio:.2f}")
     assert 1 / OVER <= ratio <= UNDER, f"{name}: estimate {est:.2f} s, measured {actual:.2f} s"
