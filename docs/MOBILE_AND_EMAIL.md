@@ -139,7 +139,8 @@ changes) and the CJK font fallback (text the theme's font lacks).
   `legend_not_visible`;
 - every render (profile or not) reports a text annotation anchored outside
   the axes' limits, which matplotlib silently does not draw
-  (`annotation_outside_view`).
+  (`annotation_outside_view`), and a title that runs past the figure's edge
+  and is cut off (`title_clipped`).
 
 **Narrow profiles** (`email-phone`) also: an `"auto"` legend that leaves the
 axes goes below them, never to the right; a date axis label is left-aligned
