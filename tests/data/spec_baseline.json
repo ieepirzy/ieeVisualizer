@@ -1,6 +1,36 @@
 {
  "environments": {
   "matplotlib 3.11.2, numpy 2.5.4, sympy 1.14.0": {
+   "gallery.dist-beta-unbounded": {
+    "png": "sha256:a27524e45c1739fd183fb3a666075b7a2715908239137650d67d028848cb8b4c",
+    "spec_hash": "sha256:f00eb418a7994650f91ca07749f2991f0f9306b5a7939b7a1a48c56dd6a5378b",
+    "svg": "sha256:0060ef8dff25556c01c65de4c4cf2ef36072c88f1261eb0296b6eb61d42fe79f"
+   },
+   "gallery.dist-cdf-markers": {
+    "png": "sha256:6f3054a0ad3fa7f8a30a8bb08742ed030b26156d7cf0d35a8d545db9d5ebb6d0",
+    "spec_hash": "sha256:452ef17e11d27cd839b4836db1b4783b15879ce2ef72e11386ee34a9df604383",
+    "svg": "sha256:0cfb454bb872fdb19dbf8aed01119995bad546dacbb63faa744caea60d5b5698"
+   },
+   "gallery.dist-pmf-comparison": {
+    "png": "sha256:e790c2f6664e5d81c96ad3cbafd1004b406be50e5cfaca094c397e9c517c12ce",
+    "spec_hash": "sha256:03e3823a64143071df2ca4cdb75dcae62c14e9d8282fe5554d7074547e9f6436",
+    "svg": "sha256:426899d97d6f68baf5112f038b960ba3450449c2c67ffcc9006c585a5596774a"
+   },
+   "gallery.dist-pmf-interval": {
+    "png": "sha256:4664f2bf25895464a45d1c87e2cc98c20442694bc7059a06b363096012818987",
+    "spec_hash": "sha256:4971357f7b6f3641a7801c39d6a7fd989f8e362a86e813fb3af0bebfd6537d71",
+    "svg": "sha256:a74b735c0dfcad2086bf95cbc0325a42a159c89de5c40775f6fd3f37953dc2a2"
+   },
+   "gallery.fan-chart-quantiles": {
+    "png": "sha256:a26fcdfc2f55e86110dbc2f3a87e45d795e0a93e521312740fe0fe9770147ba8",
+    "spec_hash": "sha256:7e2495a2bce8e4d7ca2efccda432d69e73d199b8cd77e2ba094779d55092b274",
+    "svg": "sha256:47c9717bdd0d3eb095b5f85368144bb55a2d7473a7cd4af897cb6e144984ad1e"
+   },
+   "gallery.fan-chart-random-walk": {
+    "png": "sha256:24d0ce99cd2f8e1daa18b84a990f567510a0f3e727c1381f2ae90697a3ca9ec3",
+    "spec_hash": "sha256:cc4c3acb523811ec7a15782651166a5d5f8c423559da64196e3a6716964e3ae6",
+    "svg": "sha256:2b13d56033b6e8842dab6cace953b52283678eadde6e9b6bb07a990aacd2c688"
+   },
    "gallery.interval-bar": {
     "png": "sha256:1c0a763ca30c2ffa96abf800330af7b39ba8cd4e814e7ffed3c95b0b96a78bbe",
     "spec_hash": "sha256:a3187b08d842136aa57aa5f5f9c1ca6c98b45fb1e6f4e76d8417791bd8c3186a",
@@ -85,6 +115,16 @@
     "png": "sha256:84cd9b0399ffa08968556e3002318c644a772db0b8620d31dfc2266ca73df295",
     "spec_hash": "sha256:7065a6c9d07941abcbeafa23b52534ce1d24dd061493074643c81139883c2a1a",
     "svg": "sha256:f2664793baae9197293de970cac5a4abfc7e080b279bcd4ef42b4db698e1860e"
+   },
+   "gallery.sample-dotplot": {
+    "png": "sha256:1719e1ebcdf0a95aafb03576950f1b52cf8dceafe4dd76c2b6cdb780ef1ab160",
+    "spec_hash": "sha256:ef488f3cbc1ae6312a254b9ca56765f2e70bc672965683fdcd3e9f8497cd5a81",
+    "svg": "sha256:7f5595d0ab93a34ee1d09672ea22ba3a5e69933e879fb289e9cf3252d4b4e4b8"
+   },
+   "gallery.sample-ecdf-groups": {
+    "png": "sha256:5f3309eb2e1a7fe2127445686ccef1a88fc063941afe3ece9e6f9a3559659e7e",
+    "spec_hash": "sha256:40eabc44f7d3eb4369440b748d17482ba4e9a14a72d9f8a1314167512cac63b9",
+    "svg": "sha256:4e33e8914c06802019af6c404a66b9f6071468c963672fddc4d0ceff30415331"
    },
    "render_examples.area_spec": {
     "png": "sha256:311deac5cd0d8879b7427c4065e136e274abe39ef83deffc2bdd24fa07148d68",
@@ -181,15 +221,30 @@
     "spec_hash": "sha256:9543723383fd2cd8fda97f1ab1bca33a79ed3f223eb570a56e0ee547a29dac15",
     "svg": "sha256:2559b843b83d3140dcfd669a513b601efbf5ce6355b42996d8217010f96b289b"
    },
+   "template.distribution@1.0.0": {
+    "png": "sha256:4fde854e90d061764423c77032c0594a4266862249cd2596fa640e7cc2275666",
+    "spec_hash": "sha256:1efd1606d4183c717cad3e171fd7b1fffed2f2651e650d3d31261e6dc01da8c7",
+    "svg": "sha256:7c6394bb89f32d558bc0f5c4fa100f6ed4c5f38f59d3e0f952f3b543715d1db1"
+   },
    "template.estimate_comparison@1.0.0": {
     "png": "sha256:112c4b61697c12c3c5fe73f054f4cc70eaed40aaecbe9030eb1d10751027820d",
     "spec_hash": "sha256:29b541b83059a547f22e5ac4b00855743dbe0f6ace738488eeb470334f202fed",
     "svg": "sha256:6f0dcd0875bf203de704b37bdaedf996b7d8a91b2f34365708040183879a5b24"
    },
+   "template.fan_chart@1.0.0": {
+    "png": "sha256:79046ecb520672da2343b4c3556e0846ee338c69e590cd31485b5a9bff33e25c",
+    "spec_hash": "sha256:8a83353f8213ba820c54651f8a8e2935c27c95c906ad02f4dcb9983af592ec01",
+    "svg": "sha256:a4d5e9914c8fce91a683efe13dcb910527d043d3eddc47e7a496071f2287eb0c"
+   },
    "template.funnel@1.0.0": {
     "png": "sha256:c3d59b51fc809ab72ccf1036209da3dfcfdcc02ac8300b59c1f49f9ba1ca0a2a",
     "spec_hash": "sha256:8c83ed6aef98d88c93c4d834331ee3edfd34b00f6da9004366fd6c47b352ae94",
     "svg": "sha256:eb4b5860eb3d9861203c93e44e3dc3d214f73b3fddbf3bd905dec2779d563e78"
+   },
+   "template.sample_distribution@1.0.0": {
+    "png": "sha256:448d1375a51ebb3c82911a28a62bdb4ca447424eb957b4fbdfa3f83c4e652073",
+    "spec_hash": "sha256:3ca1e03a322687cc9748eb96c0d463474ea5c010fff400978b32f9e02150e73a",
+    "svg": "sha256:34fb0b5c4cd0c1b73ab7facc73c441cdbe39a1c51c3400399f88d8df3bfc3177"
    },
    "template.timeseries@1.0.0": {
     "png": "sha256:17305df6e848f1405e5495cba6e779ed275042de1c31124bc59649a3fe60c170",
@@ -213,6 +268,36 @@
    }
   },
   "matplotlib 3.9.4, numpy 2.0.2, sympy 1.14.0": {
+   "gallery.dist-beta-unbounded": {
+    "png": "sha256:868408fe83648b37fe7ea24b6e89f797d1997310cadc82d284b1f5fc99130735",
+    "spec_hash": "sha256:f00eb418a7994650f91ca07749f2991f0f9306b5a7939b7a1a48c56dd6a5378b",
+    "svg": "sha256:b7cdda54e3ebf6939ca525847a64ee44533e9ec60fc3ae002d3208ce9843b6c3"
+   },
+   "gallery.dist-cdf-markers": {
+    "png": "sha256:a428fcb291193a00080bc9f5ef75aa2c1c780a9f8a801829a5ae03bc64644c32",
+    "spec_hash": "sha256:452ef17e11d27cd839b4836db1b4783b15879ce2ef72e11386ee34a9df604383",
+    "svg": "sha256:505a3941bb42517abeba2fbcb605f6a23264619a1c65cd6db2145dea1a8b85de"
+   },
+   "gallery.dist-pmf-comparison": {
+    "png": "sha256:1bded6c9020ab7a3ab3479ba357b520c1b984795ea4f382cc076bfe9e14ab7ef",
+    "spec_hash": "sha256:03e3823a64143071df2ca4cdb75dcae62c14e9d8282fe5554d7074547e9f6436",
+    "svg": "sha256:3308281ffcc100723e22dfadbc9d4fd5af0637241786cecb75c74017f73de72e"
+   },
+   "gallery.dist-pmf-interval": {
+    "png": "sha256:dd88b45c7d02a77fa100dd8cf8c25b63096852efac7fa71f3390567325afbf71",
+    "spec_hash": "sha256:4971357f7b6f3641a7801c39d6a7fd989f8e362a86e813fb3af0bebfd6537d71",
+    "svg": "sha256:44c2f127caaff6880173dee914e7ae2e5f4e7b8044b6107a084ebe389f16609e"
+   },
+   "gallery.fan-chart-quantiles": {
+    "png": "sha256:98a23b9b55e24ca72dcc99a580566b2971698102ff798ff2b857e95e4570c77c",
+    "spec_hash": "sha256:7e2495a2bce8e4d7ca2efccda432d69e73d199b8cd77e2ba094779d55092b274",
+    "svg": "sha256:297da98be06363594e478a6671c30d6c6dfc920e347042bee4a17d993afcca63"
+   },
+   "gallery.fan-chart-random-walk": {
+    "png": "sha256:85fbf20918e1b01d0407cb7584c77278555babbd74e19844c5d6ec376e5341d8",
+    "spec_hash": "sha256:cc4c3acb523811ec7a15782651166a5d5f8c423559da64196e3a6716964e3ae6",
+    "svg": "sha256:f75b651db9ac82edd2568b483ff90f244f16e9bfffdd9ba95a98704d3ee613e3"
+   },
    "gallery.interval-bar": {
     "png": "sha256:d98abc5fdcb30ff936bec0c78c26637519cc1b57b52e1c8d8d2d3296b07d14cb",
     "spec_hash": "sha256:a3187b08d842136aa57aa5f5f9c1ca6c98b45fb1e6f4e76d8417791bd8c3186a",
@@ -297,6 +382,16 @@
     "png": "sha256:9033462354dd31f657d8d3d8e674254ba9be72ac70fdcee5df3b0ecd87fcb977",
     "spec_hash": "sha256:7065a6c9d07941abcbeafa23b52534ce1d24dd061493074643c81139883c2a1a",
     "svg": "sha256:558eff25eede97746fdc2c607e0d6c9cce788d72e9d2a5dd8d059964e9d6fb79"
+   },
+   "gallery.sample-dotplot": {
+    "png": "sha256:740b275b8089fea711a4d6d2568527655327ed5f81b730e8ff45180e6ace6b7e",
+    "spec_hash": "sha256:ef488f3cbc1ae6312a254b9ca56765f2e70bc672965683fdcd3e9f8497cd5a81",
+    "svg": "sha256:17cabb9db1e2667d6653e9c01619489a8df3f3f0a69acec62212adebb51d1d5d"
+   },
+   "gallery.sample-ecdf-groups": {
+    "png": "sha256:ce09bc220a820c0872845e49f1fa9c98db354941cac05030e6e4ae972462d62b",
+    "spec_hash": "sha256:40eabc44f7d3eb4369440b748d17482ba4e9a14a72d9f8a1314167512cac63b9",
+    "svg": "sha256:7bb1396772687369b809b21b955043aef18a6aa1761a0fed25306fdd4e5c6d98"
    },
    "render_examples.area_spec": {
     "png": "sha256:16121da5c4fff00931422ac7b298d2ed14e75dd078576b1be2e52bbea44cf147",
@@ -393,15 +488,30 @@
     "spec_hash": "sha256:9543723383fd2cd8fda97f1ab1bca33a79ed3f223eb570a56e0ee547a29dac15",
     "svg": "sha256:5452296cb1cf9d9676adcf0044715b81b2526ec0eb8a804d05dcf4b566fa7c99"
    },
+   "template.distribution@1.0.0": {
+    "png": "sha256:43d0dc956ac7353855660e301f662ea02c1979d169400fb5a8c142c5e73c002c",
+    "spec_hash": "sha256:1efd1606d4183c717cad3e171fd7b1fffed2f2651e650d3d31261e6dc01da8c7",
+    "svg": "sha256:7e0b0d9333d01f4a71510f7bad8598a80258bff26a979535cfeb19662e045f68"
+   },
    "template.estimate_comparison@1.0.0": {
     "png": "sha256:4e6696cd8e13e87fc0d3c3eed6750faf136735ae7b097ea6ac5e7bbfb6450234",
     "spec_hash": "sha256:29b541b83059a547f22e5ac4b00855743dbe0f6ace738488eeb470334f202fed",
     "svg": "sha256:62d3ad0b62cf033aab1536aad3942b46feec7bf47ebb5faccc3d3c4ba86b4fa4"
    },
+   "template.fan_chart@1.0.0": {
+    "png": "sha256:e1ec4883c1d918a3d08f4dcda2e8d78d35ebef29c6414bd739ce9b55c94d770f",
+    "spec_hash": "sha256:8a83353f8213ba820c54651f8a8e2935c27c95c906ad02f4dcb9983af592ec01",
+    "svg": "sha256:8f29c13597c301e6659085b1a4964563cc418fdfe6cb5b53e9cc2e3096253cd5"
+   },
    "template.funnel@1.0.0": {
     "png": "sha256:be7ccd33eb188517ad7b38aceff4908d545129663333ae3ae4a92342def09730",
     "spec_hash": "sha256:8c83ed6aef98d88c93c4d834331ee3edfd34b00f6da9004366fd6c47b352ae94",
     "svg": "sha256:d0c146dc42e2d3c8aff1f0bba4d2243d19ee8636619ee542e1d7beb992a4fa79"
+   },
+   "template.sample_distribution@1.0.0": {
+    "png": "sha256:abde25f358220882dec3d2f77531de6e9b74b2586e645b0e46489597b47688dd",
+    "spec_hash": "sha256:3ca1e03a322687cc9748eb96c0d463474ea5c010fff400978b32f9e02150e73a",
+    "svg": "sha256:8a9cd5d8d6ccc0be6223467e532e42e287732716eb1d5f53c45d78e254bcf3ff"
    },
    "template.timeseries@1.0.0": {
     "png": "sha256:ffb3136096a010782e84633d2e238cba23a1480a5da7f9bb586ee5aae401d170",
@@ -432,7 +542,13 @@
   "dependency_map": [
    "1.0.0"
   ],
+  "distribution": [
+   "1.0.0"
+  ],
   "estimate_comparison": [
+   "1.0.0"
+  ],
+  "fan_chart": [
    "1.0.0"
   ],
   "funnel": [
@@ -442,6 +558,9 @@
    "1.0.0"
   ],
   "org_chart": [
+   "1.0.0"
+  ],
+  "sample_distribution": [
    "1.0.0"
   ],
   "timeseries": [

@@ -236,15 +236,13 @@ and discrete ones cannot (`conflicting_parameters`).
   outside [0, 1], `.../n` for a non-integer n, `unknown_parameter` with a
   did-you-mean for a misspelt one, `invalid_parameter` for an unknown
   family. Shape, count and rate parameters are at most 10^6.
-- **Numerics:** PDF/PMF closed forms, recorded per distribution as a SymPy
-  expression (`metadata["template"]["distributions"][k]["formula"]`; the
-  tests check each against `sympy.stats`); CDFs from `erfc` and the
-  regularized incomplete beta and gamma functions (continued fractions with
-  an iteration cap, so time is bounded; a parameter set that does not
-  converge is refused); quantiles by bisection on the CDF, discrete ones as
-  the smallest k with F(k) >= p. Pure Python: no SciPy, and mpmath (shipped
-  with SymPy) is not used because it fails to converge on large shapes.
-  Values are stored to 10 significant digits.
+- **Numerics:** PDF/PMF closed forms, recorded as SymPy expressions
+  (`metadata["template"]["distributions"][k]["formula"]`, tested against
+  `sympy.stats`); CDFs from `erfc` and the regularized incomplete beta and
+  gamma functions (continued fractions, capped iterations: bounded time);
+  quantiles by bisection. Plain Python: SciPy is not a dependency, and
+  mpmath fails to converge on large shapes. Values stored to 10
+  significant digits.
 - **`interval`** `{kind, level?, quantiles?}`: `quantile` with a level is
   the central share, labelled "central 90% of the distribution (P5–P95)";
   with `quantiles` [lower, upper] "P5–P75 of the distribution (70%)";
