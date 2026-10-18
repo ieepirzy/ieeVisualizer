@@ -82,4 +82,4 @@ def test_every_band_states_its_kind_and_level_in_the_legend():
                      "P25–P75 percentiles (50%, forecast)", "Median of 200 paths (forecast)"]
     built = build_figure(example("sample_distribution"), RenderRequest(format="png"))
     texts = [t.get_text() for t in built.axes.get_legend().get_texts()]
-    assert texts == ["Histogram, n = 400", "Kernel density estimate, h = 23.4 ms"]
+    assert texts == ["Histogram, n = 400", "Kernel density estimate, h = 23.4\u00a0ms"]

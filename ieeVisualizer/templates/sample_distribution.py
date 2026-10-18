@@ -32,6 +32,7 @@ from typing import Any
 
 from ..spec import Axis, DataSnapshot, FigureSpec, HistogramMark, LineMark, ScatterMark
 from ..spec.data import Column
+from ..themes.locale import NBSP
 from ._business import THEME_PARAM, check_theme, copy_rows, locale_for
 from .base import ColumnRequirement, ComponentTemplate, Issues, Parameter, column_path, param_path
 from .distribution import number_text, store
@@ -265,7 +266,8 @@ class SampleDistributionTemplate(ComponentTemplate):
                                            unit=self._density_unit(data, p))},
                 provenance=spec.datasets["samples"].provenance)
             spec.layers.append(LineMark(data="kde", encoding={"x": vname, "y": "density"},
-                                        name=f"Kernel density estimate, h = {hs}{unit_text}"))
+                                        name=f"Kernel density estimate, h = {hs}"
+                                             f"{unit_text.replace(' ', NBSP)}"))
             meta["kde"] = {"kernel": "gaussian", "bandwidth": store(h),
                            "bandwidth_method": p["bandwidth_method"],
                            "bandwidth_rule": _BW_TEXT[p["bandwidth_method"]],

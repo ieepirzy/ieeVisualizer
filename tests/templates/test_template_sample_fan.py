@@ -43,7 +43,7 @@ def test_kde_bandwidth_is_recorded_and_stated(method):
     assert kde["bandwidth_method"] == method and kde["kernel"] == "gaussian"
     shown = f"{want:.3g}"
     assert f"bandwidth h = {shown}" in spec.caption
-    assert spec.layers[1].name == f"Kernel density estimate, h = {shown}"
+    assert spec.layers[1].name == f"Kernel density estimate, h = {shown}"  # no unit: none set
     assert ("Scott's rule" if method == "scott" else "Silverman's rule") in spec.caption
 
 
