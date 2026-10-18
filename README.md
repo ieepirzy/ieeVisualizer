@@ -74,8 +74,8 @@ from ieeVisualizer.artifacts import LocalDirectoryWriter, export
 from ieeVisualizer.spec import DataSnapshot
 
 print([t["name"] for t in templates.list_templates()])
-# ['bar_comparison', 'dependency_map', 'estimate_comparison', 'funnel', 'network', 'org_chart',
-#  'timeseries', 'vector_field_2d']
+# ['bar_comparison', 'dependency_map', 'distribution', 'estimate_comparison', 'fan_chart',
+#  'funnel', 'network', 'org_chart', 'sample_distribution', 'timeseries', 'vector_field_2d']
 data = DataSnapshot.from_columns({"day": [1, 2, 3, 4], "load": [3.2, 3.9, None, 4.4]},
                                  units={"day": "d", "load": "kWh"})
 spec = templates.build("timeseries", data, {"time_column": "day", "value_columns": ["load"]})

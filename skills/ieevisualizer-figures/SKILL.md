@@ -17,8 +17,11 @@ Climb only as far as the figure needs.
 
 1. **Registered template.** A proven pattern with typed slots and built-in
    checks. Today: `timeseries` (units, forecast split, caller-supplied bounds,
-   target line), `bar_comparison`, `funnel`, `vector_field_2d`, and the
-   network templates `network`, `org_chart`, `dependency_map`.
+   target line), `bar_comparison`, `estimate_comparison`, `funnel`,
+   `vector_field_2d`, `distribution` (named distributions from closed
+   forms), `sample_distribution` (histogram + KDE, ECDF, quantile dotplot),
+   `fan_chart` (quantile bands over time), and the network templates
+   `network`, `org_chart`, `dependency_map`.
    `templates.list_templates()`, `templates.describe(name)`.
 2. **Compose registered primitives.** Write a `FigureSpec` from the eight
    marks (`line`, `scatter`, `bar`, `area`, `histogram`, `heatmap`, `quiver`,
@@ -42,9 +45,11 @@ registered, versioned data (`themes.list_themes()`); name one in
 `spec.theme`, pinned as `name@version` for reproducibility, instead of
 styling by hand. Intervals: `band` and `errorbar` marks, or `y_lower` /
 `y_upper` on a line, scatter or vertical bar, each with its `interval_kind`
-and `interval_level` (docs/SPEC.md "Intervals"). Not yet available: small
-multiples in one FigureSpec, subtitles, ensembles of trajectories. Do not
-fake them; say what is missing and use the nearest honest form.
+and `interval_level` (docs/SPEC.md "Intervals"). Simulated inputs:
+`ieeVisualizer.stochastic` (`random_walk`, `gbm`), seeded and marked
+synthetic. Not yet available: small multiples in one FigureSpec,
+subtitles, an ensemble mark drawing every trajectory. Do not fake them;
+say what is missing and use the nearest honest form.
 
 ## Workflow
 

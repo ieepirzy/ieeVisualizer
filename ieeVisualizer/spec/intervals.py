@@ -112,6 +112,34 @@ def interval_label(kind: str, level: float | None = None, multiplier: float | No
     return "min-max range"
 
 
+def distribution_interval_label(kind: str, level: float | None = None,
+                                quantiles: list[float] | None = None, decimal: str = ".",
+                                percent_sep: str = "") -> str:
+    """An interval *of a distribution* (not of an estimate), in words:
+    ``"central 90% of the distribution (P5–P95)"`` (quantile kind with a
+    level), ``"P5–P75 of the distribution (70%)"`` (explicit quantiles), or
+    ``"90% credible interval (central, P5–P95)"`` for a credible/prediction
+    interval read off a posterior/predictive distribution. Numbers are
+    written as :func:`interval_label` writes them."""
+    pct = f"{percent_sep}%"
+    if quantiles is not None:
+        lo, hi = quantiles
+        width = float(Decimal(repr(float(hi))) - Decimal(repr(float(lo))))
+        return (f"{_pct(lo, decimal)}–{_pct(hi, decimal)} of the distribution "
+                f"({_percent(width, decimal)}{pct})")
+    tail = (Decimal(1) - Decimal(repr(float(level)))) / 2
+    span = f"{_pct(float(tail), decimal)}–{_pct(float(1 - tail), decimal)}"
+    if kind == "quantile":
+        return f"central {_percent(level, decimal)}{pct} of the distribution ({span})"
+    return f"{interval_label(kind, level, decimal=decimal, percent_sep=percent_sep)} " \
+           f"(central, {span})"
+
+
+def percentile_text(q: float, decimal: str = ".") -> str:
+    """A quantile in P-notation, as interval labels write it: 0.025 -> ``P2.5``."""
+    return _pct(q, decimal)
+
+
 def mark_interval_label(m: Mark, decimal: str = ".", percent_sep: str = "") -> str | None:
     """:func:`interval_label` of a mark's interval, or None if it has none."""
     if not has_interval(m):

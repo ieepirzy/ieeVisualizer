@@ -215,6 +215,17 @@ reviewable branches; order follows dependencies, not importance.
   closed forms — PDF/PMF, CDF, shaded intervals, quantile markers, comparison
   of several distributions. Densities from samples (histogram + KDE with the
   bandwidth recorded), quantile dotplots, ECDF.
+  *Status (branch `claude/distributions-fan-charts`):* the `distribution`
+  template (normal, log-normal, beta, gamma, Student t, Poisson, binomial;
+  PDF/PMF or CDF, discrete as bars; shaded intervals labelled with kind and
+  level, a discrete one with the share it covers; quantile markers;
+  comparisons). Closed forms are recorded as SymPy expressions and checked
+  against `sympy.stats`, but evaluated in plain Python (CDFs by bounded
+  continued fractions): SciPy is not a dependency and mpmath does not
+  converge on large shapes. `sample_distribution`: histogram + Gaussian KDE
+  (bandwidth method and value recorded and stated), ECDF per group,
+  quantile dotplot. Not yet: other kernels, boundary-corrected KDE,
+  mixtures, distributions fitted to data.
 - **Bayesian:** prior / likelihood / posterior template, credible intervals
   (equal-tailed and HDI, labelled as such), posterior predictive bands,
   prior→posterior update animation.
@@ -222,6 +233,13 @@ reviewable branches; order follows dependencies, not importance.
   ensembles with seed recorded, fan charts, hitting-time histograms.
   Simulation helpers are small and seeded (plot-focused, like the RK4 helper
   the vision allows); heavy simulation stays in ieeLabTools.
+  *Status (branch `claude/distributions-fan-charts`):* the `fan_chart`
+  template (nested quantile bands from an ensemble's empirical quantiles
+  or from given quantile columns, built on `timeseries` 2.0.1 bands) and
+  `ieeVisualizer.stochastic.random_walk` / `gbm` (seeded with
+  `random.Random`, capped at 200 000 values, provenance marked synthetic
+  with the seed). Not yet: the `ensemble` mark (individual paths),
+  hitting-time histograms.
 - **Trajectory animations for non-technical audiences:** a model's projected
   path with its uncertainty growing over time; scale changes shown explicitly
   (linear vs log, doubling-time annotations).

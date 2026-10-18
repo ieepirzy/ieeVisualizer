@@ -4,12 +4,12 @@ objects from data + parameters, and the registry agents browse them through.
 
 Importing this package never imports matplotlib, numpy or sympy; the
 ``vector_field_2d`` template imports numpy/sympy lazily when it samples
-expressions. See ``docs/TEMPLATES.md``.
+expressions, ``sample_distribution`` numpy when it computes a KDE. See ``docs/TEMPLATES.md``.
 
     >>> from ieeVisualizer import templates
     >>> [t["name"] for t in templates.list_templates()]  # doctest: +NORMALIZE_WHITESPACE
-    ['bar_comparison', 'dependency_map', 'estimate_comparison', 'funnel', 'network',
-     'org_chart', 'timeseries', 'vector_field_2d']
+    ['bar_comparison', 'dependency_map', 'distribution', 'estimate_comparison', 'fan_chart',
+     'funnel', 'network', 'org_chart', 'sample_distribution', 'timeseries', 'vector_field_2d']
     >>> spec = templates.get("vector_field_2d").build(u="-y", v="x", grid=5)
 """
 
@@ -27,9 +27,12 @@ from .base import (
     TemplateInputError,
     TemplateRegistryError,
 )
+from .distribution import DistributionTemplate
 from .estimate_comparison import EstimateComparisonTemplate
+from .fan_chart import FanChartTemplate
 from .funnel import FunnelTemplate
 from .registry import TemplateRegistry, parse_semver
+from .sample_distribution import SampleDistributionTemplate
 from .timeseries import TimeseriesTemplate
 from .timeseries_intervals import TimeseriesTemplate2, TimeseriesTemplate201
 from .vector_field import VectorField2DTemplate
@@ -44,6 +47,9 @@ def _builtin_registry() -> TemplateRegistry:
     reg.register(BarComparisonTemplate())
     reg.register(FunnelTemplate())
     reg.register(EstimateComparisonTemplate())
+    reg.register(DistributionTemplate())
+    reg.register(SampleDistributionTemplate())
+    reg.register(FanChartTemplate())
     # Network templates build a NetworkSpec (ieeVisualizer.network), not a
     # FigureSpec. Imported here, after .base, so either package can be
     # imported first.
@@ -90,9 +96,12 @@ __all__ = [
     "BarComparisonTemplate",
     "ColumnRequirement",
     "ComponentTemplate",
+    "DistributionTemplate",
     "EstimateComparisonTemplate",
+    "FanChartTemplate",
     "FunnelTemplate",
     "Parameter",
+    "SampleDistributionTemplate",
     "TemplateInputError",
     "TemplateRegistry",
     "TemplateRegistryError",

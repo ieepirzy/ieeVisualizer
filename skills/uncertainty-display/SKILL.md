@@ -85,13 +85,23 @@ Round the estimate to the interval's precision: "conversion 24% (95% CI
   in the legend (or the caption when the legend is hidden) and draws bounds
   as given; a null bound is a gap.
 - **Templates:** `timeseries` 2.0.0 takes `intervals` (several levels make a
-  fan chart); `estimate_comparison` draws estimates with intervals across
-  groups. `timeseries` 1.0.0's `lower_column`/`upper_column` still draw two
-  unlabelled dotted lines: state the kind and level in the caption there.
+  fan chart); `fan_chart` draws nested quantile bands from an ensemble's
+  paths (empirical quantiles, a level refused when its tail is thinner
+  than one path) or from given quantile columns; `estimate_comparison`
+  draws estimates with intervals across groups; `distribution` shades
+  "central 90% of the distribution (P5–P95)" of a named distribution (a
+  discrete one also says what it really covers); `sample_distribution`
+  draws a histogram with a KDE whose bandwidth is stated, an ECDF, or a
+  quantile dotplot. `timeseries` 1.0.0's `lower_column`/`upper_column`
+  still draw two unlabelled dotted lines: state the kind and level in the
+  caption there.
+- **Simulated ensembles:** `ieeVisualizer.stochastic` (`random_walk`,
+  `gbm`) records the seed and marks the data synthetic; `fan_chart` says so
+  in the caption. Say how many paths and which model.
 - **Still yours to state:** n, the unit of replication and the method
   (Rule 1, items 3-5) have no field; put them in the `caption`.
 - **Planned (ROADMAP "Phase 2 onward"):** an ensemble mark for many
-  trajectories, quantile dotplots.
+  trajectories (thin lines per path).
 
 ## Good / bad
 

@@ -51,6 +51,8 @@ unknown_symbol           an expression uses a name that is neither a variable,
                          a parameter nor an allowed function
 nonfinite_samples        (warning) an expression gave nan/inf at some grid points;
                          those samples are stored as null, never as a number
+null_samples_dropped     (warning) null values of a sample or ensemble are not samples;
+                         they were left out and n counts only the values drawn
 missing_interval_kind,   an interval parameter does not state what it is, or
 invalid_interval_kind,   states it inconsistently (the spec's interval codes,
 missing_interval_level,  from ``spec.intervals.metadata_problems``)
@@ -96,6 +98,10 @@ PARAM_TYPES = {
     "range": "array [min, max] of two numbers, min < max",
     "grid": "integer n (n x n points) or array [nx, ny]",
     "number_map": "object {name: number}",
+    "number_list": "array of finite numbers",
+    "object": "object; its keys are listed in the parameter's description",
+    "object_list": "non-empty array of objects; their keys are listed in the parameter's "
+                   "description",
     "interval_list": "array of {lower, upper, kind, level?, multiplier?, quantiles?}: two "
                      "column names, an interval kind, and its level (fraction, e.g. 0.95; "
                      "central for quantile), SE/SD multiplier, or quantiles [lower, upper]",
@@ -538,6 +544,20 @@ def _coerce_param(p: Parameter, v: Any, issues: Issues) -> Any:
         v = list(v)
     elif t == "interval_list":
         return _coerce_intervals(p, v, issues)
+    elif t == "number_list":
+        if (not isinstance(v, (list, tuple)) or not v
+                or not all(_is_number(x) for x in v)):
+            return bad("a non-empty list of finite numbers")
+        v = [float(x) for x in v]
+    elif t == "object":
+        if not isinstance(v, Mapping):
+            return bad("an object")
+        v = copy.deepcopy(dict(v))
+    elif t == "object_list":
+        if not isinstance(v, (list, tuple)) or not v or not all(
+                isinstance(x, Mapping) for x in v):
+            return bad("a non-empty list of objects")
+        v = [copy.deepcopy(dict(x)) for x in v]
     elif t == "number_map":
         if not isinstance(v, Mapping) or not all(
                 isinstance(k, str) and _is_number(x) for k, x in v.items()):

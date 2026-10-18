@@ -289,6 +289,61 @@ def interval_marks() -> dict[str, FigureSpec]:
     return {"interval-line": line, "interval-scatter": scatter, "interval-bar": bar}
 
 
+def distribution_specs() -> dict[str, FigureSpec]:
+    """The distribution, sample_distribution and fan_chart templates beyond
+    their own examples: discrete families, CDFs, an unbounded density, a
+    discrete interval, ECDF and dotplot views, given quantiles and a seeded
+    random walk (``ieeVisualizer.stochastic``)."""
+    dist = templates.get("distribution")
+    out = {
+        "dist-pmf-comparison": dist.build(distributions=[
+            {"family": "poisson", "params": {"lambda": 4.0}},
+            {"family": "binomial", "params": {"n": 12, "p": 0.35}}],
+            x_label="Arrivals per hour", title="Two count models"),
+        "dist-pmf-interval": dist.build(
+            distributions=[{"family": "poisson", "params": {"lambda": 6.5}}],
+            interval={"kind": "quantile", "level": 0.9}, x_label="Calls per hour",
+            title="Poisson calls: the central 90%"),
+        "dist-cdf-markers": dist.build(view="cdf", distributions=[
+            {"family": "normal", "params": {"mu": 0.0, "sigma": 1.0}},
+            {"family": "student_t", "params": {"df": 3.0}}],
+            quantile_markers=[0.05, 0.5, 0.95], title="Normal vs Student t tails"),
+        "dist-beta-unbounded": dist.build(
+            distributions=[{"family": "beta", "params": {"alpha": 0.5, "beta": 0.5}}],
+            interval={"kind": "quantile", "level": 0.8}, x_label="Conversion rate",
+            title="Jeffreys prior Beta(0.5, 0.5)"),
+    }
+    sample = templates.get("sample_distribution")
+    payload = sample.example()
+    out["sample-dotplot"] = sample.build(payload["data"], **dict(
+        payload["params"], display="dotplot", title="Response time: 20 quantile dots"))
+    rng = np.random.default_rng(13)
+    out["sample-ecdf-groups"] = sample.build(
+        _snap({"wait": np.round(np.concatenate([rng.gamma(4.0, 2.5, 120),
+                                                rng.gamma(6.0, 2.0, 160)]), 1),
+               "release": ["before"] * 120 + ["after"] * 160}, units={"wait": "min"}),
+        value_column="wait", group_column="release", display="ecdf",
+        x_label="Waiting time", title="Waiting time before and after the release")
+    _, cols = _quantile_fan()
+    unit = {k: "°C" for k in cols}
+    unit["h"] = "h"
+    fan = templates.get("fan_chart")
+    out["fan-chart-quantiles"] = fan.build(
+        _snap(cols, units=unit), time_column="h",
+        quantile_columns={"q05": 0.05, "q25": 0.25, "median": 0.5, "q75": 0.75, "q95": 0.95},
+        interval_kind="prediction", x_label="Horizon", y_label="Temperature",
+        title="Given predictive quantiles as a fan")
+    from ieeVisualizer.stochastic import random_walk
+
+    walk = random_walk(paths=300, steps=30, seed=21, drift=0.2, sigma=1.5, unit="units",
+                       time_unit="day")
+    out["fan-chart-random-walk"] = fan.build(
+        walk, time_column="time", member_column="path", value_column="value",
+        levels=[0.5, 0.9], x_label="Day", y_label="Stock level",
+        title="Random walk: 300 simulated paths")
+    return out
+
+
 MARKS = {
     "mark-line": mark_line,
     "mark-scatter": mark_scatter,
@@ -319,7 +374,8 @@ def template_specs() -> dict:
 
 #: Themes the reporting templates are also shown in (entry suffix -> theme).
 THEMED = {"report-light": "report-light", "dashboard-dark": "dashboard-dark"}
-THEMED_TEMPLATES = ("bar_comparison", "estimate_comparison", "funnel", "timeseries")
+THEMED_TEMPLATES = ("bar_comparison", "distribution", "estimate_comparison", "fan_chart",
+                    "funnel", "sample_distribution", "timeseries")
 
 
 def themed_specs() -> dict[str, FigureSpec]:
@@ -411,6 +467,7 @@ def all_specs() -> dict:
     specs.update(interval_marks())
     specs.update(template_specs())
     specs.update(themed_specs())
+    specs.update(distribution_specs())
     specs.update(legacy_specs())
     specs.update(network_specs())
     return specs
