@@ -304,6 +304,10 @@ def test_huge_frame_column_is_refused_for_its_work(monkeypatch):
         render_animation(anim, SMALL, deadline=3600, isolation="inline")
     assert e.value.issues[0].code == "animation_too_expensive"
     assert built == []
+    # and in a worker, the default (the spies above cannot see in there)
+    with pytest.raises(AnimationError) as e:
+        render_animation(anim, SMALL, deadline=3600, isolation="process")
+    assert e.value.issues[0].code == "animation_too_expensive"
 
 
 def test_template_sweep_work_is_estimated_before_the_template_runs(monkeypatch):
