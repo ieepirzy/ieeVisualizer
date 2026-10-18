@@ -382,7 +382,7 @@ class DistributionTemplate(ComponentTemplate):
             return Axis(label="Cumulative probability", limits=[0.0, 1.0])
         if discrete:
             return Axis(label="Probability", limits=[0.0, None])
-        return Axis(label="Probability density", unit=self._y_unit(p, discrete, cdf),
+        return Axis(label="Density", unit=self._y_unit(p, discrete, cdf),
                     limits=[0.0, store(max(cut)) if cut else None])
 
     def _interval(self, spec: FigureSpec, p: dict[str, Any], dists: list[Dist],
