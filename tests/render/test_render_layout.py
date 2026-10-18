@@ -94,3 +94,18 @@ def test_no_data_note_is_inside_the_plot_on_a_log_axis(horizontal):
     assert np.all(np.isfinite(bbox.get_points()))
     assert ax_box.x0 <= bbox.x0 and bbox.x1 <= ax_box.x1 + 1
     assert ax_box.y0 <= bbox.y0 and bbox.y1 <= ax_box.y1 + 1
+
+
+def test_a_title_cut_off_at_the_figures_edge_is_reported():
+    from ieeVisualizer.render import RenderRequest, render
+    from ieeVisualizer.spec import FigureSpec, FunctionMark
+
+    def fig(title):
+        return FigureSpec(title=title, layers=[FunctionMark(
+            expression="sin(x)", variables=["x"], domain={"x": [0.0, 6.0]}, samples=20)])
+
+    narrow = RenderRequest(format="png", width=2.0, height=1.5, dpi=100)
+    codes = [w.code for w in render(fig("A rather long title for a narrow figure"),
+                                    narrow).warnings]
+    assert "title_clipped" in codes
+    assert "title_clipped" not in [w.code for w in render(fig("Short"), narrow).warnings]
