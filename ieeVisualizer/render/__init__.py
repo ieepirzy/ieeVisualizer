@@ -26,6 +26,7 @@ from .base import (
 from .mpl import MatplotlibAdapter, build_figure
 from .prepare import PreparedSpec, prepare
 from .profiles import (
+    EMAIL_GATING_CODES,
     GATING_CODES,
     LEGIBILITY_CODES,
     LegibilityError,
@@ -44,6 +45,7 @@ from .registry import (
 )
 
 __all__ = [
+    "EMAIL_GATING_CODES",
     "GATING_CODES",
     "LEGIBILITY_CODES",
     "MEDIA_TYPES",

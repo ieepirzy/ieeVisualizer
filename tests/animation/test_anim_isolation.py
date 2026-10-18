@@ -499,3 +499,43 @@ def test_a_huge_column_name_is_shortened_in_issue_paths():
                              data="d", encoding={"x": "t", "y": name})]))
     issues = [i for i in validate_animation(anim) if i.code.startswith("text_too")]
     assert issues and all(len(i.path) < 120 for i in issues)
+
+
+def test_the_killed_group_is_waited_for_within_its_bound(monkeypatch):
+    """A killed ffmpeg finishing a write could leave the directory behind;
+    the group is waited for (bounded) before the directory is removed."""
+    from ieeVisualizer.animation import isolate as I
+
+    calls = []
+
+    def alive_forever(pgid, sig):
+        calls.append(sig)
+
+    monkeypatch.setattr(I.os, "killpg", alive_forever)
+    t = time.monotonic()
+    assert I._wait_group(12345, limit=0.2) is False
+    took = time.monotonic() - t
+    assert 0.2 <= took < 0.2 + 0.1 and set(calls) == {0}
+    assert I.GROUP_EXIT_S + 0.1 < ISOLATION_SLACK_S  # inside the documented slack
+
+    def gone(pgid, sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(I.os, "killpg", gone)
+    assert I._wait_group(12345) is True
+
+
+def test_a_directory_that_cannot_be_removed_is_reported(tmp_path, monkeypatch):
+    import shutil
+
+    from ieeVisualizer.animation import isolate as I
+
+    work = tmp_path / "ieev-anim-x"
+    work.mkdir()
+    real = shutil.rmtree
+    monkeypatch.setattr(I.shutil, "rmtree", lambda path, ignore_errors=False: None)
+    with pytest.warns(ResourceWarning, match="could not be removed"):
+        I._remove(str(work))
+    monkeypatch.setattr(I.shutil, "rmtree", real)
+    I._remove(str(work))
+    assert not work.exists()

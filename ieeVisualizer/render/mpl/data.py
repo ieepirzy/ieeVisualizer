@@ -58,6 +58,8 @@ class AxisInfo:
     unit: str | None = None
     # set by histogram (y is a count/density, not a column)
     derived_label: str | None = None
+    # the quantities of an axis that shows several (no default title)
+    several: list[str] = field(default_factory=list)
     # polar angle given in degrees (column unit says so): converted to radians
     degrees: bool = False
 
@@ -221,8 +223,20 @@ def infer_axes(spec: FigureSpec, warnings: list[RenderWarning]) -> dict[str, Axi
     kinds: dict[str, dict[str, str]] = {k: {} for k in keys}  # axis -> {path: kind}
     aware: dict[str, list[tuple[str, Any]]] = {k: [] for k in keys}
     bound_cols: dict[str, list[Column]] = {k: [] for k in keys}
+    #: the quantities each axis shows: a bound column (whatever its encoding
+    #: title), a function's output (its name or expression), a histogram's
+    #: count or density; a function's input variable takes the axis' title
+    named: dict[str, list[Any]] = {k: [] for k in keys}
+    titles: dict[str, list[str]] = {k: [] for k in keys}  # explicit encoding titles
+    #: the unit of each data layer on each axis (None: the layer has none)
+    layer_units: dict[str, dict[int, str | None]] = {k: {} for k in keys}
 
     for i, axis, enc, col, data, ch in _bound(spec):
+        layer_units[axis][i] = layer_units[axis].get(i) or col.unit
+        if ch == axis:  # an interval's bounds (y_lower, y_upper) do not name the axis
+            named[axis].append(("column", enc.field))
+            if enc.title:
+                titles[axis].append(enc.title)
         info = infos[axis]
         bound_cols[axis].append(col)
         p = f"/layers/{i}/encoding/{ch}"
@@ -251,10 +265,34 @@ def infer_axes(spec: FigureSpec, warnings: list[RenderWarning]) -> dict[str, Axi
                 if infos[axis].label_column is None:
                     infos[axis].label_column = var
             out_axis = keys[len(m.variables)] if len(m.variables) < len(keys) else None
+            if out_axis is not None:
+                named[out_axis].append(("function", m.name or m.expression))
             if out_axis is not None and infos[out_axis].label_column is None:
                 infos[out_axis].label_column = m.name or m.expression
         if isinstance(m, HistogramMark):
             infos["y"].derived_label = "Density" if m.density else "Count"
+            named["y"].append(("derived", infos["y"].derived_label))
+    for axis, names in named.items():
+        info = infos[axis]
+        units = set(layer_units[axis].values())
+        # a unit is claimed only when every data layer on the axis has it
+        info.unit = units.pop() if len(units) == 1 else None
+        if len(set(names)) > 1:
+            # an axis holding several quantities is never titled by one of
+            # them (an explicit axis label still applies)
+            info.label_column = info.label_title = info.derived_label = None
+            info.several = [str(n[1]) for n in dict.fromkeys(names)]
+        elif names and names[0][0] == "column" and titles[axis]:
+            info.label_title = titles[axis][0]  # one column: its explicit title, if any
+        explicit = spec.axes.get(axis).label if axis in spec.axes else None
+        legend = getattr(spec, "legend", None)
+        if info.several and not explicit and info.unit is None \
+                and not (legend is not None and legend.show):
+            warnings.append(RenderWarning(
+                "axis_untitled", f"axis {axis} shows several quantities "
+                f"({', '.join(info.several[:4])}{', ...' if len(info.several) > 4 else ''}) "
+                "and has no title, unit or legend saying which: its numbers have no meaning "
+                f"for a reader. Set axes.{axis}.label or show the legend.", f"/axes/{axis}"))
 
     for axis, found in kinds.items():
         scale = spec.axes[axis].scale if axis in spec.axes else None
