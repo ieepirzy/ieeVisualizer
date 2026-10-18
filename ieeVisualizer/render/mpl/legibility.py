@@ -569,6 +569,26 @@ def annotations_outside(built: Any) -> list[RenderWarning]:
     return out
 
 
+def title_outside(built: Any) -> list[RenderWarning]:
+    """``title_clipped`` when the axes title runs past the figure's edge (its
+    end, often the part that tells figures apart, is cut off)."""
+    ax = built.axes
+    title = getattr(ax, "title", None)
+    if title is None or not title.get_text() or not title.get_visible():
+        return []
+    fig = built.figure
+    try:
+        box = title.get_window_extent().transformed(fig.transFigure.inverted())
+    except Exception:  # noqa: BLE001 - no layout to measure: nothing to report
+        return []
+    tol = 0.5 / max(fig.bbox.width, 1.0)  # half a pixel
+    if box.x0 >= -tol and box.x1 <= 1 + tol and box.y1 <= 1 + tol:
+        return []
+    return [RenderWarning(
+        "title_clipped", f"the title {title.get_text()[:60]!r} runs past the figure's edge and "
+        "is cut off; shorten it or use a wider figure.", "/title")]
+
+
 #: The glyph mathtext substitutes for a character no math font has.
 _MATH_DUMMY = "\u00a4"
 #: Characters Agg lays out without drawing a glyph: everything else

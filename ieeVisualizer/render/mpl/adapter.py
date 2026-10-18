@@ -505,9 +505,10 @@ def _detached(built: BuiltFigure, key: tuple, matched: set[int]) -> list[RenderW
 
 def _audit(built: BuiltFigure, request: RenderRequest) -> None:
     """Profile renders: append the legibility audit of the figure as drawn."""
-    from .legibility import annotations_outside, audit, figure_glyphs
+    from .legibility import annotations_outside, audit, figure_glyphs, title_outside
 
     built.warnings.extend(annotations_outside(built))
+    built.warnings.extend(title_outside(built))
     built.warnings.extend(figure_glyphs(built.figure))  # inside the render's rc context
     profile = request.render_profile
     if profile is not None:
