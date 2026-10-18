@@ -157,9 +157,9 @@
     "svg": "error: UnresolvedDatasetError ['unresolved_dataset']"
    },
    "spec_examples.misc_spec": {
-    "png": "sha256:33cba2dfcbf1421fb0388b2dfa50f1953c27511f029ffd3e3a393d1c64a69dcd",
+    "png": "sha256:23a889dcb19844bd00e5ffcd2b41753873b94620a1dc15ea673d3d8078104673",
     "spec_hash": "sha256:595369b67b67cde693a62f97d73afeb265baedd5609a02ba220366c360d13614",
-    "svg": "sha256:e59f8547d2ce0f9efb58b16af3edb47ddf47d8a5b2e2b538fedd05aa6ec1ac1e"
+    "svg": "sha256:c6e08cae15f3a576600e4d86339ebcf7445b24a6af200c30ec8c2cf5e2e9af99"
    },
    "spec_examples.quiver_spec": {
     "png": "sha256:c5a16f3d3f1d5db8fed9c9a9d1706bc8b231eef25d6022fadd2938334e407372",
@@ -364,9 +364,9 @@
     "svg": "error: UnresolvedDatasetError ['unresolved_dataset']"
    },
    "spec_examples.misc_spec": {
-    "png": "sha256:8d6d02ee0219b9da7ea67be6f29c35a0b55350dac480e624f9ecb86ec07e266a",
+    "png": "sha256:4ef0e4ebcdab0f8cbf0d6a3b0a818123a0b428a7492c77ae9c0fbf8e4e01df8f",
     "spec_hash": "sha256:595369b67b67cde693a62f97d73afeb265baedd5609a02ba220366c360d13614",
-    "svg": "sha256:b66ae0ae4af6e70a3547aa60278f64a883ce17d900d0e325d216cf6fac3c8c3f"
+    "svg": "sha256:1acab6e15c76183d12fef96ab381cb1b02ffa89488ea2ebd2daa46ca24620772"
    },
    "spec_examples.quiver_spec": {
     "png": "sha256:fbb67d89d30cec24795b5b27ce87a7e6b5abe510115ebc8da145a29b8ccc84c8",
