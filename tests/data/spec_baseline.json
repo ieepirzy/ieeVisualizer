@@ -2,9 +2,9 @@
  "environments": {
   "matplotlib 3.11.2, numpy 2.5.4, sympy 1.14.0": {
    "gallery.dist-beta-unbounded": {
-    "png": "sha256:a27524e45c1739fd183fb3a666075b7a2715908239137650d67d028848cb8b4c",
-    "spec_hash": "sha256:f00eb418a7994650f91ca07749f2991f0f9306b5a7939b7a1a48c56dd6a5378b",
-    "svg": "sha256:0060ef8dff25556c01c65de4c4cf2ef36072c88f1261eb0296b6eb61d42fe79f"
+    "png": "sha256:f17a95ef72fdc97e046a0a8f7d08c5af054cffaa536a411ef6a5b0b552592096",
+    "spec_hash": "sha256:343cbb1422161213ddf1da6b6da2a4872322e854ddf8429869e11fe09058d02b",
+    "svg": "sha256:c8b774e3c840c45888f2912af316880f9b2561447ec9d98816e178a38fbe646f"
    },
    "gallery.dist-cdf-markers": {
     "png": "sha256:6f3054a0ad3fa7f8a30a8bb08742ed030b26156d7cf0d35a8d545db9d5ebb6d0",
@@ -222,9 +222,9 @@
     "svg": "sha256:2559b843b83d3140dcfd669a513b601efbf5ce6355b42996d8217010f96b289b"
    },
    "template.distribution@1.0.0": {
-    "png": "sha256:4fde854e90d061764423c77032c0594a4266862249cd2596fa640e7cc2275666",
-    "spec_hash": "sha256:1efd1606d4183c717cad3e171fd7b1fffed2f2651e650d3d31261e6dc01da8c7",
-    "svg": "sha256:7c6394bb89f32d558bc0f5c4fa100f6ed4c5f38f59d3e0f952f3b543715d1db1"
+    "png": "sha256:ea033934c49cdf00265c5647c7eb110402526a5ce7b8ae025570fd304f9062c5",
+    "spec_hash": "sha256:d3050852ce3fd8c3eccaf28799efbba92e29bc753883ab538a78c589160068ae",
+    "svg": "sha256:7ff26ae8e4b345e9e20473f4e3fd0b96288746672b29f6aade1d16c8002ea84f"
    },
    "template.estimate_comparison@1.0.0": {
     "png": "sha256:112c4b61697c12c3c5fe73f054f4cc70eaed40aaecbe9030eb1d10751027820d",
@@ -243,8 +243,8 @@
    },
    "template.sample_distribution@1.0.0": {
     "png": "sha256:448d1375a51ebb3c82911a28a62bdb4ca447424eb957b4fbdfa3f83c4e652073",
-    "spec_hash": "sha256:3ca1e03a322687cc9748eb96c0d463474ea5c010fff400978b32f9e02150e73a",
-    "svg": "sha256:34fb0b5c4cd0c1b73ab7facc73c441cdbe39a1c51c3400399f88d8df3bfc3177"
+    "spec_hash": "sha256:afb966aa29b62138a91facb86eb126323b27bb78bf3a2fd0c7d4b3589ce27597",
+    "svg": "sha256:9eba97a02d631fc6aa5784c6314e95d3456e1c64c04fed64051e3217c7a814ef"
    },
    "template.timeseries@1.0.0": {
     "png": "sha256:17305df6e848f1405e5495cba6e779ed275042de1c31124bc59649a3fe60c170",
@@ -269,9 +269,9 @@
   },
   "matplotlib 3.9.4, numpy 2.0.2, sympy 1.14.0": {
    "gallery.dist-beta-unbounded": {
-    "png": "sha256:868408fe83648b37fe7ea24b6e89f797d1997310cadc82d284b1f5fc99130735",
-    "spec_hash": "sha256:f00eb418a7994650f91ca07749f2991f0f9306b5a7939b7a1a48c56dd6a5378b",
-    "svg": "sha256:b7cdda54e3ebf6939ca525847a64ee44533e9ec60fc3ae002d3208ce9843b6c3"
+    "png": "sha256:7713e29ff1297b000dad95742eff1f0bcf82ab270087994ad66ae72d9bf2fade",
+    "spec_hash": "sha256:343cbb1422161213ddf1da6b6da2a4872322e854ddf8429869e11fe09058d02b",
+    "svg": "sha256:3728b9d3a17a518e27bdbf6c9c7b97d1c83c2ccd73aa75bf818d6ea98a125e96"
    },
    "gallery.dist-cdf-markers": {
     "png": "sha256:a428fcb291193a00080bc9f5ef75aa2c1c780a9f8a801829a5ae03bc64644c32",
@@ -489,9 +489,9 @@
     "svg": "sha256:5452296cb1cf9d9676adcf0044715b81b2526ec0eb8a804d05dcf4b566fa7c99"
    },
    "template.distribution@1.0.0": {
-    "png": "sha256:43d0dc956ac7353855660e301f662ea02c1979d169400fb5a8c142c5e73c002c",
-    "spec_hash": "sha256:1efd1606d4183c717cad3e171fd7b1fffed2f2651e650d3d31261e6dc01da8c7",
-    "svg": "sha256:7e0b0d9333d01f4a71510f7bad8598a80258bff26a979535cfeb19662e045f68"
+    "png": "sha256:ddce72b96684ed9d52a67610864bb7ad7626f913dcccb8e9be844906b542112a",
+    "spec_hash": "sha256:d3050852ce3fd8c3eccaf28799efbba92e29bc753883ab538a78c589160068ae",
+    "svg": "sha256:d54325cc493587730f865fc973f73ef907c0893db23bd41593dc3b32e2e9b03b"
    },
    "template.estimate_comparison@1.0.0": {
     "png": "sha256:4e6696cd8e13e87fc0d3c3eed6750faf136735ae7b097ea6ac5e7bbfb6450234",
@@ -510,8 +510,8 @@
    },
    "template.sample_distribution@1.0.0": {
     "png": "sha256:abde25f358220882dec3d2f77531de6e9b74b2586e645b0e46489597b47688dd",
-    "spec_hash": "sha256:3ca1e03a322687cc9748eb96c0d463474ea5c010fff400978b32f9e02150e73a",
-    "svg": "sha256:8a9cd5d8d6ccc0be6223467e532e42e287732716eb1d5f53c45d78e254bcf3ff"
+    "spec_hash": "sha256:afb966aa29b62138a91facb86eb126323b27bb78bf3a2fd0c7d4b3589ce27597",
+    "svg": "sha256:9cf742ee1a40a3db9a422cf29267435d883b02ce2cd74921a82f59a706c75519"
    },
    "template.timeseries@1.0.0": {
     "png": "sha256:ffb3136096a010782e84633d2e238cba23a1480a5da7f9bb586ee5aae401d170",
