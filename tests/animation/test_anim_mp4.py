@@ -30,7 +30,7 @@ from test_anim_isolation import (
     _own_tmp,
     _ppid,
     _state,
-    _stopped,
+    _Stopper,
     _timed,
 )
 
@@ -93,11 +93,11 @@ def test_ffmpeg_exiting_zero_without_output_is_encoder_failed(tmp_path):
 @needs_ffmpeg
 def test_mp4_and_export_stop_at_the_deadline_plus_the_kill_slack(tmp_path, monkeypatch):
     fn = _sweep(FigureSpec(layers=[_fn(HEAVY)]), 120)
-    left = _own_tmp(monkeypatch, tmp_path)  # this test's workers only
+    left, stop = _own_tmp(monkeypatch, tmp_path), _Stopper(monkeypatch)
     for call in (lambda: render_animation(fn, MP4, deadline=D, isolation="process"),
                  lambda: export_animation(fn, ["gif", "mp4"], MemoryWriter(), request=SMALL,
                                           deadline=D, isolation="process")):
-        s, e = _stopped(call, monkeypatch)
+        s, e = stop(call)
         _assert_stopped_on_time(s, e)
     assert not left()
 
@@ -119,8 +119,8 @@ def test_a_blocked_ffmpeg_is_killed_with_the_worker(tmp_path, monkeypatch):
     # long enough that a loaded runner reaches ffmpeg (worker start, parse);
     # once ffmpeg blocks the pipe, the phase stays "draw" until the kill
     d = 3 * D
-    s, e = _stopped(lambda: render_animation(anim, req, deadline=d, isolation="process"),
-                    monkeypatch)
+    s, e = _Stopper(monkeypatch)(
+        lambda: render_animation(anim, req, deadline=d, isolation="process"))
     _assert_stopped_on_time(s, e)
     assert e.stats["phase"] == "draw" and e.stats.get("states_drawn", 0) >= 1, e.stats
     ffmpeg = int(pid.read_text())

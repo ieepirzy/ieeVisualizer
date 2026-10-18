@@ -78,7 +78,7 @@ def test_unused_datasets_are_dropped_before_any_state_is_built():
         base = timed(FigureSpec(layers=[_fn()]))
         print(json.dumps({{"s": timed(FigureSpec(datasets={{"unused": big}}, layers=[_fn()])),
                           "base": base}}))
-    """, timeout=120)
+    """, timeout=600)  # a hang guard only: the work is measured in CPU time
     # relative to the same render without the dataset, both in reference
     # seconds (tests/cost.py: CPU work, which a loaded machine does not
     # inflate as it does wall-clock time): copied per state it was ~50x

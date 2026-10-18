@@ -26,29 +26,47 @@ ROOT_DIR, HERE_DIR = str(ROOT), str(HERE)
 D = 2.0
 
 
-def _left():
-    return set(glob.glob(os.path.join(tempfile.gettempdir(), "ieev-anim-*")))
-
-
 def _own_tmp(monkeypatch, tmp_path):
     """Point this test's renders at their own temporary directory and return
-    a function listing the worker directories left in it. A global glob of
-    /tmp also sees another suite's workers running in parallel."""
+    ``left()``: what they left behind. A global glob of /tmp also sees
+    another suite's workers running in parallel.
+
+    ``left()`` lists the worker directories left in ``tmp_path``, plus any
+    encoder directory (one holding ffmpeg's ``stderr.txt``) that appeared
+    directly in the system temporary directory during the test: where a
+    worker that ignored its TMPDIR would put it. It cannot see a leak
+    anywhere else, or one without that file; an inline MP4 render in another
+    process at the same moment would be counted too."""
+    system = tempfile.gettempdir()
+    before = set(os.listdir(system))
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-    return lambda: set(glob.glob(os.path.join(str(tmp_path), "ieev-anim-*")))
+
+    def left():
+        own = set(glob.glob(os.path.join(str(tmp_path), "ieev-anim-*")))
+        stray = {os.path.join(system, n) for n in set(os.listdir(system)) - before
+                 if os.path.isfile(os.path.join(system, n, "stderr.txt"))}
+        return own | stray
+
+    return left
 
 
 @dataclasses.dataclass
 class Stop:
-    """When an isolated render was stopped, on its deadline's clock
-    (``time.monotonic``): ``started`` (the Deadline), ``fired`` (the receive
-    loop raised: the caller's own expiry, or the worker's error arriving)
-    and ``returned`` (the error reached the test)."""
+    """When an isolated render was stopped (``time.monotonic``): ``t0`` (the
+    test called it), ``started`` (its Deadline was created), ``fired`` (the
+    receive loop raised: the caller's own expiry, or the worker's error
+    arriving) and ``returned`` (the error reached the test)."""
 
     seconds: float = 0.0
+    t0: float = 0.0
     started: float = 0.0
     fired: float = 0.0
     returned: float = 0.0
+
+    @property
+    def total(self) -> float:
+        """What the caller waited: the bound the guarantee is about."""
+        return self.returned - self.t0
 
     @property
     def lag(self) -> float:
@@ -61,36 +79,40 @@ class Stop:
         return self.returned - self.fired
 
 
-def _stopped(call, monkeypatch):
-    """``(Stop, error)`` for ``call``, which must be stopped by its deadline
-    in a worker. The overrun is measured from when the deadline fired, not
-    from when the test started, so time the scheduler takes away before
-    the expiry is not counted as the guarantee's overrun."""
-    from ieeVisualizer.animation import isolate
+class _Stopper:
+    """Spies on the worker's receive loop (installed once per test);
+    ``stopper(call)`` returns ``(Stop, error)`` for a ``call`` that must be
+    stopped by its deadline in a worker."""
 
-    s = Stop()
-    run, receive = isolate.run_isolated, isolate._receive
+    def __init__(self, monkeypatch) -> None:
+        from ieeVisualizer.animation import isolate
 
-    def run_spy(task, payload, deadline):
-        s.seconds, s.started = deadline.seconds, deadline.started
-        return run(task, payload, deadline)
+        self.stop = Stop()
+        run, receive = isolate.run_isolated, isolate._receive
 
-    def receive_spy(*a):
+        def run_spy(task, payload, deadline):
+            self.stop.seconds, self.stop.started = deadline.seconds, deadline.started
+            return run(task, payload, deadline)
+
+        def receive_spy(*a):
+            try:
+                return receive(*a)
+            except BaseException:
+                self.stop.fired = time.monotonic()
+                raise
+
+        monkeypatch.setattr(isolate, "run_isolated", run_spy)
+        monkeypatch.setattr(isolate, "_receive", receive_spy)
+
+    def __call__(self, call):
+        self.stop = s = Stop(t0=time.monotonic())
         try:
-            return receive(*a)
-        except BaseException:
-            s.fired = time.monotonic()
-            raise
-
-    monkeypatch.setattr(isolate, "run_isolated", run_spy)
-    monkeypatch.setattr(isolate, "_receive", receive_spy)
-    try:
-        call()
-    except AnimationError as e:
-        s.returned = time.monotonic()
-        assert s.started and s.fired, "not stopped in the worker's receive loop"
-        return s, e
-    raise AssertionError("finished; it should have been stopped")
+            call()
+        except AnimationError as e:
+            s.returned = time.monotonic()
+            assert s.started and s.fired, "not stopped in the worker's receive loop"
+            return s, e
+        raise AssertionError("finished; it should have been stopped")
 
 
 def _timed(call):
@@ -116,12 +138,13 @@ def test_a_worker_render_equals_an_inline_one_and_errors_keep_their_structure():
 
 
 def _assert_stopped_on_time(s: Stop, e) -> None:
-    """Not before the deadline; fired by the receive loop within the slack
-    of it (it polls every 50 ms); killed and cleaned up within the slack of
-    firing."""
+    """Not stopped before its deadline, and the caller had its error within
+    the kill slack of it, counted from the call (work before the Deadline
+    exists counts too). Lag and overrun say where the time went."""
     assert e.issues[0].code == "render_deadline_exceeded", e
-    assert 0 <= s.lag <= ISOLATION_SLACK_S, (s, s.lag, e.stats)
-    assert s.overrun <= ISOLATION_SLACK_S, (s, s.overrun, e.stats)
+    diag = (s, f"total {s.total:.3f} s, lag {s.lag:.3f} s, overrun {s.overrun:.3f} s", e.stats)
+    assert s.lag >= 0, diag
+    assert s.total <= s.seconds + ISOLATION_SLACK_S, diag
 
 
 def test_reviewer_inputs_stop_at_the_deadline_plus_the_kill_slack(tmp_path, monkeypatch):
@@ -132,9 +155,9 @@ def test_reviewer_inputs_stop_at_the_deadline_plus_the_kill_slack(tmp_path, monk
                             values=[i / 40 for i in range(40)])
     cases = [lambda: render_animation(fn, SMALL, deadline=D, isolation="process"),
              lambda: render_animation(tpl, SMALL, deadline=D, isolation="process")]
-    left = _own_tmp(monkeypatch, tmp_path)
+    left, stop = _own_tmp(monkeypatch, tmp_path), _Stopper(monkeypatch)
     for call in cases:
-        s, e = _stopped(call, monkeypatch)
+        s, e = stop(call)
         _assert_stopped_on_time(s, e)
         assert e.issues[0].path == "" and s.seconds == D
         # which phase the deadline lands in depends on the machine's speed (a
@@ -224,7 +247,11 @@ def test_a_large_result_is_received_in_linear_time():
     with measure() as cost:
         res = _probe("big", 64_000_000)
     assert len(res.content) == 64_000_000
-    assert cost.within(15), cost
+    # the work budget, and a tight wall backstop for a receive loop that
+    # waits instead of copying (cost.py's 10x would allow 150 s). It takes
+    # about 2.3 s of wall time here, also under 8 CPU hogs; a 20 ms wait per
+    # pipe read adds about 20 s.
+    assert cost.seconds < 15 and cost.wall < 10, cost
 
 
 def test_resolved_data_over_the_cap_is_refused_before_any_worker_starts(monkeypatch):
