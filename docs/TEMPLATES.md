@@ -240,24 +240,37 @@ and discrete ones cannot (`conflicting_parameters`).
   (`metadata["template"]["distributions"][k]["formula"]`, tested against
   `sympy.stats`); CDFs from `erfc` and the regularized incomplete beta and
   gamma functions (continued fractions, capped iterations: bounded time);
-  quantiles by bisection. Plain Python: SciPy is not a dependency, and
-  mpmath fails to converge on large shapes. Values stored to 10
-  significant digits.
+  quantiles by bisection (on log x for a support bounded at 0, so P5 of
+  Gamma(0.01), about 4e-131, is found), each checked: |F(x) − p| must be
+  at most 1e-4 of the smaller tail, else the quantile is refused (P5 of
+  Gamma(0.003) is below the smallest float). `check()` computes the figure
+  once, so whatever `build()` could not draw (an unrepresentable bound,
+  an overflowing range or density) is an `invalid_parameter` at
+  `/params/distributions/<k>`. Plain Python: SciPy is not a dependency,
+  and mpmath fails to converge on large shapes. Values stored to 10
+  significant digits; numbers below 1e-4 are written 4.466×10⁻¹³¹.
 - **`interval`** `{kind, level?, quantiles?}`: `quantile` with a level is
   the central share, labelled "central 90% of the distribution (P5–P95)";
   with `quantiles` [lower, upper] "P5–P75 of the distribution (70%)";
-  `credible` / `prediction` (with a level) for a posterior or predictive
-  distribution, "90% credible interval (central, P5–P95)". Kind and level
+  `credible` (with `represents="posterior"`) / `prediction` (with
+  `represents` `"posterior_predictive"` or `"predictive"`), "90% credible
+  interval (central, P5–P95)": the caller says what the distribution is,
+  and the caption says "Posterior distribution (as stated by the caller)"
+  instead of "Theoretical distribution ..., not data". Kind and level
   are checked as the spec checks intervals (`missing_interval_level`,
   ...); `confidence`, `min-max` and SE/SD describe estimates or samples and
-  are refused (`invalid_interval_kind`). On a PDF the area under each curve
-  between the two quantiles is filled in the curve's colour; on a CDF or
-  PMF the span is a reference band, for one distribution only (several
+  are refused (`invalid_interval_kind`), as is `credible`/`prediction`
+  without a matching `represents`. On the PDF of one distribution the area
+  under the curve between the two quantiles is filled; with several, each
+  interval is a dashed outline on its own curve (drop lines at both ends,
+  in the curve's colour: blended fills would match no legend swatch). On a
+  CDF or PMF the span is a reference band, for one distribution only (several
   would be indistinguishable: `conflicting_parameters`). A discrete
   interval cannot cover exactly its level, so its label adds what it does
   cover ("3–11 covers 92.3%") and the metadata records `coverage`.
 - **`quantile_markers`** (up to 9 probabilities): diamonds on each curve at
-  those quantiles; their values, with `x_unit`, are written in the caption
+  those quantiles (on a discrete CDF at (k, F(k)), which is ≥ p, in a
+  colour of their own so they stand out from the bars); their values, with `x_unit`, are written in the caption
   ("P5 = −1.645 kg; P50 = 0 kg").
 - **Range and honesty notes:** x runs from the 0.1 % to the 99.9 %
   quantile (or the support's end) of every distribution unless `x_range`
@@ -285,9 +298,13 @@ sample quantiles (i − 0.5)/dots, stacked in columns of a stated width).
   bandwidth_method, the rule's formula) and stated in the curve's legend
   entry ("Kernel density estimate, h = 23.4 ms") and the caption.
   `bandwidth_method`: `scott` (h = σ̂·n^(−1/5), as
-  `scipy.stats.gaussian_kde`), `silverman` (0.9·min(σ̂, IQR/1.34)·n^(−1/5))
-  or `fixed` with `bandwidth` in the sample's unit. The KDE is drawn to
-  3 bandwidths beyond the extreme values.
+  `scipy.stats.gaussian_kde`), `silverman` (0.9·min(σ̂, IQR/1.34)·n^(−1/5),
+  Silverman's rule of thumb as R's `bw.nrd0`; scipy's "silverman" is a
+  different factor) or `fixed` with `bandwidth` in the sample's unit. The
+  KDE is drawn to 3 bandwidths beyond the extreme values; a sample with no
+  negative value is reflected at 0 (boundary correction: no density below
+  0, the grid starts at 0; `kde.boundary` and the caption say so).
+  Dotplot dots are drawn at their column's centre, which the caption says.
 - **Bins:** `bins` equal widths over the range, or the Freedman–Diaconis
   rule (Sturges when the IQR is 0), recorded with the edges and stated in
   the caption with n.
@@ -307,7 +324,8 @@ Nested quantile bands over time around a median line, built by
   `ieeVisualizer.stochastic`): at each time the empirical quantiles of the
   paths (type 7, numpy's default) for each central `levels` entry
   (default 0.5, 0.8, 0.95) and their median. A level whose tail holds less
-  than one path (P2.5 needs 40 paths) is refused at
+  than one path (P2.5 needs 40 paths), or whose band edges would be named
+  like another level's or the time column (P25), is refused at
   `/params/levels/<k>`. Path counts per time and the method are recorded;
   or
 - **given quantiles** (`quantile_columns` `{column: quantile}`, plus

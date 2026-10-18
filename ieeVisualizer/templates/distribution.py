@@ -61,9 +61,30 @@ ITEM_KEYS = ("family", "params", "label")
 INTERVAL_KEYS = ("kind", "level", "quantiles")
 #: Kinds an interval read off a distribution can be.
 DIST_INTERVAL_KINDS = ("quantile", "credible", "prediction")
+#: What a distribution can be said to be, and the interval kinds each allows
+#: besides "quantile" (a credible interval is read off a posterior, a
+#: prediction interval off a predictive distribution).
+REPRESENTS = ("model", "posterior", "posterior_predictive", "predictive")
+_KINDS_FOR = {"model": (), "posterior": ("credible",),
+              "posterior_predictive": ("prediction",), "predictive": ("prediction",)}
+_WHAT = {"model": "Theoretical", "posterior": "Posterior",
+         "posterior_predictive": "Posterior predictive", "predictive": "Predictive"}
+_NUMERIC_FAILURES = (NumericalLimit, OverflowError, ValueError, ZeroDivisionError)
 NUMERICS = ("PDF/PMF: closed forms (formula); CDF: erfc, regularized incomplete beta and gamma "
             "functions (continued fractions, bounded iterations); quantiles: bisection on the "
             "CDF (discrete: smallest k with F(k) >= p). Values stored to 10 significant digits.")
+
+
+_SUP = str.maketrans("-0123456789", "⁻⁰¹²³⁴⁵⁶⁷⁸⁹")
+
+
+def _bulk(d: Dist, x: float) -> bool:
+    """x is between the distribution's 10th and 90th percentiles (or, when
+    those are not representable, at or above its median)."""
+    try:
+        return d.quantile(0.1) <= x <= d.quantile(0.9)
+    except NumericalLimit:
+        return d.quantile(0.5) <= x
 
 
 def store(v: float) -> float:
@@ -77,6 +98,10 @@ def number_text(v: float, loc: Any, sig: int = 4) -> str:
     """``v`` to ``sig`` significant digits, plain decimal, in ``loc``."""
     if v == 0:
         return "0"
+    if not 1e-4 <= abs(v) < 1e9:  # 4.466×10⁻¹³¹, not 131 zeros
+        mant, exp = f"{v:.{sig - 1}e}".split("e")
+        mant = mant.rstrip("0").rstrip(".") if "." in mant else mant
+        return f"{localize_decimal(mant, loc)}×10{str(int(exp)).translate(_SUP)}"
     places = max(0, sig - 1 - math.floor(math.log10(abs(v))))
     text = f"{v:.{places}f}"
     if "." in text:
@@ -111,6 +136,11 @@ class DistributionTemplate(ComponentTemplate):
         Parameter("interval", "object", "Shaded interval of each distribution: {kind, level?, "
                   "quantiles?}; kind quantile (level = central share, or quantiles [lower, "
                   "upper]), credible or prediction (with a level)."),
+        Parameter("represents", "string", "What the distributions are: 'model' (a "
+                  "theoretical distribution), 'posterior', 'posterior_predictive' or "
+                  "'predictive'. A credible interval needs 'posterior'; a prediction interval "
+                  "'posterior_predictive' or 'predictive'. The caption says it.",
+                  default="model", allowed=REPRESENTS),
         Parameter("quantile_markers", "number_list", "Quantiles to mark on each curve, as "
                   "probabilities (e.g. [0.05, 0.5, 0.95]); their values go in the caption."),
         Parameter("x_range", "range", "x range drawn; default: the 0.1 % to 99.9 % quantiles "
@@ -139,7 +169,7 @@ class DistributionTemplate(ComponentTemplate):
         if not (21 <= p["samples"] <= 2001):
             issues.error(param_path("samples"), "invalid_parameter",
                          f"samples must be between 21 and 2001, got {p['samples']}.")
-        self._check_interval(p["interval"], issues)
+        self._check_interval(p["interval"], p["represents"], issues)
         self._check_markers(p["quantile_markers"], issues)
         if issues.errors or not dists:
             return
@@ -168,9 +198,9 @@ class DistributionTemplate(ComponentTemplate):
                          "between their dodged bars; mark one distribution per figure.")
         try:
             lo, hi = self._x_range(dists, p)
-        except NumericalLimit as e:
+        except _NUMERIC_FAILURES as e:
             issues.error(param_path("distributions"), "invalid_parameter",
-                         f"the parameters are too extreme to evaluate in bounded time ({e}).")
+                         f"the parameters are too extreme to evaluate in floating point ({e}).")
             return
         if discrete:
             count = math.floor(hi) - math.ceil(lo) + 1
@@ -182,9 +212,31 @@ class DistributionTemplate(ComponentTemplate):
                 issues.error(param_path("x_range") if p["x_range"] else
                              param_path("distributions"), "invalid_parameter",
                              f"{count} values from {math.ceil(lo)} to {math.floor(hi)} would "
-                             f"be drawn as bars (at most {MAX_SUPPORT}); use view 'cdf' "
-                             "with a continuous approximation upstream, or a narrower "
-                             "x_range.")
+                             f"be drawn as bars (at most {MAX_SUPPORT}, in either view); give "
+                             "a narrower x_range, or draw a continuous approximation (e.g. a "
+                             "normal with the same mean and variance) and say so.")
+        if not issues.errors:
+            self._dry_run(p, (lo, hi), issues)
+
+    def _dry_run(self, p: dict[str, Any], span: tuple[float, float], issues: Issues) -> None:
+        """Compute the figure once, so check() reports (with the distribution's
+        pointer) what build() could not draw: a quantile or bound that is not
+        representable in floating point, an infinite or overflowing value."""
+        try:
+            self._build(None, p, Issues())
+            return
+        except _NUMERIC_FAILURES as e:
+            reason = e
+        for k, item in enumerate(p["distributions"]):
+            try:
+                self._build(None, dict(p, distributions=[item], x_range=list(span)), Issues())
+            except _NUMERIC_FAILURES as e:
+                issues.error(ptr("params", "distributions", str(k)), "invalid_parameter",
+                             f"distribution {k} cannot be drawn accurately in floating point "
+                             f"({e}); use less extreme parameters (or another x_range).")
+                return
+        issues.error(param_path("distributions"), "invalid_parameter",
+                     f"the distributions cannot be drawn together accurately ({reason}).")
 
     def _check_items(self, items: Any, issues: Issues) -> list[Dist]:
         if not isinstance(items, list):
@@ -244,7 +296,7 @@ class DistributionTemplate(ComponentTemplate):
         return out if len(out) == len(items) else []
 
     @staticmethod
-    def _check_interval(iv: Any, issues: Issues) -> None:
+    def _check_interval(iv: Any, represents: str, issues: Issues) -> None:
         if iv is None:
             return
         for key in sorted(set(iv) - set(INTERVAL_KEYS)):
@@ -258,6 +310,14 @@ class DistributionTemplate(ComponentTemplate):
                          f"a {kind} interval describes an estimate or a sample, not a share "
                          "of a distribution; use kind 'quantile' (or 'credible'/'prediction' "
                          "for a posterior/predictive distribution).")
+            return
+        if kind in ("credible", "prediction") and kind not in _KINDS_FOR.get(represents, ()):
+            need = "'posterior'" if kind == "credible" else "'posterior_predictive' or 'predictive'"
+            issues.error(param_path("interval") + "/kind", "invalid_interval_kind",
+                         f"a {kind} interval is read off a "
+                         f"{'posterior' if kind == 'credible' else 'predictive'} distribution; "
+                         f"say that the distribution is one with represents={need}, or use "
+                         "kind 'quantile' (the central share of the distribution).")
             return
         for fld, code, message in metadata_problems(kind, iv.get("level"), None,
                                                     iv.get("quantiles")):
@@ -298,6 +358,8 @@ class DistributionTemplate(ComponentTemplate):
         lo, hi = min(los), max(his)
         if hi <= lo:  # a point mass (binomial with p = 0 or 1)
             lo, hi = lo - 1, hi + 1
+        if not math.isfinite(hi - lo):
+            raise NumericalLimit(f"the x range [{lo!r}, {hi!r}] is not finite in floating point")
         return lo, hi
 
     def _build(self, data: DataSnapshot | None, p: dict[str, Any], issues: Issues) -> FigureSpec:
@@ -332,8 +394,10 @@ class DistributionTemplate(ComponentTemplate):
                 provenance=Provenance(
                     source="ieeVisualizer.templates.distribution",
                     notes=f"{d.family.title} distribution computed from its closed-form "
-                          f"{'CDF' if cdf else ('PMF' if discrete else 'PDF')}; theoretical, "
-                          "not a measurement.",
+                          f"{'CDF' if cdf else ('PMF' if discrete else 'PDF')}"
+                          + ("; theoretical, not a measurement." if p["represents"] == "model"
+                             else f"; stated by the caller to be a "
+                                  f"{p['represents'].replace('_', ' ')} distribution."),
                     extra={"family": d.family.name, "params": dict(d.p)}))
             if discrete:
                 spec.layers.append(BarMark(data=name, encoding={"x": "x", "y": ycol}, name=label))
@@ -345,7 +409,7 @@ class DistributionTemplate(ComponentTemplate):
                                      "points": len(xs)}
             if unbounded:
                 entry["density_unbounded_at"] = unbounded
-                inner = [d.density(x) for x in xs if d.quantile(0.1) <= x <= d.quantile(0.9)]
+                inner = [d.density(x) for x in xs if _bulk(d, x)]
                 cut.append(2.5 * max(inner or [1.0]))
                 where = " and ".join(number_text(x, loc) for x in unbounded)
                 notes.append(f"{label}: the density is unbounded at x = {where}; the curve runs "
@@ -362,13 +426,16 @@ class DistributionTemplate(ComponentTemplate):
         spec.axes = {"x": Axis(label=p["x_label"], unit=p["x_unit"]),
                      "y": self._y_axis(p, discrete, cdf, cut)}
         what = "distribution" if len(dists) == 1 else "distributions"
-        lines = ([p["caption"]] if p["caption"] else []) + [
-            f"Theoretical {what} from closed-form formulas, not data."] + notes + marker_lines
+        source = (f"{_WHAT[p['represents']]} {what} from closed-form formulas, not data."
+                  if p["represents"] == "model" else
+                  f"{_WHAT[p['represents']]} {what} (as stated by the caller), drawn from "
+                  "closed-form formulas.")
+        lines = ([p["caption"]] if p["caption"] else []) + [source] + notes + marker_lines
         spec.caption = "\n".join(lines)
         spec.metadata["template"] = {
             "distributions": meta_d, "view": p["view"],
             "x_range": [store(lo), store(hi)], "numerics": NUMERICS,
-            "label_locale": loc.tag}
+            "label_locale": loc.tag, "represents": p["represents"]}
         if interval_meta:
             spec.metadata["template"]["interval"] = interval_meta
         return spec
@@ -379,7 +446,7 @@ class DistributionTemplate(ComponentTemplate):
 
     def _y_axis(self, p: dict[str, Any], discrete: bool, cdf: bool, cut: list[float]) -> Axis:
         if cdf:
-            return Axis(label="Cumulative probability", limits=[0.0, 1.0])
+            return Axis(label="P(X ≤ x)", limits=[0.0, 1.0])
         if discrete:
             return Axis(label="Probability", limits=[0.0, None])
         return Axis(label="Density", unit=self._y_unit(p, discrete, cdf),
@@ -420,11 +487,21 @@ class DistributionTemplate(ComponentTemplate):
                          "density": Column(ys, dtype="float",
                                            unit=self._y_unit(p, discrete, cdf))},
                 provenance=spec.datasets[f"dist_{k}"].provenance)
-            # drawn before the curves so every line stays on top
             at = next(i for i, m in enumerate(spec.layers) if m.data == f"dist_{k}")
-            spec.layers.insert(at, AreaMark(data=dname, encoding={"x": "x", "y": "density"},
-                                            name=name, style={"color_of": label,
-                                                              "opacity": 0.3}))
+            if len(dists) == 1:  # drawn before the curve so the line stays on top
+                spec.layers.insert(at, AreaMark(data=dname, encoding={"x": "x", "y": "density"},
+                                                name=name, style={"color_of": label,
+                                                                  "opacity": 0.3}))
+                continue
+            # several curves: blended fills would match no swatch, so each interval
+            # is an outline on its own curve: dashed drop lines at both ends
+            cols = spec.datasets[dname].columns
+            cols["x"].values = [cols["x"].values[0]] + cols["x"].values + [cols["x"].values[-1]]
+            cols["density"].values = [0.0] + cols["density"].values + [0.0]
+            spec.layers.insert(at + 1, LineMark(data=dname, encoding={"x": "x", "y": "density"},
+                                                name=name, style={"color_of": label,
+                                                                  "linestyle": "dashed",
+                                                                  "linewidth": 2.0}))
         out = {"kind": kind, "quantiles": [plo, phi], "label": text}
         if level is not None:
             out["level"] = level
@@ -441,8 +518,11 @@ class DistributionTemplate(ComponentTemplate):
         lines = []
         for k, (d, label) in enumerate(zip(dists, labels)):
             # bisection noise around 0 (|x| below 1e-12 of the range) is written as 0
-            xq = [0.0 if abs(x) < 1e-12 * width else x for x in map(d.quantile, qs)]
-            yq = [q if cdf else d.density(x) for q, x in zip(qs, xq)]
+            xq = [0.0 if d.family.lower is None and abs(x) < 1e-12 * width else x
+                  for x in map(d.quantile, qs)]
+            # discrete CDF: the point is (k, F(k)), which is >= p, not (k, p)
+            yq = [(d.cdf(x) if discrete else q) if cdf else d.density(x)
+                  for q, x in zip(qs, xq)]
             meta_d[k]["quantiles"] = [{"p": q, "x": store(x)} for q, x in zip(qs, xq)]
             dname = f"quantiles_{k}"
             spec.datasets[dname] = DataSnapshot(
@@ -451,10 +531,10 @@ class DistributionTemplate(ComponentTemplate):
                                      unit=self._y_unit(p, discrete, cdf))},
                 provenance=spec.datasets[f"dist_{k}"].provenance)
             mark_name = f"Quantiles {names}" if len(dists) == 1 else f"{label}: {names}"
+            # on bars: a colour of its own, so the marker stands out from the bar
             style = {"marker": "D"} if discrete else {"color_of": label, "marker": "D"}
             spec.layers.append(ScatterMark(data=dname, encoding={"x": "x", "y": "y"},
-                                           name=mark_name, style=style,
-                                           role="reference" if discrete else "observed"))
+                                           name=mark_name, style=style))
             unit = f" {p['x_unit']}" if p["x_unit"] else ""
             values = "; ".join(f"{percentile_text(q, loc.decimal)} = {number_text(x, loc)}{unit}"
                                for q, x in zip(qs, xq))

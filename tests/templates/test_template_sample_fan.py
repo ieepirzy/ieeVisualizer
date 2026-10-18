@@ -49,6 +49,7 @@ def test_kde_bandwidth_is_recorded_and_stated(method):
 
 def test_kde_is_the_gaussian_sum_and_integrates_to_one():
     data = sample(120)
+    data["v"][0] = -1.0  # not positive-only: no reflection
     spec = S.build(data, value_column="v", bandwidth_method="fixed", bandwidth=3.0)
     cols = spec.datasets["kde"].columns
     gx, gy = cols["v"].values, cols["density"].values
@@ -244,3 +245,38 @@ def test_fan_chart_input_errors(change, path, code):
     params = {"time_column": "t", "quantile_columns": {"p05": 0.05, "p50": 0.5, "p95": 0.95}}
     params.update(change)
     assert (path, code) in errors(F, dict(_given(), m=["a", "b", "c"]), **params)
+
+
+def test_positive_only_kde_is_reflected_at_zero():
+    rng = random.Random(3)
+    data = {"v": [rng.expovariate(1.0) for _ in range(300)]}
+    spec = S.build(data, value_column="v", bandwidth_method="fixed", bandwidth=0.3)
+    cols = spec.datasets["kde"].columns
+    gx, gy = cols["v"].values, cols["density"].values
+    assert gx[0] == 0.0
+    k = 40
+    direct = sum(math.exp(-0.5 * ((gx[k] - x) / 0.3) ** 2) + math.exp(-0.5 * ((gx[k] + x) / 0.3)
+                 ** 2) for x in data["v"]) / (300 * 0.3 * math.sqrt(2 * math.pi))
+    assert gy[k] == pytest.approx(direct, rel=1e-9)
+    area = sum((gx[i + 1] - gx[i]) * (gy[i] + gy[i + 1]) / 2 for i in range(len(gx) - 1))
+    assert area == pytest.approx(1.0, abs=2e-3)
+    assert spec.metadata["template"]["kde"]["boundary"] == "reflected at 0"
+    assert "reflected at 0" in spec.caption
+
+
+def test_silverman_is_named_as_r_bw_nrd0_and_dot_centres_are_stated():
+    data = sample()
+    spec = S.build(data, value_column="v", bandwidth_method="silverman")
+    assert "R's bw.nrd0" in spec.caption
+    dots = S.build(data, value_column="v", display="dotplot")
+    assert "drawn at its column's centre" in dots.caption
+
+
+@pytest.mark.parametrize("levels,time_column", [([0.95, 0.9500001], "time"), ([0.5], "P25")])
+def test_band_columns_never_collide(levels, time_column):
+    walk = stochastic.random_walk(paths=200, steps=3, seed=1)
+    if time_column != "time":
+        walk.columns[time_column] = walk.columns.pop("time")
+    found = errors(F, walk, time_column=time_column, member_column="path",
+                   value_column="value", levels=levels)
+    assert any(p.startswith("/params/levels/") and c == "invalid_parameter" for p, c in found)

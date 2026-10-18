@@ -7,7 +7,8 @@
   its method and value are recorded in ``metadata["template"]["kde"]`` and
   written in the caption and the curve's legend entry: ``scott``
   (h = σ̂·n^(−1/5), as ``scipy.stats.gaussian_kde``), ``silverman``
-  (h = 0.9·min(σ̂, IQR/1.34)·n^(−1/5), Silverman 1986 eq. 3.31) or
+  (h = 0.9·min(σ̂, IQR/1.34)·n^(−1/5), Silverman 1986 eq. 3.31, R's
+  ``bw.nrd0``; not scipy's ``"silverman"``, which is (3n/4)^(−1/5)·σ̂) or
   ``fixed`` (``bandwidth``, in the sample's unit). Bins: ``bins`` equal
   widths over the sample's range, or by default the Freedman–Diaconis rule
   (width 2·IQR·n^(−1/3); Sturges when the IQR is 0), recorded likewise.
@@ -45,7 +46,8 @@ KDE_POINTS = 256
 KDE_REACH = 3.0
 DISPLAYS = ("histogram", "ecdf", "dotplot")
 _BW_TEXT = {"scott": "Scott's rule, σ̂·n^(−1/5)",
-            "silverman": "Silverman's rule, 0.9·min(σ̂, IQR/1.34)·n^(−1/5)",
+            "silverman": "Silverman's rule of thumb, 0.9·min(σ̂, IQR/1.34)·n^(−1/5), as R's "
+                         "bw.nrd0",
             "fixed": "fixed by the caller"}
 
 
@@ -257,7 +259,8 @@ class SampleDistributionTemplate(ComponentTemplate):
                      f"{number_text(n, loc, 12)}, scaled to density (area 1).")
         if p["kde"]:
             h = bandwidth(xs, p["bandwidth_method"], p["bandwidth"])
-            gx, gy = _kde(xs, h)
+            reflect = xs[0] >= 0  # positive-only data: no density below 0
+            gx, gy = _kde(xs, h, reflect)
             hs = number_text(h, loc, 3)
             spec.datasets["kde"] = DataSnapshot(
                 columns={vname: Column([store(v) for v in gx], dtype="float",
@@ -271,9 +274,12 @@ class SampleDistributionTemplate(ComponentTemplate):
             meta["kde"] = {"kernel": "gaussian", "bandwidth": store(h),
                            "bandwidth_method": p["bandwidth_method"],
                            "bandwidth_rule": _BW_TEXT[p["bandwidth_method"]],
-                           "grid": {"points": KDE_POINTS, "reach_bandwidths": KDE_REACH}}
+                           "grid": {"points": KDE_POINTS, "reach_bandwidths": KDE_REACH},
+                           "boundary": "reflected at 0" if reflect else "none"}
             lines.append(f"Curve: Gaussian kernel density estimate, bandwidth h = {hs}"
-                         f"{unit_text} ({_BW_TEXT[p['bandwidth_method']]}).")
+                         f"{unit_text} ({_BW_TEXT[p['bandwidth_method']]})"
+                         + ("; no value is below 0, so it is reflected at 0." if reflect
+                            else "."))
         return Axis(label="Density", unit=self._density_unit(data, p), limits=[0.0, None])
 
     @staticmethod
@@ -343,9 +349,9 @@ class SampleDistributionTemplate(ComponentTemplate):
         lines.append(f"Quantile dotplot: each dot is {share_text} of n = "
                      f"{number_text(n, loc, 12)} values, at the sample quantiles "
                      f"(i − {number_text(0.5, loc)})/{k}, stacked in columns "
-                     f"{number_text(width, loc, 3)}{unit_text} wide.")
-        return Axis(label=f"Dots, stacked (each {share_text})",
-                    limits=[0.0, float(max(dy) + 1)])
+                     f"{number_text(width, loc, 3)}{unit_text} wide; each dot is drawn at "
+                     "its column's centre, up to half a column from its quantile.")
+        return Axis(label="Dots", limits=[0.0, float(max(dy) + 1)])
 
     def example(self) -> dict[str, Any]:
         import random
@@ -366,19 +372,27 @@ class SampleDistributionTemplate(ComponentTemplate):
             "caption": "Synthetic sample (seeded), not a measurement."}}
 
 
-def _kde(xs: list[float], h: float) -> tuple[list[float], list[float]]:
+def _kde(xs: list[float], h: float, reflect: bool = False) -> tuple[list[float], list[float]]:
     """Gaussian KDE of ``xs`` with bandwidth ``h`` on :data:`KDE_POINTS`
     points from ``KDE_REACH`` bandwidths below the smallest to above the
-    largest value. numpy (imported here only) bounds the time: chunks of
-    the grid against every sample."""
+    largest value. With ``reflect`` (data that cannot be negative) the
+    kernels' mass below 0 is reflected back above it (each sample also
+    contributes a kernel at -x), so the estimate keeps area 1 on x >= 0 and
+    the grid starts no lower than 0. numpy (imported here only) bounds the
+    time: chunks of the grid against every sample."""
     import numpy as np
 
     x = np.asarray(xs, dtype=float)
-    grid = np.linspace(x[0] - KDE_REACH * h, x[-1] + KDE_REACH * h, KDE_POINTS)
+    start = x[0] - KDE_REACH * h
+    grid = np.linspace(max(0.0, start) if reflect else start, x[-1] + KDE_REACH * h,
+                       KDE_POINTS)
     out = np.empty(KDE_POINTS)
     step = max(1, 4_000_000 // x.size)
     norm = 1.0 / (x.size * h * math.sqrt(2 * math.pi))
     for a in range(0, KDE_POINTS, step):
         z = (grid[a:a + step, None] - x[None, :]) / h
         out[a:a + step] = np.exp(-0.5 * z * z).sum(axis=1) * norm
+        if reflect:
+            z = (grid[a:a + step, None] + x[None, :]) / h
+            out[a:a + step] += np.exp(-0.5 * z * z).sum(axis=1) * norm
     return grid.tolist(), out.tolist()

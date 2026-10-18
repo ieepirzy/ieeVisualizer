@@ -165,7 +165,7 @@ def test_explicit_quantiles_and_credible_labels():
     a = build(distributions=one("normal", mu=0, sigma=1),
               interval={"kind": "quantile", "quantiles": [0.05, 0.75]})
     assert a.layers[0].name == "P5–P75 of the distribution (70%)"
-    b = build(distributions=one("beta", alpha=3, beta=9),
+    b = build(distributions=one("beta", alpha=3, beta=9), represents="posterior",
               interval={"kind": "credible", "level": 0.95}, theme="report-light")
     assert b.layers[0].name == "95 % credible interval (central, P2,5–P97,5)"
 
@@ -193,7 +193,8 @@ def test_a_discrete_interval_states_what_it_really_covers():
      "invalid_parameter"),
 ])
 def test_interval_must_state_kind_and_level(interval, path, code):
-    assert (path, code) in errors(distributions=one("normal", mu=0, sigma=1), interval=interval)
+    assert (path, code) in errors(distributions=one("normal", mu=0, sigma=1), interval=interval,
+                                  represents="posterior")
 
 
 def test_comparisons_that_could_not_be_told_apart_are_refused():
@@ -208,10 +209,14 @@ def test_comparisons_that_could_not_be_told_apart_are_refused():
                                                                     interval=iv, view="cdf")
     assert ("/params/quantile_markers", "conflicting_parameters") in errors(
         distributions=disc, quantile_markers=[0.5])
-    spec = build(distributions=cont, interval=iv)  # PDFs: one area per curve, in its colour
-    areas = [m for m in spec.layers if m.type == "area"]
-    assert [a.style["color_of"] for a in areas] == ["Normal(μ = 0, σ = 1)",
-                                                    "Normal(μ = 1, σ = 1)"]
+    spec = build(distributions=cont, interval=iv)  # PDFs: an outline on each curve, no fill
+    assert not [m for m in spec.layers if m.type == "area"]
+    edges = [m for m in spec.layers if m.name and "central 80%" in m.name]
+    assert [(m.type, m.style["color_of"], m.style["linestyle"]) for m in edges] == [
+        ("line", "Normal(μ = 0, σ = 1)", "dashed"), ("line", "Normal(μ = 1, σ = 1)", "dashed")]
+    xs = spec.datasets[edges[0].data].columns["x"].values
+    ys = spec.datasets[edges[0].data].columns["density"].values
+    assert xs[0] == xs[1] and xs[-1] == xs[-2] and ys[0] == ys[-1] == 0.0  # drop lines
 
 
 def test_too_many_bars_and_extreme_parameters_are_refused_quickly():
@@ -265,3 +270,113 @@ def test_exact_values_are_reproducible():
     assert ys[10] == float(f"{1 / math.sqrt(2 * math.pi):.10g}")
     assert build(distributions=one("normal", mu=0, sigma=1), samples=21).datasets == \
         spec.datasets
+
+
+# ---------------------------------------------------------------- review #41
+
+
+@pytest.mark.parametrize("family,params", [("gamma", {"shape": 0.01, "scale": 1.0}),
+                                           ("gamma", {"shape": 0.1, "scale": 2.0}),
+                                           ("beta", {"alpha": 0.01, "beta": 3.0})])
+def test_tiny_shape_quantiles_are_true(family, params):
+    """Quantiles far below 1 (P5 of Gamma(0.01) is about 4e-131) are found
+    on a log scale and checked: F(Q(p)) = p, so a band covers its level."""
+    mpmath = pytest.importorskip("mpmath")
+    d = Dist(FAMILIES[family], params)
+    for q in (0.05, 0.5, 0.95):
+        x = d.quantile(q)
+        true = (mpmath.gammainc(params["shape"], 0, x / params["scale"], regularized=True)
+                if family == "gamma" else
+                mpmath.betainc(params["alpha"], params["beta"], 0, x, regularized=True))
+        assert float(true) == pytest.approx(q, rel=1e-6)
+    spec = build(distributions=[{"family": family, "params": params}],
+                 interval={"kind": "quantile", "level": 0.9}, x_range=[0.0, 1.0])
+    iv = spec.metadata["template"]["distributions"][0]["interval"]
+    assert d.cdf(iv["upper"]) - d.cdf(iv["lower"]) == pytest.approx(0.9, rel=1e-6)
+
+
+@pytest.mark.parametrize("family,params", [("gamma", {"shape": 0.003, "scale": 1.0}),
+                                           ("beta", {"alpha": 1e-6, "beta": 2.0})])
+def test_quantiles_below_the_smallest_float_are_refused_not_guessed(family, params):
+    d = Dist(FAMILIES[family], params)
+    from ieeVisualizer.templates._distributions import NumericalLimit
+
+    with pytest.raises(NumericalLimit):
+        d.quantile(0.05)
+    item = [{"family": family, "params": params}]
+    assert ("/params/distributions/0", "invalid_parameter") in errors(
+        distributions=item, interval={"kind": "quantile", "level": 0.9}, x_range=[0.0, 1.0])
+
+
+def test_a_discrete_quantile_on_an_exact_tie_is_the_smaller_value():
+    assert Dist(FAMILIES["binomial"], {"n": 1, "p": 0.5}).quantile(0.5) == 0.0
+    d = Dist(FAMILIES["binomial"], {"n": 2, "p": 0.5})
+    assert (d.quantile(0.25), d.quantile(0.75)) == (0.0, 1.0)
+
+
+def test_student_t_keeps_its_heavy_tail_at_huge_z():
+    mpmath = pytest.importorskip("mpmath")
+    d = Dist(FAMILIES["student_t"], {"df": 0.05, "loc": 0.0, "scale": 1.0})
+    for z in (1e10, 1e100, 1e200):
+        nu = mpmath.mpf("0.05")
+        tail = mpmath.betainc(nu / 2, 0.5, 0, nu / (nu + mpmath.mpf(z) ** 2),
+                              regularized=True) / 2
+        assert 1 - d.cdf(z) == pytest.approx(float(tail), rel=1e-9)
+        assert d.cdf(-z) == pytest.approx(float(tail), rel=1e-9)
+
+
+@pytest.mark.parametrize("item", [one("lognormal", mu=0, sigma=1000), one("lognormal", mu=800,
+                                                                          sigma=1),
+                                  one("normal", mu=0, sigma=5e-324),
+                                  one("normal", mu=0, sigma=1e308),
+                                  one("gamma", shape=0.001, scale=1000)])
+def test_check_reports_what_build_cannot_draw(item):
+    found = errors(distributions=item, quantile_markers=[0.05, 0.5],
+                   interval={"kind": "quantile", "level": 0.9})
+    assert {c for _, c in found} == {"invalid_parameter"}
+    assert all(p.startswith("/params/distributions") for p, _ in found)
+    with pytest.raises(TemplateInputError):
+        build(distributions=item, quantile_markers=[0.05, 0.5],
+              interval={"kind": "quantile", "level": 0.9})
+
+
+def test_discrete_cdf_markers_sit_on_the_bar_they_name():
+    spec = build(view="cdf", distributions=one("poisson", **{"lambda": 6.0}),
+                 quantile_markers=[0.05, 0.5, 0.95])
+    pts = spec.datasets["quantiles_0"].columns
+    d = Dist(FAMILIES["poisson"], {"lambda": 6.0})
+    assert pts["y"].values == [pytest.approx(d.cdf(k)) for k in pts["x"].values]
+    assert all(y >= q for y, q in zip(pts["y"].values, (0.05, 0.5, 0.95)))
+    marks = spec.layers[-1]
+    assert marks.role == "observed" and "color_of" not in marks.style  # its own colour
+    assert spec.axes["y"].label == "P(X ≤ x)"
+
+
+@pytest.mark.parametrize("kind,represents,ok", [
+    ("credible", "model", False), ("credible", "predictive", False),
+    ("credible", "posterior", True), ("prediction", "posterior", False),
+    ("prediction", "predictive", True), ("prediction", "posterior_predictive", True),
+    ("quantile", "posterior", True)])
+def test_credible_and_prediction_need_the_distribution_said_to_be_one(kind, represents, ok):
+    params = {"distributions": one("beta", alpha=4, beta=9), "represents": represents,
+              "interval": {"kind": kind, "level": 0.9}}
+    assert (("/params/interval/kind", "invalid_interval_kind") not in errors(**params)) is ok
+    if ok:
+        spec = build(**params)
+        assert spec.metadata["template"]["represents"] == represents
+        first = spec.caption.splitlines()[0]
+        assert first.startswith({"model": "Theoretical", "posterior": "Posterior",
+                                 "predictive": "Predictive",
+                                 "posterior_predictive": "Posterior predictive"}[represents])
+        assert ("not data" in first) is (represents == "model")
+
+
+def test_too_many_bars_message_is_actionable():
+    msg = [i.message for i in T.check(distributions=one("poisson", **{"lambda": 5000.0}))]
+    assert any("in either view" in m and "narrower x_range" in m for m in msg)
+
+
+def test_tiny_quantile_values_are_written_in_powers_of_ten():
+    spec = build(distributions=one("gamma", shape=0.01, scale=1.0), x_range=[0.0, 1.0],
+                 quantile_markers=[0.05])
+    assert "P5 = 4.466×10⁻¹³¹." in spec.caption

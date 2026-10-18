@@ -35,6 +35,24 @@ _TINY = 1e-300
 MAX_SHAPE = 1e6
 
 
+#: A continuous quantile x is accepted only if |F(x) - p| is at most this
+#: share of the smaller tail, min(p, 1 - p); otherwise it is refused.
+QUANTILE_TOLERANCE = 1e-4
+_SMALLEST = 5e-324
+
+
+def _t_tail(nu: float, z: float) -> float:
+    """P(|T| > z) for Student t with ``nu`` degrees of freedom: I_x(nu/2, 1/2)
+    with x = nu / (nu + z^2), in log form so a huge z (z^2 overflowing, or x
+    underflowing) keeps the heavy tail, I_x ~ x^a / (a B(a, 1/2))."""
+    a = nu / 2
+    log_x = math.log(nu) - 2 * math.log(z) - math.log1p(math.exp(math.log(nu) - 2 * math.log(z)))
+    if log_x > -700:
+        return betainc(a, 0.5, math.exp(log_x))
+    lbeta = math.lgamma(a) + math.lgamma(0.5) - math.lgamma(a + 0.5)
+    return math.exp(a * log_x - math.log(a) - lbeta)
+
+
 class NumericalLimit(ValueError):
     """A special function did not converge within :data:`MAX_ITER` steps."""
 
@@ -281,7 +299,7 @@ class Dist:
             if z * z < nu:  # near the centre: nu / (nu + z^2) would round to 1
                 half = 0.5 * betainc(0.5, nu / 2, z * z / (nu + z * z))
                 return 0.5 + half if z > 0 else 0.5 - half
-            tail = 0.5 * betainc(nu / 2, 0.5, nu / (nu + z * z))
+            tail = 0.5 * _t_tail(nu, abs(z))
             return 1.0 - tail if z > 0 else tail
         k = math.floor(x)
         if k < 0:
@@ -312,16 +330,46 @@ class Dist:
         if name == "lognormal":
             normal = Dist(FAMILIES["normal"], {"mu": p["mu"], "sigma": p["sigma"]})
             return math.exp(normal.quantile(prob))
-        lo, hi = self._bracket(prob)
-        for _ in range(400):
-            mid = 0.5 * (lo + hi)
-            if mid in (lo, hi):
+        if self.family.lower == 0.0:
+            x = self._log_bisect(prob)
+        else:
+            lo, hi = self._bracket(prob)
+            for _ in range(400):
+                mid = 0.5 * (lo + hi)
+                if mid in (lo, hi):
+                    break
+                if self.cdf(mid) < prob:
+                    lo = mid
+                else:
+                    hi = mid
+            x = 0.5 * (lo + hi)
+        if abs(self.cdf(x) - prob) > QUANTILE_TOLERANCE * min(prob, 1 - prob):
+            raise NumericalLimit(f"the {prob:.6g} quantile cannot be represented accurately in "
+                                 f"floating point (F({x!r}) = {self.cdf(x)!r})")
+        return x
+
+    def _log_bisect(self, prob: float) -> float:
+        """Bisection on log x for a support bounded at 0, so a quantile far
+        below 1 (P5 of Gamma(0.01) is about 1e-130) is found, not rounded to
+        the bracket's end; one below the smallest float is refused."""
+        hi = self.family.upper if self.family.upper is not None else 1.0
+        while self.cdf(hi) < prob:
+            hi *= 2.0
+            if math.isinf(hi):
+                raise NumericalLimit(f"no bracket for the {prob} quantile")
+        lo_t, hi_t = math.log(_SMALLEST), math.log(hi)
+        if self.cdf(_SMALLEST) >= prob:
+            raise NumericalLimit(f"the {prob:.6g} quantile is below the smallest float "
+                                 f"({_SMALLEST!r})")
+        for _ in range(200):
+            mid = 0.5 * (lo_t + hi_t)
+            if mid in (lo_t, hi_t):
                 break
-            if self.cdf(mid) < prob:
-                lo = mid
+            if self.cdf(math.exp(mid)) < prob:
+                lo_t = mid
             else:
-                hi = mid
-        return 0.5 * (lo + hi)
+                hi_t = mid
+        return math.exp(0.5 * (lo_t + hi_t))
 
     def _upper_int(self) -> int:
         if self.family.name == "binomial":

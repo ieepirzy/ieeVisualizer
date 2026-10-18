@@ -193,6 +193,22 @@ class FanChartTemplate(ComponentTemplate):
                              f"a central {lv:g} band needs {tail} of the paths, i.e. at least "
                              f"{need} paths at every time; the fewest at one time is {fewest}. "
                              "Simulate more paths or use a lower level.")
+        if issues.errors:
+            return
+        n_paths = len(set(members))
+        taken = {p["time_column"]: "the time column",
+                 p["median_label"] or f"Median of {n_paths} paths": "the median line"}
+        for k, lv in enumerate(levels):
+            tail = float((Decimal(1) - Decimal(repr(lv))) / 2)
+            for name in (percentile_text(tail), percentile_text(1 - tail)):
+                if name in taken:
+                    issues.error(ptr("params", "levels", str(k)), "invalid_parameter",
+                                 f"level {lv!r}'s band edge {name} would have the same name as "
+                                 f"{taken[name]}; give levels whose percentiles print "
+                                 "differently, and do not name another column like a band "
+                                 "edge (P2.5, P97.5, ...).")
+                    return
+                taken[name] = f"an edge of level {lv!r}"
 
     def _check_given(self, data: DataSnapshot, p: dict[str, Any], issues: Issues) -> None:
         if p["value_column"] is not None:

@@ -310,7 +310,7 @@ def distribution_specs() -> dict[str, FigureSpec]:
             quantile_markers=[0.05, 0.5, 0.95], title="Normal vs Student t tails"),
         "dist-beta-unbounded": dist.build(
             distributions=[{"family": "beta", "params": {"alpha": 0.5, "beta": 0.5}}],
-            interval={"kind": "credible", "level": 0.8}, x_label="Conversion rate",
+            interval={"kind": "quantile", "level": 0.8}, x_label="Conversion rate",
             title="Jeffreys prior Beta(0.5, 0.5)"),
     }
     sample = templates.get("sample_distribution")

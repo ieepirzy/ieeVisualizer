@@ -176,14 +176,16 @@ and 12.3) are reported too: what is drawn is not symmetric.
 **Intervals of a distribution.** A shaded share of a probability
 distribution (the `distribution` template) is not an interval *of an
 estimate*: no mark field claims it, so it is drawn as an `area` under the
-density between the two quantiles (or a `reference_band` on a CDF or a
-PMF) whose name states it, written by
+density between the two quantiles for one distribution, a dashed outline
+on its own curve when several share the axes, or a `reference_band` on a
+CDF or a PMF, whose name states it, written by
 `distribution_interval_label(kind, level, quantiles, decimal,
 percent_sep)` from the same interval kinds and P-notation:
 "central 90% of the distribution (P5–P95)", "P5–P75 of the distribution
 (70%)", "90% credible interval (central, P5–P95)". The template checks the
 kind and level with `metadata_problems` (only `quantile`, `credible` and
-`prediction` describe a share of a distribution) and records them in its
+`prediction` describe a share of a distribution, the last two only when
+the caller says it is a posterior or predictive one) and records them in its
 metadata. A discrete distribution cannot cover a level exactly, so its
 label adds what it covers ("3–11 covers 92.3%"). Fan charts from an
 ensemble or from given quantiles (`fan_chart`) are ordinary `band` layers
