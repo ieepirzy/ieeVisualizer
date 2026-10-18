@@ -38,7 +38,10 @@ KEYS = sorted(set().union(*RECORDED.values()))
 #: last bits (and hash, and figure) depend on the machine, not on this code.
 #: Seen on CI: gallery.mark-line hashed differently on two runners of one
 #: environment. They are built here (so a crash still fails) but not pinned.
-COMPUTED = ("gallery.", "template.vector_field_2d@")
+#: ``sample_distribution``'s KDE sums numpy exponentials, whose SIMD order
+#: and last bits vary by CPU, so even its 10-digit values are not pinned
+#: (``distribution`` and ``fan_chart`` compute in plain Python and are).
+COMPUTED = ("gallery.", "template.vector_field_2d@", "template.sample_distribution@")
 #: Figures whose rendering is meant to differ from the baseline's (their
 #: spec_hash is still pinned). Empty since the baseline was re-recorded with
 #: the extent-based date offset (it already has the locale percent style).

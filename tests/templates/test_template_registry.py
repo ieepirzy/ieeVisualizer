@@ -39,15 +39,17 @@ class Dummy(ComponentTemplate):
 
 def test_builtins_are_listed():
     names = [t["name"] for t in templates.list_templates()]
-    assert names == ["bar_comparison", "dependency_map", "estimate_comparison", "funnel",
-                     "network", "org_chart", "timeseries", "vector_field_2d"]
+    assert names == ["bar_comparison", "dependency_map", "distribution", "estimate_comparison",
+                     "fan_chart", "funnel", "network", "org_chart", "sample_distribution",
+                     "timeseries", "vector_field_2d"]
     entry = templates.list_templates()[0]
     assert set(entry) == {"name", "version", "versions", "title", "description"}
     json.dumps(templates.list_templates())
 
 
-@pytest.mark.parametrize("name", ["bar_comparison", "estimate_comparison", "funnel",
-                                  "timeseries", "vector_field_2d"])
+@pytest.mark.parametrize("name", ["bar_comparison", "distribution", "estimate_comparison",
+                                  "fan_chart", "funnel", "sample_distribution", "timeseries",
+                                  "vector_field_2d"])
 def test_describe_is_json_and_its_example_builds(name):
     entry = templates.describe(name)
     text = json.dumps(entry)  # strictly JSON-serializable
@@ -59,7 +61,7 @@ def test_describe_is_json_and_its_example_builds(name):
         p.name for p in templates.get(name).parameters}
     for p in entry["parameters"]:
         assert {"name", "type", "json_type", "required", "default", "description"} <= set(p)
-    assert entry["data"]["columns"]
+    assert entry["data"]["columns"] or not entry["data"]["required"]  # distribution: no data
     spec = templates.get(name).build_payload(entry["example"])  # the JSON copy builds
     assert validate(spec) == []
     spec2 = templates.build(name, entry["example"]["data"], entry["example"]["params"])
@@ -70,8 +72,8 @@ def test_catalog_covers_every_template():
     cat = templates.catalog()
     json.dumps(cat)
     assert [t["name"] for t in cat["templates"]] == [
-        "bar_comparison", "dependency_map", "estimate_comparison", "funnel", "network",
-        "org_chart", "timeseries", "vector_field_2d"]
+        "bar_comparison", "dependency_map", "distribution", "estimate_comparison", "fan_chart",
+        "funnel", "network", "org_chart", "sample_distribution", "timeseries", "vector_field_2d"]
 
 
 def test_latest_version_by_semver_not_by_string_or_insertion():

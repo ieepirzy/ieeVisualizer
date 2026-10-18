@@ -51,7 +51,8 @@ uses (`missing_interval_kind`, `invalid_interval_kind`,
 `invalid_interval_quantiles`, `unexpected_interval_quantiles`,
 `conflicting_interval_level`; see
 [SPEC.md](SPEC.md#intervals)); warnings `missing_unit`, `empty_series`,
-`no_forecast_rows`, `non_monotone_counts`, `nonfinite_samples`. The full table is in the docstring
+`no_forecast_rows`, `non_monotone_counts`, `nonfinite_samples`,
+`null_samples_dropped`. The full table is in the docstring
 of `ieeVisualizer/templates/base.py`. Registry errors (`TemplateRegistryError`)
 use `unknown_template`, `unknown_template_version`, `duplicate_template`,
 `invalid_version`, `invalid_name`.
@@ -218,6 +219,121 @@ rows in funnel order.
 
 `bar_comparison` and `funnel` take `theme` (a registered theme name, else `invalid_parameter`),
 which becomes the spec's theme.
+
+### `distribution` 1.0.0
+
+Named probability distributions from their closed forms, with no data:
+`distributions=[{"family", "params", "label"?}]`, families `normal` {mu,
+sigma}, `lognormal` {mu, sigma of log x}, `beta` {alpha, beta}, `gamma`
+{shape, scale}, `student_t` {df, loc = 0, scale = 1} (continuous: the PDF
+is a line) and `poisson` {lambda}, `binomial` {n, p} (discrete: the PMF is
+bars, never a line). `view="cdf"` draws the CDF (bars for a discrete
+family). Several distributions share the axes for comparison; continuous
+and discrete ones cannot (`conflicting_parameters`).
+
+- **Parameters** are checked with the pointer of the value:
+  `/params/distributions/0/params/sigma` for sigma <= 0, `.../p` for p
+  outside [0, 1], `.../n` for a non-integer n, `unknown_parameter` with a
+  did-you-mean for a misspelt one, `invalid_parameter` for an unknown
+  family. Shape, count and rate parameters are at most 10^6.
+- **Numerics:** PDF/PMF closed forms, recorded per distribution as a SymPy
+  expression (`metadata["template"]["distributions"][k]["formula"]`; the
+  tests check each against `sympy.stats`); CDFs from `erfc` and the
+  regularized incomplete beta and gamma functions (continued fractions with
+  an iteration cap, so time is bounded; a parameter set that does not
+  converge is refused); quantiles by bisection on the CDF, discrete ones as
+  the smallest k with F(k) >= p. Pure Python: no SciPy, and mpmath (shipped
+  with SymPy) is not used because it fails to converge on large shapes.
+  Values are stored to 10 significant digits.
+- **`interval`** `{kind, level?, quantiles?}`: `quantile` with a level is
+  the central share, labelled "central 90% of the distribution (P5–P95)";
+  with `quantiles` [lower, upper] "P5–P75 of the distribution (70%)";
+  `credible` / `prediction` (with a level) for a posterior or predictive
+  distribution, "90% credible interval (central, P5–P95)". Kind and level
+  are checked as the spec checks intervals (`missing_interval_level`,
+  ...); `confidence`, `min-max` and SE/SD describe estimates or samples and
+  are refused (`invalid_interval_kind`). On a PDF the area under each curve
+  between the two quantiles is filled in the curve's colour; on a CDF or
+  PMF the span is a reference band, for one distribution only (several
+  would be indistinguishable: `conflicting_parameters`). A discrete
+  interval cannot cover exactly its level, so its label adds what it does
+  cover ("3–11 covers 92.3%") and the metadata records `coverage`.
+- **`quantile_markers`** (up to 9 probabilities): diamonds on each curve at
+  those quantiles; their values, with `x_unit`, are written in the caption
+  ("P5 = −1.645 kg; P50 = 0 kg").
+- **Range and honesty notes:** x runs from the 0.1 % to the 99.9 %
+  quantile (or the support's end) of every distribution unless `x_range`
+  is given; a range that holds less than that of a distribution says how
+  much in the caption. A discrete range of more than 200 values is refused.
+  A density that is infinite at an end of its support (beta with alpha or
+  beta < 1, gamma with shape < 1) is sampled ever closer to that end so the
+  curve leaves the plot, the y axis is cut, and the caption says so. The
+  caption always says the curves are theoretical, from closed-form
+  formulas, not data; the dataset provenance says the same.
+- `theme` gives the number locale of every number the template writes
+  (fi-FI: "Normal(μ = 1,5; σ = 0,25)", "P2,5 = −1,96").
+
+### `sample_distribution` 1.0.0
+
+The distribution of a numeric sample (`value_column`), as
+`display="histogram"` (density-scaled, with a Gaussian KDE unless
+`kde=false`), `"ecdf"` (the empirical CDF as an exact step function,
+optionally one per `group_column` value, for comparisons) or `"dotplot"`
+(a quantile dotplot: `dots` dots, each 1/`dots` of the sample, at the
+sample quantiles (i − 0.5)/dots, stacked in columns of a stated width).
+
+- **KDE bandwidth** is the claim a KDE makes, so its method and value are
+  recorded (`metadata["template"]["kde"]`: kernel, bandwidth,
+  bandwidth_method, the rule's formula) and stated in the curve's legend
+  entry ("Kernel density estimate, h = 23.4 ms") and the caption.
+  `bandwidth_method`: `scott` (h = σ̂·n^(−1/5), as
+  `scipy.stats.gaussian_kde`), `silverman` (0.9·min(σ̂, IQR/1.34)·n^(−1/5))
+  or `fixed` with `bandwidth` in the sample's unit. The KDE is drawn to
+  3 bandwidths beyond the extreme values.
+- **Bins:** `bins` equal widths over the range, or the Freedman–Diaconis
+  rule (Sturges when the IQR is 0), recorded with the edges and stated in
+  the caption with n.
+- Null values are not samples: they are dropped and counted
+  (`null_samples_dropped`). A sample whose bandwidth would be 0 (all
+  values equal), fewer than 2 values (or fewer than `dots`), or more than
+  100 000 values is refused. Groups are only for the ECDF (overlaid
+  histograms hide each other: `conflicting_parameters`).
+
+### `fan_chart` 1.0.0
+
+Nested quantile bands over time around a median line, built by
+`timeseries` 2.0.1 (whose metadata is kept under
+`metadata["template"]["timeseries"]`), from either:
+
+- **an ensemble** (`member_column` + `value_column`, long format, e.g. from
+  `ieeVisualizer.stochastic`): at each time the empirical quantiles of the
+  paths (type 7, numpy's default) for each central `levels` entry
+  (default 0.5, 0.8, 0.95) and their median. A level whose tail holds less
+  than one path (P2.5 needs 40 paths) is refused at
+  `/params/levels/<k>`. Path counts per time and the method are recorded;
+  or
+- **given quantiles** (`quantile_columns` `{column: quantile}`, plus
+  `median_column` or a 0.5 column): drawn as supplied. Columns pair from
+  the outside in; a symmetric pair is a central level, another pair an
+  explicit [lower, upper] (`interval_kind` `quantile`; `prediction` or
+  `credible` need symmetric pairs). Unpaired quantiles
+  (`conflicting_parameters`) and crossing quantiles in a row
+  (`invalid_column_values`) are refused.
+
+Bands are labelled with their kind and level ("P10–P90 percentiles (80%,
+forecast)"); `role` `forecast` (default) draws them as forecasts. The
+caption says what the line and bands are, and for synthetic input
+(`provenance.extra.synthetic`) that it is a seeded simulation, with the
+seed.
+
+**Seeded ensembles** (`ieeVisualizer.stochastic`, plot-focused, not a
+simulation library): `random_walk(paths, steps, seed, start=, drift=,
+sigma=, dt=)` and `gbm(paths, steps, seed, s0=, mu=, sigma=, dt=)` (exact
+geometric Brownian motion on the grid) return a long-format snapshot
+(`time`, `path`, `value`) whose provenance is marked synthetic with the
+seed, model, parameters and generator (`random.Random`, so a seed gives
+the same paths on every Python and numpy version). At most 2 000 paths,
+2 000 steps and 200 000 values per call.
 
 ### `vector_field_2d` 1.0.0
 
