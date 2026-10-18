@@ -174,8 +174,11 @@ def apply_axes(ctx: DrawContext) -> None:
 def set_time_axis(ctx: DrawContext, key: str, info: AxisInfo,
                   maxticks: int | None = None) -> None:
     """Date ticks (matplotlib's automatic choice, at most ``maxticks``) with
-    concise labels in the theme locale's patterns."""
+    concise labels in the theme locale's patterns and an offset true of the whole
+    visible axis (:mod:`.dates`: no month claimed for ticks not in it)."""
     from matplotlib import dates as mdates
+
+    from .dates import ExtentOffsetFormatter
 
     loc = ctx.locale
     kw = {} if maxticks is None else {"maxticks": maxticks, "minticks": min(3, maxticks)}
@@ -187,7 +190,7 @@ def set_time_axis(ctx: DrawContext, key: str, info: AxisInfo,
         fmt = {"formats": list(loc.date_formats),
                "zero_formats": list(loc.date_zero_formats or loc.date_formats),
                "offset_formats": list(loc.date_offset_formats or loc.date_formats)}
-    obj.set_major_formatter(mdates.ConciseDateFormatter(locator, tz=info.tz, **fmt))
+    obj.set_major_formatter(ExtentOffsetFormatter(locator, tz=info.tz, **fmt))
 
 
 def _limits(ctx: DrawContext, key: str, info: AxisInfo, limits: list) -> None:

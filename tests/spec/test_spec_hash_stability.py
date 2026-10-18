@@ -1,8 +1,10 @@
 """Specs written before intervals existed keep their meaning, hash and figure.
 
 ``tests/data/spec_baseline.json`` was produced by ``baseline_specs.py`` from
-a ``git archive`` of the base branch (before band/errorbar marks and interval
-encodings), once per environment: every spec builder in the test helpers,
+a ``git archive`` of the base branch, once per environment (first before
+band/errorbar marks and interval encodings; re-recorded, with every spec hash
+unchanged, when date axes got an offset true of the whole visible axis):
+every spec builder in the test helpers,
 every gallery mark and legacy entry, and every template example at every
 version that branch had. Each must still hash the same, and render to the
 same SVG and PNG bytes.
@@ -38,9 +40,9 @@ KEYS = sorted(set().union(*RECORDED.values()))
 #: environment. They are built here (so a crash still fails) but not pinned.
 COMPUTED = ("gallery.", "template.vector_field_2d@")
 #: Figures whose rendering is meant to differ from the baseline's (their
-#: spec_hash is still pinned): interval statements follow the theme locale's
-#: percent style ("95%" in English, "95 %" in fi-FI) since main 236ea21.
-INTENDED_RENDER_CHANGES = {"template.timeseries@2.0.0", "template.estimate_comparison@1.0.0"}
+#: spec_hash is still pinned). Empty since the baseline was re-recorded with
+#: the extent-based date offset (it already has the locale percent style).
+INTENDED_RENDER_CHANGES: set[str] = set()
 
 
 def _expected_hash(key: str) -> str | None:

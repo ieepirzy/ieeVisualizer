@@ -61,7 +61,21 @@ column/axis unit is `deg`). Axis labels are `"Label (unit)"`, from the axis' own
 and unit or else the first bound column's title/name and unit. Datetime
 columns are drawn as dates; timestamps with UTC offsets are placed at their
 true instant and labelled in the datasets' `provenance.timezone` (or in UTC,
-with a warning). String/bool columns, or `scale: "category"`, make a
+with a warning). The date offset under the ticks states only what is true of all the data
+shown (the data's extent clipped to the axis limits, so neither the autoscale
+margin nor wider limits add a year): its minute (`2026-Oct-14 06:10`), day
+(`2026-Oct-14`) or month (`2026-Oct`) when the data lie within one, else its
+year (`2026`) or two years (`2025–2026`), and none for three or more years.
+Month and year ticks keep matplotlib's rule of no offset once a tick names the
+year (January). A tick whose label leaves out a field the offset does not give
+it is prefixed with it, on the leftmost tick and where the field changes: the
+month on day ticks (`Sep 08`), the day on hour and minute ticks
+(`Oct-14 23:00 ... Oct-15 00:00`), the year on a margin tick outside the
+offset's year (`2027 Jan`); a label whose format already carries the field is
+left alone (`Oct`, `14.09.` in fi-FI). The offset depends on the data and the
+limits, not the ticks, so it reads the same at every profile. (matplotlib's
+own offset is the last tick's month: weekly ticks from September to November
+read as if all were in November.) String/bool columns, or `scale: "category"`, make a
 category axis ordered by first appearance; mixing kinds on one axis is an
 error.
 

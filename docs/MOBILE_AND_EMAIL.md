@@ -144,7 +144,7 @@ changes) and the CJK font fallback (text the theme's font lacks).
 
 **Narrow profiles** (`email-phone`) also: an `"auto"` legend that leaves the
 axes goes below them, never to the right; a date axis label is left-aligned
-clear of the date offset (`2026-Oct`); in views, grids and horizontal stacks
+clear of the date offset (`2026`); in views, grids and horizontal stacks
 drop columns until each slot is at least 150 px (KPI tiles stack), figures
 are at least the profile's aspect (0.8) tall, KPI values shrink no further
 than 12 px before switching to the existing compact notation (reported as
