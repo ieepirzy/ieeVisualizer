@@ -42,6 +42,10 @@ CONTENT_LOSS_CODES = ("flow_text_too_small", "table_cells_truncated",
 #: Everything :func:`check_legible` refuses: the gate a pipeline that must not
 #: send an illegible or incomplete report applies to every result.
 GATING_CODES = LEGIBILITY_CODES + CONTENT_LOSS_CODES
+#: Refused by :func:`check_legible` only for a result made for an email
+#: profile: an axis whose numbers say nothing (``axis_untitled``) must not be
+#: sent to people; elsewhere it stays a warning.
+EMAIL_GATING_CODES = ("axis_untitled",)
 
 
 @dataclass(frozen=True)
@@ -129,8 +133,13 @@ def check_legible(result: Any) -> None:
     """The send gate: raise :class:`LegibilityError` if ``result`` (anything
     with ``.warnings``: a ``RenderResult``, an ``EmailRender``) carries a
     warning in :data:`GATING_CODES` - text that is unreadable, or content
-    that was left out, cut or rounded to fit."""
-    bad = [w for w in result.warnings if w.code in GATING_CODES]
+    that was left out, cut or rounded to fit - or, for an email profile, in
+    :data:`EMAIL_GATING_CODES`."""
+    profile = getattr(result, "profile", None) or getattr(
+        getattr(result, "request", None), "profile", None)
+    email = isinstance(profile, str) and profile.startswith("email")
+    bad = [w for w in result.warnings if w.code in GATING_CODES
+           or (email and w.code in EMAIL_GATING_CODES)]
     if bad:
         raise LegibilityError([ValidationIssue(w.path, w.code, w.message) for w in bad])
 

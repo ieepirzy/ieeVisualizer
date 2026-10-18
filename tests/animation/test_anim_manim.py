@@ -1070,3 +1070,42 @@ def test_matplotlibs_empty_state_is_an_animation_error_naming_the_state():
         render_animation(anim, GIF)
     i = e.value.issues[0]
     assert (i.code, i.path) == ("empty_series", "/figure/layers/0") and "a = -1" in i.message
+
+
+@needs_manim
+def test_close_ends_are_told_apart_in_the_drawn_ticks():
+    """[1000, 1000.002]: no offset (span 2e-3), so the two end labels need
+    more than 6 digits to differ."""
+    _, _, texts, plot = _scene_of(_fm("a*0 + x", (1000.0, 1000.002)))
+    assert "1000" in texts and "1000.002" in texts
+
+
+@needs_manim
+def test_offsets_read_without_float_noise_and_large_offsets_render():
+    from ieeVisualizer.animation.manim_adapter import _offset_text
+
+    assert _offset_text(1.0000000999999999, -7) == "1.0000001"
+    _, _, texts, plot = _scene_of(_fm("a*0 + x", (1e6, 1e6 + 1e-4)))
+    assert plot.labels[0] == "x (×1e-5 + 1000000)"  # rendered, not refused
+
+
+@needs_manim
+def test_text_that_would_drop_below_seven_points_refuses_the_frame():
+    from ieeVisualizer.spec import Axis
+
+    anim = _fm("a*x", (0.0, 1.0), {"y": Axis(label="an extremely long y axis title " * 4)})
+    req = AnimationRequest(format="gif", width=640, height=300, units="px", dpi=100)
+    with pytest.raises(AnimationError) as e:
+        ManimAdapter().render(anim, req)
+    assert e.value.issues[0].code == "frame_too_small" and "7 pt" in e.value.issues[0].message
+
+
+@needs_manim
+def test_manim_titles_an_axis_by_one_quantity_only():
+    from ieeVisualizer.animation.manim_adapter import _plan
+
+    anim = _base2()
+    anim.figure.layers[0].name = anim.figure.layers[1].name = "signal"  # one series
+    assert _plan(anim, GIF)[0].labels[1] == "signal"
+    anim.figure.layers[1].name = "noise"
+    assert _plan(anim, GIF)[0].labels[1] is None

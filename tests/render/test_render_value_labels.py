@@ -276,8 +276,8 @@ def many_labels():
 
 
 def test_value_labels_omitted_describes_the_layout_that_ships():
-    # at this size the labels only just do not fit (4.5 in until the y axis
-    # stopped being titled "a" over the bars of a, b and c)
+    # at this size the labels do not fit (at 4.5 in, now that the y axis is
+    # no longer titled "a" over the bars of a, b and c, they do)
     spec, request = many_labels(), RenderRequest(width=4.1, height=3.0, dpi=100)
     built, _ = drawn(spec, request)
     codes = [w.code for w in built.warnings]

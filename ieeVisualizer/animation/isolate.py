@@ -194,25 +194,47 @@ def run_isolated(task: str, payload: dict[str, Any], deadline: Deadline) -> Any:
             if writer is not None:
                 writer.join(1.0)
             proc.stdin.close()
+            _wait_group(proc.pid)  # ffmpeg too: nothing writes into tmp any more
         for fd in fds:  # closing ctl_w releases the watchdog
             os.close(fd)
         _remove(tmp)
         slots.release()
 
 
-def _remove(tmp: str, tries: int = 40, pause: float = 0.025) -> None:
-    """Remove the worker's temporary directory. A process of the killed
-    group (ffmpeg) can still be finishing a write when the first removal
-    lists the directory, which then is not empty: retried for up to about
-    1 s (within :data:`ISOLATION_SLACK_S`), the watchdog removing it after
-    that."""
+#: How long :func:`_wait_group` waits for a killed process group to be gone
+#: (part of :data:`ISOLATION_SLACK_S`).
+GROUP_EXIT_S = 0.5
+
+
+def _wait_group(pgid: int, limit: float = GROUP_EXIT_S) -> bool:
+    """Wait until every process of the killed group ``pgid`` is gone (a
+    SIGKILLed ffmpeg can still be finishing a write), at most ``limit``
+    seconds. True if it is gone."""
     import time
 
-    for _ in range(tries):
-        shutil.rmtree(tmp, ignore_errors=True)
-        if not os.path.exists(tmp):
-            return
-        time.sleep(pause)
+    end = time.monotonic() + limit
+    while True:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:  # a member we cannot signal: not ours to wait for
+            return True
+        if time.monotonic() >= end:
+            return False
+        time.sleep(0.005)
+
+
+def _remove(tmp: str) -> None:
+    """Remove the worker's temporary directory once its process group is
+    gone. If it still exists, say so (the watchdog removes it when the caller
+    exits) rather than leave it silently."""
+    import warnings
+
+    shutil.rmtree(tmp, ignore_errors=True)
+    if os.path.exists(tmp):
+        warnings.warn(f"the render worker's temporary directory {tmp} could not be removed; "
+                      "it is removed when this process exits.", ResourceWarning, stacklevel=2)
 
 
 def _pickle(payload: dict[str, Any], task: str) -> bytes:

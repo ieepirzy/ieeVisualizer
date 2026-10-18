@@ -114,6 +114,9 @@ def test_an_axis_holding_several_layers_is_never_titled_by_one_of_them():
     two = FigureSpec(layers=[fn("sin(x)", name="revenue"), fn("cos(x)", name="cost")],
                      legend=Legend(show=False))
     assert _ylabel(two) == ""
+    # no title, unit or legend: its numbers mean nothing to a reader
+    (w,) = [w for w in build_figure(two).warnings if w.code == "axis_untitled"]
+    assert w.path == "/axes/y" and "revenue, cost" in w.message
     many = FigureSpec(layers=[fn(f"sin(x) + {k}") for k in range(11)])
     assert _ylabel(many) == ""
     ds = DataSnapshot.from_columns({"week": [1, 2], "bookings": [3.0, 4.0], "quotes": [5.0, 6.0]},
@@ -130,3 +133,78 @@ def test_an_axis_holding_several_layers_is_never_titled_by_one_of_them():
         LineMark(data="d", encoding={"x": "week", "y": "bookings"}),
         LineMark(data="d", encoding={"x": "week", "y": "bookings"}, role="forecast")])
     assert _ylabel(same) == "bookings (count)"  # several layers, one series
+
+
+
+def _labels(spec):
+    built = build_figure(spec)
+    return built.axes.get_xlabel(), built.axes.get_ylabel()
+
+
+def _ds(units=None, **cols):
+    from ieeVisualizer.spec import DataSnapshot
+
+    return DataSnapshot.from_columns(cols, units=units or {})
+
+
+def test_a_function_overlays_input_variable_takes_the_data_axis_title():
+    """A fit line 2*x+1 over bookings vs spend lost 'spend (kEUR)'; a pdf
+    over a histogram lost 'dur (min)'."""
+    from ieeVisualizer.spec import FigureSpec, FunctionMark, HistogramMark, ScatterMark
+
+    d = _ds({"spend": "kEUR", "bookings": "count", "dur": "min"}, spend=[1.0, 2, 3, 4, 5],
+            bookings=[3.0, 5, 7, 9, 11], dur=[10.0, 20, 20, 30, 40])
+    fit = FunctionMark(expression="2*x+1", variables=["x"], domain={"x": [1.0, 5.0]},
+                       samples=20, name="fit")
+    scatter = FigureSpec(datasets={"d": d}, layers=[ScatterMark(
+        data="d", encoding={"x": "spend", "y": "bookings"}), fit])
+    assert _labels(scatter) == ("spend (kEUR)", "(count)")  # y: bookings and the fit
+    plain = FigureSpec(datasets={"d": _ds(spend=[1.0, 2], bookings=[3.0, 5])}, layers=[
+        ScatterMark(data="d", encoding={"x": "spend", "y": "bookings"}), fit])
+    assert _labels(plain)[0] == "spend"
+    pdf = FunctionMark(expression="exp(-x/25)/25", variables=["x"], domain={"x": [0.0, 50.0]},
+                       samples=30, name="exponential fit")
+    hist = FigureSpec(datasets={"d": d}, layers=[HistogramMark(
+        data="d", encoding={"x": "dur"}, density=True), pdf])
+    # x: the data's; y: the histogram's density and the pdf, so neither titles it
+    assert _labels(hist) == ("dur (min)", "")
+
+
+def test_interval_bounds_one_column_and_units_are_claimed_honestly():
+    from ieeVisualizer.spec import BarMark, ErrorbarMark, FigureSpec, LineMark, ScatterMark
+    from ieeVisualizer.spec.marks import Encoding
+
+    d = _ds({"rev": "EUR", "lo": "EUR", "hi": "EUR"}, week=[1, 2, 3], rev=[1.0, 2, 3],
+            lo=[0.5, 1, 2], hi=[2.0, 3, 4])
+    bounds = FigureSpec(datasets={"d": d}, layers=[
+        BarMark(data="d", encoding={"x": "week", "y": "rev"}),
+        ErrorbarMark(data="d", encoding={"x": "week", "y_lower": "lo", "y_upper": "hi"},
+                     interval_kind="confidence", interval_level=0.95)])
+    assert _labels(bounds)[1] == "rev (EUR)"  # the bounds do not name the axis
+    titled = FigureSpec(datasets={"d": d}, layers=[
+        LineMark(data="d", encoding={"x": "week", "y": Encoding(field="rev", title="Revenue")}),
+        ScatterMark(data="d", encoding={"x": "week", "y": "rev"})])
+    assert _labels(titled)[1] == "Revenue (EUR)"  # one column, its explicit title
+    mixed = FigureSpec(datasets={"d": d, "e": _ds(week=[1, 2, 3], rev=[1.0, 2, 3])}, layers=[
+        LineMark(data="d", encoding={"x": "week", "y": "rev"}),
+        LineMark(data="e", encoding={"x": "week", "y": "rev"})])
+    assert _labels(mixed)[1] == "rev"  # no unit claimed over the layer that has none
+
+
+def test_an_untitled_multi_series_axis_gates_only_email_renders():
+    import pytest
+
+    from ieeVisualizer.render import LegibilityError, RenderRequest, check_legible, render
+    from ieeVisualizer.spec import FigureSpec, Legend, LineMark
+
+    spec = FigureSpec(datasets={"d": _ds(week=[1, 2, 3], rev=[1.0, 2, 3], cost=[0.5, 1, 1])},
+                      legend=Legend(show=False), layers=[
+                          LineMark(data="d", encoding={"x": "week", "y": "rev"}),
+                          LineMark(data="d", encoding={"x": "week", "y": "cost"})])
+    plain = render(spec, RenderRequest(format="png"))
+    assert "axis_untitled" in [w.code for w in plain.warnings]
+    check_legible(plain)  # a plain render keeps it as a warning
+    email = render(spec, RenderRequest(format="png", profile="email-tablet"))
+    with pytest.raises(LegibilityError) as e:
+        check_legible(email)
+    assert "axis_untitled" in [i.code for i in e.value.issues]

@@ -375,10 +375,31 @@ def test_a_huge_column_name_is_shortened_in_issue_paths():
     assert issues and all(len(i.path) < 120 for i in issues)
 
 
-def test_the_temporary_directory_is_removed_even_if_a_file_appears_late(tmp_path, monkeypatch):
-    """A killed ffmpeg still writing when the directory was listed left it
-    behind (test_mp4_and_export_stop_at_the_deadline_plus_the_kill_slack,
-    now and then)."""
+def test_the_killed_group_is_waited_for_within_its_bound(monkeypatch):
+    """A killed ffmpeg finishing a write could leave the directory behind;
+    the group is waited for (bounded) before the directory is removed."""
+    from ieeVisualizer.animation import isolate as I
+
+    calls = []
+
+    def alive_forever(pgid, sig):
+        calls.append(sig)
+
+    monkeypatch.setattr(I.os, "killpg", alive_forever)
+    t = time.monotonic()
+    assert I._wait_group(12345, limit=0.2) is False
+    took = time.monotonic() - t
+    assert 0.2 <= took < 0.2 + 0.1 and set(calls) == {0}
+    assert I.GROUP_EXIT_S + 0.1 < ISOLATION_SLACK_S  # inside the documented slack
+
+    def gone(pgid, sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(I.os, "killpg", gone)
+    assert I._wait_group(12345) is True
+
+
+def test_a_directory_that_cannot_be_removed_is_reported(tmp_path, monkeypatch):
     import shutil
 
     from ieeVisualizer.animation import isolate as I
@@ -386,14 +407,9 @@ def test_the_temporary_directory_is_removed_even_if_a_file_appears_late(tmp_path
     work = tmp_path / "ieev-anim-x"
     work.mkdir()
     real = shutil.rmtree
-    calls = []
-
-    def racing(path, ignore_errors=False):
-        calls.append(path)
-        real(path, ignore_errors=ignore_errors)
-        if len(calls) == 1:  # a late writer recreates it once
-            os.makedirs(os.path.join(path, "late"))
-
-    monkeypatch.setattr(I.shutil, "rmtree", racing)
-    I._remove(str(work), pause=0.001)
-    assert not work.exists() and len(calls) == 2
+    monkeypatch.setattr(I.shutil, "rmtree", lambda path, ignore_errors=False: None)
+    with pytest.warns(ResourceWarning, match="could not be removed"):
+        I._remove(str(work))
+    monkeypatch.setattr(I.shutil, "rmtree", real)
+    I._remove(str(work))
+    assert not work.exists()

@@ -266,7 +266,11 @@ thread only; the same record for a theme's own font still reaches the log.
 ## The send gate
 
 `check_legible(result)` (a `RenderResult` or an `EmailRender`) raises
-`LegibilityError` for any warning in `GATING_CODES`: the legibility codes
+`LegibilityError` for any warning in `GATING_CODES`, and, for a result made
+for an email profile, in `EMAIL_GATING_CODES`: `axis_untitled`, an axis
+showing several quantities with no title, unit or legend saying which (its
+numbers mean nothing to a reader; a plain render keeps it as a warning).
+`GATING_CODES` are the legibility codes
 above, and every code meaning the output shows less than the data holds or
 could not be laid out - `value_labels_omitted`, `value_label_outside_axes`,
 `no_data_unplaceable`, `category_labels_thinned`, `table_cells_truncated`,

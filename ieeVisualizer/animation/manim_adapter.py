@@ -525,11 +525,23 @@ def _axis_units(lo: float, hi: float) -> tuple[float, int]:
     return off, math.floor(math.log10(span))
 
 
+def _offset_text(off: float, e: int) -> str:
+    """The offset with just the digits the axis shows: down to its own
+    power of ten (1e-7 for a 1e-7 span), never float noise
+    (1.0000000999999999)."""
+    digits = max(1, math.floor(math.log10(abs(off))) - e + 2) if off else 1
+    for d in range(digits, 18):
+        text = format(off, f".{d}g")
+        if abs(float(text) - off) <= 10.0 ** e / 100:
+            return text
+    return repr(off)
+
+
 def _scaled_label(label: str | None, units: tuple[float, int]) -> str | None:
     off, e = units
     if not e and not off:
         return label
-    note = f"\u00d71e{e}" + (f" + {off!r}" if off else "")
+    note = f"\u00d71e{e}" + (f" + {_offset_text(off, e)}" if off else "")
     return f"{label} ({note})" if label else note
 
 
@@ -543,7 +555,8 @@ def _tick_texts(values: list[float]) -> list[str]:
     return [repr(v) for v in values]
 
 
-def _nice_range(lo: float, hi: float, keep: tuple[bool, bool] = (False, False)) -> list[float]:
+def _nice_range(lo: float, hi: float, keep: tuple[bool, bool] = (False, False),
+                precision: float = 1e-9) -> list[float]:
     """``[lo, hi, tick step]``: ends rounded out to the step unless ``keep``
     says the figure set them (requested limits are drawn exactly). A range
     Manim cannot draw (not finite, empty, beyond float precision) is a
@@ -552,7 +565,7 @@ def _nice_range(lo: float, hi: float, keep: tuple[bool, bool] = (False, False)) 
         lo, hi = lo - 1.0, hi + 1.0
     span = hi - lo
     if not (math.isfinite(lo) and math.isfinite(hi) and math.isfinite(span)) or span <= 0 \
-            or span < 1e-9 * max(abs(lo), abs(hi), 1e-300) or span < 1e-200:
+            or span < precision * max(abs(lo), abs(hi), 1e-300) or span < 1e-200:
         raise AnimationError([issue("/figure/axes", "axis_range_unrenderable",
                                     f"the axis range [{lo!r}, {hi!r}] cannot be drawn by manim "
                                     "(not finite, empty or below float precision).")])
@@ -648,7 +661,9 @@ def _function_plot(anim: AnimationSpec, tl: ParameterSweep, values, warnings, th
     if limits_x:
         x_lo = limits_x[0] if limits_x[0] is not None else x_lo
         x_hi = limits_x[1] if limits_x[1] is not None else x_hi
-    _nice_range(x_lo, x_hi), _nice_range(y_lo, y_hi)  # refuses undrawable ranges
+    # refuses undrawable ranges; a span far from 0 is drawn with an offset,
+    # so only float64's own precision bounds it (1e6 + 1e-4 renders)
+    _nice_range(x_lo, x_hi, precision=1e-12), _nice_range(y_lo, y_hi, precision=1e-12)
     ux, uy = _axis_units(x_lo, x_hi), _axis_units(y_lo, y_hi)
     (ox, fx), (oy, fy) = (ux[0], 10.0 ** ux[1]), (uy[0], 10.0 ** uy[1])  # 0, 1 unless tiny
     xr = _nice_range((x_lo - ox) / fx, (x_hi - ox) / fx,
@@ -658,7 +673,9 @@ def _function_plot(anim: AnimationSpec, tl: ParameterSweep, values, warnings, th
     first = layers[0][0]
     # Matplotlib's defaults: the variable for x; for y the layer name or
     # expression, but only for one layer (several are never titled by one)
-    y_default = (first.name or first.expression) if len(layers) == 1 else None
+    # (the main renderer's rule: one quantity titles its axis, several never)
+    shown = {m.name or m.expression for m, *_ in layers}
+    y_default = shown.pop() if len(shown) == 1 else None
     labels = (_scaled_label(_axis_label(fig, "x", first.variables[0]), ux),
               _scaled_label(_axis_label(fig, "y", y_default), uy))
 
@@ -735,7 +752,8 @@ def _vector_field_plot(anim: AnimationSpec, tl: ParameterSweep, values, theme,
     if max_mag <= 0:
         raise AnimationError([issue("/timeline/target/params", "empty_series",
                                     "the field is zero or non-finite everywhere.")])
-    _nice_range(x0, x1), _nice_range(y0, y1)  # refuses undrawable ranges
+    # refuses undrawable ranges (drawn with an offset: float64 bounds them)
+    _nice_range(x0, x1, precision=1e-12), _nice_range(y0, y1, precision=1e-12)
     cell = min((x1 - x0) / max(grid[0] - 1, 1), (y1 - y0) / max(grid[1] - 1, 1))
 
     def length(k: int, mag: float) -> float:
