@@ -26,26 +26,48 @@ ROOT_DIR, HERE_DIR = str(ROOT), str(HERE)
 D = 2.0
 
 
+def _in_use(path: str) -> bool:
+    """Some live process holds ``path`` open (Linux /proc; elsewhere: True,
+    so nothing outside the test's own directory is ever reported)."""
+    if not os.path.isdir("/proc/self/fd"):
+        return True
+    for fd in glob.glob("/proc/[0-9]*/fd/*"):
+        try:
+            if os.readlink(fd) == path:
+                return True
+        except OSError:
+            pass
+    return False
+
+
 def _own_tmp(monkeypatch, tmp_path):
     """Point this test's renders at their own temporary directory and return
     ``left()``: what they left behind. A global glob of /tmp also sees
     another suite's workers running in parallel.
 
     ``left()`` lists the worker directories left in ``tmp_path``, plus any
-    encoder directory (one holding ffmpeg's ``stderr.txt``) that appeared
-    directly in the system temporary directory during the test: where a
-    worker that ignored its TMPDIR would put it. It cannot see a leak
-    anywhere else, or one without that file; an inline MP4 render in another
-    process at the same moment would be counted too."""
+    encoder directory left directly in the system temporary directory since
+    the test started (where a worker that ignored its TMPDIR would put it):
+    one holding ffmpeg's ``stderr.txt`` that no live process holds open (a
+    render running elsewhere holds it) and that is still there half a second
+    later. It cannot see a leak anywhere else, or one without that file, and
+    it checks the system directory on Linux only."""
     system = tempfile.gettempdir()
     before = set(os.listdir(system))
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
 
+    def stray():
+        found = (os.path.join(system, n) for n in set(os.listdir(system)) - before)
+        return {d for d in found if os.path.isfile(os.path.join(d, "stderr.txt"))
+                and not _in_use(os.path.join(d, "stderr.txt"))}
+
     def left():
         own = set(glob.glob(os.path.join(str(tmp_path), "ieev-anim-*")))
-        stray = {os.path.join(system, n) for n in set(os.listdir(system)) - before
-                 if os.path.isfile(os.path.join(system, n, "stderr.txt"))}
-        return own | stray
+        out = stray()
+        if out:
+            time.sleep(0.5)
+            out &= stray()
+        return own | out
 
     return left
 
