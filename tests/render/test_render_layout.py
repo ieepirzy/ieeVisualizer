@@ -208,3 +208,18 @@ def test_an_untitled_multi_series_axis_gates_only_email_renders():
     with pytest.raises(LegibilityError) as e:
         check_legible(email)
     assert "axis_untitled" in [i.code for i in e.value.issues]
+
+
+def test_a_title_cut_off_at_the_figures_edge_is_reported():
+    from ieeVisualizer.render import RenderRequest, render
+    from ieeVisualizer.spec import FigureSpec, FunctionMark
+
+    def fig(title):
+        return FigureSpec(title=title, layers=[FunctionMark(
+            expression="sin(x)", variables=["x"], domain={"x": [0.0, 6.0]}, samples=20)])
+
+    narrow = RenderRequest(format="png", width=2.0, height=1.5, dpi=100)
+    codes = [w.code for w in render(fig("A rather long title for a narrow figure"),
+                                    narrow).warnings]
+    assert "title_clipped" in codes
+    assert "title_clipped" not in [w.code for w in render(fig("Short"), narrow).warnings]

@@ -319,9 +319,10 @@ class _Drawn:
             raise
         except RenderError as e:  # e.g. a state with no finite sample
             raise state_error(e, f"state {s.index} ({s.label})") from None
-        for wn in res.warnings:
+        ws = [_label_clipped(wn, s) for wn in res.warnings]
+        for wn in ws:
             self._per_state.setdefault((wn.code, wn.message, wn.path), []).append(s.index)
-        return res.content, list(res.warnings)
+        return res.content, ws
 
     def warnings(self, n_states: int) -> list[RenderWarning]:
         out = [RenderWarning("frame_no_data", f"state {i} has no data in any layer; drawn as "
@@ -456,3 +457,16 @@ def state_error(e: RenderError, where: str) -> AnimationError:
     paths under ``/figure``, its messages naming the state."""
     return AnimationError([issue("/figure" + i.path, i.code, f"{where}: {i.message}",
                                  i.severity) for i in e.issues])
+
+
+def _label_clipped(w: RenderWarning, s) -> RenderWarning:
+    """A clipped title that carries the state's label (``label_frames``)
+    loses its end, the label, first: two distinct frames can then look
+    alike. Reported once for the clip as ``frame_label_clipped``."""
+    title = getattr(s.spec, "title", None) or ""
+    if w.code != "title_clipped" or not (title == s.label or title.endswith(f"({s.label})")):
+        return w
+    return RenderWarning("frame_label_clipped",
+                         "the title runs past the frame's edge, so the state label at its end "
+                         "is cut off and distinct frames can look alike; shorten the title or "
+                         "use a wider frame.", "/title")
